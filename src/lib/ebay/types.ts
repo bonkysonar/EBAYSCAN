@@ -1,8 +1,14 @@
-﻿export type SearchInput =
-  | { type: "barcode"; barcode: string }
-  | { type: "catalog"; catalogNumber: string }
-  | { type: "manual"; query: string }
-  | { type: "image"; imageBase64: string; fileName?: string };
+﻿export type ListingConditionFilter = "used" | "new" | "both";
+
+type SearchInputOptions = {
+  conditionFilter?: ListingConditionFilter;
+};
+
+export type SearchInput =
+  | ({ type: "barcode"; barcode: string } & SearchInputOptions)
+  | ({ type: "catalog"; catalogNumber: string } & SearchInputOptions)
+  | ({ type: "manual"; query: string } & SearchInputOptions)
+  | ({ type: "image"; imageBase64: string; fileName?: string } & SearchInputOptions);
 
 export type MatchSignals = {
   titleSimilarity?: number;

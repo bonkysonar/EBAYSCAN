@@ -1,5 +1,5 @@
 ﻿import { FormEvent, KeyboardEvent, useRef, useState } from "react";
-import type { SearchInput } from "../lib/ebay/types";
+import type { ListingConditionFilter, SearchInput } from "../lib/ebay/types";
 
 type Props = {
   isSearching: boolean;
@@ -10,12 +10,13 @@ export function SearchInputPanel({ isSearching, onSearch }: Props) {
   const [barcode, setBarcode] = useState("");
   const [catalogNumber, setCatalogNumber] = useState("");
   const [query, setQuery] = useState("");
+  const [conditionFilter, setConditionFilter] = useState<ListingConditionFilter>("used");
   const barcodeRef = useRef<HTMLInputElement>(null);
 
   function runBarcodeSearch() {
     const value = barcode.trim();
     if (!value) return;
-    onSearch({ type: "barcode", barcode: value });
+    onSearch({ type: "barcode", barcode: value, conditionFilter });
     setBarcode("");
     barcodeRef.current?.focus();
   }
@@ -23,13 +24,13 @@ export function SearchInputPanel({ isSearching, onSearch }: Props) {
   function runCatalogSearch() {
     const value = catalogNumber.trim();
     if (!value) return;
-    onSearch({ type: "catalog", catalogNumber: value });
+    onSearch({ type: "catalog", catalogNumber: value, conditionFilter });
   }
 
   function runManualSearch() {
     const value = query.trim();
     if (!value) return;
-    onSearch({ type: "manual", query: value });
+    onSearch({ type: "manual", query: value, conditionFilter });
   }
 
   function submitBarcode(event: FormEvent) {
@@ -56,12 +57,46 @@ export function SearchInputPanel({ isSearching, onSearch }: Props) {
   async function submitImage(file: File | undefined) {
     if (!file) return;
     const imageBase64 = await fileToBase64(file);
-    onSearch({ type: "image", imageBase64, fileName: file.name });
+    onSearch({ type: "image", imageBase64, fileName: file.name, conditionFilter });
   }
 
   return (
     <section className="search-panel">
       <h2>Lookup</h2>
+      <fieldset className="condition-filter">
+        <legend>Condition</legend>
+        <label>
+          <input
+            type="radio"
+            name="condition-filter"
+            value="used"
+            checked={conditionFilter === "used"}
+            onChange={() => setConditionFilter("used")}
+          />
+          Used
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="condition-filter"
+            value="new"
+            checked={conditionFilter === "new"}
+            onChange={() => setConditionFilter("new")}
+          />
+          New
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="condition-filter"
+            value="both"
+            checked={conditionFilter === "both"}
+            onChange={() => setConditionFilter("both")}
+          />
+          Both
+        </label>
+      </fieldset>
+
       <form className="input-group scanner-group" onSubmit={submitBarcode}>
         <label htmlFor="barcode">Barcode scanner input</label>
         <input

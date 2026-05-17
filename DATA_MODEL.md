@@ -9,6 +9,8 @@ Discriminated union for lookup requests:
 - `{ type: "manual"; query: string }`
 - `{ type: "image"; imageBase64: string; fileName?: string }`
 
+Each input may include `conditionFilter?: "used" | "new" | "both"`. The UI defaults to `used` because most triage lookups are for used albums.
+
 Catalog numbers may contain letters, numbers, spaces, hyphens, slashes, and label-specific formatting. They are lookup hints rather than exact pressing identifiers.
 
 ## CandidateListing
@@ -35,11 +37,14 @@ Marketplace candidate returned by a client:
 - `source`
 - `timestamp`
 - `warnings`
-- `rawSummary`
+- `rawSummary`: includes active eBay query plan, returned listing counts, and total-match counts when available
 
 ## TriageDecision
 
 - `decision`: `GREEN`, `YELLOW`, or `RED`
+- `GREEN`: worth processing/listing
+- `YELLOW`: manual review needed
+- `RED`: likely safe to skip/bulk
 - `confidence`: number from 0 to 1
 - `threshold`
 - `priceSummary`
@@ -51,8 +56,9 @@ Marketplace candidate returned by a client:
 ## Settings
 
 - `threshold`: default target value threshold, initially `5`
-- `minimumResultsForGreen`
-- `minimumConfidenceForGreen`
+- `minimumResultsForSkip`
+- `minimumConfidenceForSkip`
 - `highOutlierMultiplier`
 - `wideSpreadMultiplier`
 - `riskKeywords`
+

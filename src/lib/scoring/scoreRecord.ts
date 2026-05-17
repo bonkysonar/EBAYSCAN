@@ -67,13 +67,13 @@ export function scoreRecord(searchResult: SearchResult, settings: Partial<Scorin
   const reasons: string[] = [];
   const warnings = [...searchResult.warnings];
   const trimmed = priceSummary.trimmedMedianTotalPrice ?? priceSummary.medianTotalPrice;
-  const enoughResults = listings.length >= resolvedSettings.minimumResultsForGreen;
+  const enoughResults = listings.length >= resolvedSettings.minimumResultsForSkip;
   const goodConsensus = consensus.clusterRatio >= 0.7;
   const wideSpread = priceSummary.priceSpread !== null && priceSummary.priceSpread > threshold * resolvedSettings.wideSpreadMultiplier;
   const hasHighOutliers = priceSummary.highOutlierCount > 0;
   const hasRiskFlags = riskFlags.length > 0;
 
-  if (!enoughResults) reasons.push("Too few candidate listings for a confident skip.");
+  if (!enoughResults) reasons.push("Too few candidate listings for a confident decision.");
   if (!goodConsensus) reasons.push("Candidate listings do not strongly agree on the same record.");
   if (wideSpread) reasons.push("Price spread is wide, so the record needs manual judgment.");
   if (hasHighOutliers) reasons.push("One or more listings are high outliers above the threshold.");
@@ -95,14 +95,14 @@ export function scoreRecord(searchResult: SearchResult, settings: Partial<Scorin
   if (trimmed > threshold && goodConsensus && listings.length >= 3) {
     reasons.unshift(`Comparable listings cluster above the $${threshold.toFixed(2)} threshold.`);
     return {
-      decision: "RED",
+      decision: "GREEN",
       confidence: Math.max(confidence, 0.72),
       threshold,
       priceSummary,
       reasons,
       warnings,
       topListings: listings.slice(0, 5),
-      suggestedAction: "Do not casually skip. Put this in the processing/manual review pile.",
+      suggestedAction: "Worth processing or listing. Do not skip casually.",
     };
   }
 
@@ -113,24 +113,24 @@ export function scoreRecord(searchResult: SearchResult, settings: Partial<Scorin
     !hasHighOutliers &&
     !hasRiskFlags &&
     trimmed <= threshold &&
-    confidence >= resolvedSettings.minimumConfidenceForGreen
+    confidence >= resolvedSettings.minimumConfidenceForSkip
   ) {
     reasons.unshift(`Low-price cluster is at or below the $${threshold.toFixed(2)} threshold.`);
-    reasons.push("Enough similar mock listings were found to support a conservative skip.");
+    reasons.push("Enough similar listings were found to support a conservative skip.");
     return {
-      decision: "GREEN",
+      decision: "RED",
       confidence,
       threshold,
       priceSummary,
       reasons,
       warnings,
       topListings: listings.slice(0, 5),
-      suggestedAction: "Likely safe for skip or bulk pile.",
+      suggestedAction: "Likely safe to skip or move to bulk pile.",
     };
   }
 
   if (trimmed > threshold) {
-    reasons.unshift(`Median pricing is above the $${threshold.toFixed(2)} threshold, but confidence is not clean enough to auto-classify.`);
+    reasons.unshift(`Median pricing is above the $${threshold.toFixed(2)} threshold, but confidence is not clean enough to auto-green.`);
   } else {
     reasons.unshift("Low prices were found, but risk or ambiguity prevents an automatic skip.");
   }
@@ -146,3 +146,4 @@ export function scoreRecord(searchResult: SearchResult, settings: Partial<Scorin
     suggestedAction: "Manual check needed before skipping or listing.",
   };
 }
+

@@ -1,8 +1,11 @@
 ﻿import type { PriceSummary } from "../lib/scoring/types";
 
-type Props = { summary: PriceSummary };
+type Props = {
+  sourceSummary?: string;
+  summary: PriceSummary;
+};
 
-export function PriceClusterSummary({ summary }: Props) {
+export function PriceClusterSummary({ sourceSummary, summary }: Props) {
   return (
     <section className="panel summary-panel">
       <h2>Price Cluster</h2>
@@ -15,6 +18,7 @@ export function PriceClusterSummary({ summary }: Props) {
         <div><dt>High outliers</dt><dd>{summary.highOutlierCount}</dd></div>
         <div><dt>Spread</dt><dd>{money(summary.priceSpread)}</dd></div>
       </dl>
+      {sourceSummary ? <p className="source-summary">{sourceSummary}</p> : null}
     </section>
   );
 }

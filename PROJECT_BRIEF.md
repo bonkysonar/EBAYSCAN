@@ -6,11 +6,11 @@ It is not an exact pressing identifier, grading tool, or automated listing/prici
 
 ## Decision Philosophy
 
-- GREEN means likely low value: safe candidate for skip or bulk pile.
+- GREEN means likely worth processing/listing or at least not casually skipping.
 - YELLOW means ambiguous: manual check needed.
-- RED means likely worth processing/listing or at least not casually skipping.
+- RED means likely low value: safe candidate for skip or bulk pile.
 
-The app is conservative. Uncertainty should move records to YELLOW rather than pretending to know. Risk keywords and variant signals usually prevent GREEN instead of automatically forcing RED.
+The app is conservative. Uncertainty should move records to YELLOW rather than pretending to know. Risk keywords and variant signals usually prevent RED skip decisions instead of automatically forcing GREEN.
 
 ## MVP Scope
 

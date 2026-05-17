@@ -9,15 +9,15 @@ async function decisionFor(input: SearchInput) {
 }
 
 describe("scoreRecord", () => {
-  it("scores obvious low-value records as GREEN", async () => {
+  it("scores obvious low-value records as RED skip", async () => {
     const decision = await decisionFor({ type: "barcode", barcode: "012345LOW" });
-    expect(decision.decision).toBe("GREEN");
+    expect(decision.decision).toBe("RED");
     expect(decision.priceSummary.trimmedMedianTotalPrice).toBeLessThanOrEqual(5);
   });
 
-  it("scores obvious high-value records as RED", async () => {
+  it("scores obvious high-value records as GREEN keep/process", async () => {
     const decision = await decisionFor({ type: "manual", query: "blue note mono original" });
-    expect(decision.decision).toBe("RED");
+    expect(decision.decision).toBe("GREEN");
     expect(decision.priceSummary.medianTotalPrice).toBeGreaterThan(5);
   });
 
@@ -32,7 +32,7 @@ describe("scoreRecord", () => {
     expect(decision.priceSummary.sameTitleClusterCount).toBe(2);
   });
 
-  it("prevents GREEN when risk keywords are found", async () => {
+  it("prevents RED skip when risk keywords are found", async () => {
     const decision = await decisionFor({ type: "manual", query: "promo white label" });
     expect(decision.decision).toBe("YELLOW");
     expect(decision.reasons.join(" ")).toContain("Risk keywords");

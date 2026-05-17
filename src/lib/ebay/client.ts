@@ -2,9 +2,18 @@
 
 export class EbayClient implements MarketplaceClient {
   async search(input: SearchInput): Promise<SearchResult> {
-    void input;
-    throw new Error(
-      "Real eBay Browse API support is not implemented yet. Use MockEbayClient until official credentials and request patterns are configured.",
-    );
+    const response = await fetch("/api/ebay/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload.error ?? "eBay search failed.");
+    }
+
+    return payload as SearchResult;
   }
 }
