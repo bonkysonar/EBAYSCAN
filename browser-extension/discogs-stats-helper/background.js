@@ -1,9 +1,10 @@
 const pendingRequests = new Map();
 
-chrome.runtime.onMessage.addListener((message, sender) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "record-scanner-discogs-helper-request") {
+    sendResponse({ accepted: true });
     openDiscogsTab(message, sender);
-    return;
+    return true;
   }
 
   if (message?.type === "record-scanner-discogs-helper-result") {

@@ -82,10 +82,16 @@ function DiscogsSummary({
 
       const payload = event.data as {
         error?: string;
+        message?: string;
         stats?: DiscogsSalesStats;
         token?: string;
         type?: string;
       };
+
+      if (payload?.type === "record-scanner-discogs-helper-status" && extensionToken.current === payload.token) {
+        if (payload.message) setExtensionMessage(payload.message);
+        return;
+      }
 
       if (payload?.type !== "record-scanner-discogs-helper-result") return;
       if (!extensionToken.current || payload.token !== extensionToken.current) return;
