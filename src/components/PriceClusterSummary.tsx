@@ -67,6 +67,7 @@ function DiscogsSummary({
   const [isPulling, setIsPulling] = useState(false);
   const attemptedPullKey = useRef<string | null>(null);
   const extensionToken = useRef<string | null>(null);
+  const extensionTimeout = useRef<number | null>(null);
 
   const pullKey = discogs.releaseUrl ?? (discogs.releaseId ? String(discogs.releaseId) : "");
 
@@ -87,6 +88,7 @@ function DiscogsSummary({
 
       if (payload?.type !== "record-scanner-discogs-helper-result") return;
       if (!extensionToken.current || payload.token !== extensionToken.current) return;
+      clearExtensionTimeout();
 
       if (payload.error) {
         setExtensionMessage(payload.error);
@@ -107,7 +109,10 @@ function DiscogsSummary({
     }
 
     window.addEventListener("message", receiveDiscogsStats);
-    return () => window.removeEventListener("message", receiveDiscogsStats);
+    return () => {
+      window.removeEventListener("message", receiveDiscogsStats);
+      clearExtensionTimeout();
+    };
   }, [onSalesStatsImport]);
 
   useEffect(() => {
@@ -226,6 +231,12 @@ function DiscogsSummary({
       },
       window.location.origin,
     );
+
+    clearExtensionTimeout();
+    extensionTimeout.current = window.setTimeout(() => {
+      if (extensionToken.current !== token) return;
+      setExtensionMessage("Discogs helper did not respond. Reload the Chrome extension, then try Run Discogs Helper.");
+    }, 6_000);
   }
 
   function importStatsText(text: string) {
@@ -237,6 +248,12 @@ function DiscogsSummary({
 
     onSalesStatsImport?.(stats);
     setParseMessage("Imported Discogs sales stats for this result.");
+  }
+
+  function clearExtensionTimeout() {
+    if (extensionTimeout.current === null) return;
+    window.clearTimeout(extensionTimeout.current);
+    extensionTimeout.current = null;
   }
 }
 
