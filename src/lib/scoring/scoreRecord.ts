@@ -117,6 +117,8 @@ export function scoreRecord(searchResult: SearchResult, settings: Partial<Scorin
   const warnings = [...searchResult.warnings];
   const lowEndAverage = priceSummary.averageCheapestTenTotalPrice;
   const benchmark = lowEndAverage ?? priceSummary.trimmedMedianTotalPrice ?? priceSummary.medianTotalPrice;
+  const discogsSalesStats = searchResult.marketSnapshot?.discogs?.salesStats;
+  const discogsSalesMedian = discogsSalesStats?.medianPrice?.value;
   const topListings = cheapestListings(relevantListings);
   const enoughResults = relevantListings.length >= resolvedSettings.minimumResultsForSkip;
   const goodConsensus = consensus.clusterRatio >= 0.7;
@@ -133,6 +135,28 @@ export function scoreRecord(searchResult: SearchResult, settings: Partial<Scorin
   if (hasHighOutliers) reasons.push("One or more listings are high outliers above the threshold.");
   if (hasRiskFlags) reasons.push(`Risk keywords found: ${[...new Set(riskFlags.map((flag) => flag.keyword))].join(", ")}.`);
 
+  if (discogsSalesMedian !== undefined && discogsSalesStats?.source === "browser_extension") {
+    const medianReason = `Discogs browser helper median is $${discogsSalesMedian.toFixed(2)} against the $${threshold.toFixed(2)} threshold.`;
+    return {
+      decision: discogsSalesMedian > threshold ? "GREEN" : "RED",
+      confidence: 1,
+      threshold,
+      priceSummary,
+      reasons: [
+        medianReason,
+        discogsSalesMedian > threshold
+          ? "Discogs median is above threshold, so this is worth processing/listing."
+          : "Discogs median is at or below threshold, so this is likely safe to skip.",
+      ],
+      warnings,
+      topListings,
+      suggestedAction:
+        discogsSalesMedian > threshold
+          ? "Worth processing or listing based on Discogs median."
+          : "Likely safe to skip based on Discogs median.",
+    };
+  }
+
   if (benchmark === null) {
     return {
       decision: "YELLOW",
@@ -146,8 +170,27 @@ export function scoreRecord(searchResult: SearchResult, settings: Partial<Scorin
     };
   }
 
+  if (discogsSalesMedian !== undefined && discogsSalesMedian <= threshold && benchmark > threshold) {
+    reasons.unshift(
+      `Discogs sales median is $${discogsSalesMedian.toFixed(2)}, at or below the $${threshold.toFixed(2)} threshold.`,
+    );
+    return {
+      decision: "YELLOW",
+      confidence: Math.min(confidence, 0.68),
+      threshold,
+      priceSummary,
+      reasons,
+      warnings,
+      topListings,
+      suggestedAction: "Manual check needed; Discogs sales history is weaker than active eBay listings.",
+    };
+  }
+
   if (benchmark > threshold && enoughResults) {
     reasons.unshift(`Cheapest comparable listings average above the $${threshold.toFixed(2)} threshold.`);
+    if (discogsSalesMedian !== undefined) {
+      reasons.push(`Discogs sales median is $${discogsSalesMedian.toFixed(2)}, also above the threshold.`);
+    }
     if (!goodConsensus) {
       reasons.push("Consensus is imperfect, but the low-end comparable average is strong enough to avoid skipping.");
     }

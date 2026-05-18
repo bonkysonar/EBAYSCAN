@@ -47,3 +47,15 @@ Barcode searches can use Discogs as an eBay expansion source. If eBay GTIN/text 
 
 The eBay Browse API endpoint is queried in 200-listing pages, up to 1,000 returned listings per query leg. This prevents title-match and market-saturation logic from silently maxing out at the first page while preserving eBay's reported total count in the raw summary.
 
+## 2026-05-18: Discogs Sales Stats Pull / Import
+
+Discogs release pages display Last Sold, Low, Median, and High sales statistics, but the official API response used here does not provide those historical sales values. The app does not silently scrape Discogs pages because Discogs terms restrict automated scraping/data extraction and sales-history marketplace data. Instead, the UI accepts user-provided Discogs Statistics text or saved HTML/XML/text for the current result, parses the values locally, displays them, and uses imported Discogs sales median to prevent overly generous GREEN decisions.
+
+David explicitly asked for a one-release-at-a-time automatic pull because Discogs median is the primary real-world pricing signal in this workflow. The app now makes a best-effort server-side fetch for the matched Discogs release and parses only the visible sales stats. This is intentionally not a batch/mining feature. If Discogs returns a browser challenge or blocks the request, the UI shows that failure plainly and keeps the manual paste/file import fallback.
+
+## 2026-05-18: Discogs Browser Helper Extension
+
+Because Discogs can block server-side page fetches while a normal signed-in Chrome session can still display the release page, the fastest viable workflow is a tiny local Chrome extension. Record Scanner opens a Discogs helper tab with a one-time token and return origin. The extension runs only on Discogs pages, reads the visible release stats table, and posts Last Sold / Low / Median / High back to the opener window. This avoids slow Google Sheets IMPORTXML polling and avoids OCR/screenshot fragility.
+
+The extension now supports the faster background path: a content script on the Record Scanner app asks the extension background worker to open the matched Discogs release in an inactive tab. The Discogs content script reads stats, sends them to the background worker, and the worker forwards them back to the app tab and closes the helper tab. Browser-helper medians are treated as authoritative threshold decisions: above threshold GREEN, at/below threshold RED, with confidence set to 100%.
+

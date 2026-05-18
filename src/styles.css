@@ -387,6 +387,62 @@ input[type="radio"] {
   color: var(--muted);
 }
 
+.discogs-pull {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.discogs-pull span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.discogs-import {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  margin-top: 0.6rem;
+  padding: 0.55rem;
+  background: #fffdf7;
+}
+
+.discogs-import label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.discogs-import textarea {
+  width: 100%;
+  min-height: 58px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.45rem;
+  font: inherit;
+  font-size: 0.76rem;
+}
+
+.discogs-import-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem;
+  align-items: center;
+  margin-top: 0.45rem;
+}
+
+.discogs-import-actions input {
+  border-width: 1px;
+  padding: 0.4rem;
+  font-size: 0.72rem;
+}
+
 .reasons-panel li {
   margin: 0.25rem 0;
 }

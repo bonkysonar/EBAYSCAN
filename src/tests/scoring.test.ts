@@ -92,6 +92,85 @@ describe("scoreRecord", () => {
     expect(decision.priceSummary.averageCheapestTenTotalPrice).toBeGreaterThan(5);
   });
 
+  it("prevents GREEN when imported Discogs sales median is below threshold", () => {
+    const listings: CandidateListing[] = [9, 10, 11, 12].map((price, index) => ({
+      id: `discogs-gate-${index}`,
+      title: `Common pop record active listing ${index}`,
+      price,
+      shippingPrice: 0,
+      totalPrice: price,
+      currency: "USD",
+      condition: "Used",
+      source: "ebay-mock",
+      matchSignals: { sameAlbumCluster: "common-pop-record", titleSimilarity: 0.9 },
+    }));
+    const result: SearchResult = {
+      input: { type: "manual", query: "common pop record" },
+      listings,
+      marketSnapshot: {
+        discogs: {
+          confidence: "high",
+          matchedTitle: "Common Pop Record",
+          salesStats: {
+            importedAt: new Date().toISOString(),
+            medianPrice: { currency: "USD", value: 4.15 },
+            source: "manual_import",
+          },
+          status: "available",
+          warnings: [],
+        },
+      },
+      source: "ebay-mock",
+      timestamp: new Date().toISOString(),
+      warnings: [],
+    };
+
+    const decision = scoreRecord(result);
+
+    expect(decision.decision).toBe("YELLOW");
+    expect(decision.reasons.join(" ")).toContain("Discogs sales median");
+  });
+
+  it("uses browser helper Discogs median as the hard threshold decision", () => {
+    const listings: CandidateListing[] = [2, 2.5, 3, 3.5].map((price, index) => ({
+      id: `helper-median-${index}`,
+      title: `Discogs helper test record ${index}`,
+      price,
+      shippingPrice: 0,
+      totalPrice: price,
+      currency: "USD",
+      condition: "Used",
+      source: "ebay-mock",
+      matchSignals: { sameAlbumCluster: "discogs-helper-test", titleSimilarity: 0.9 },
+    }));
+    const result: SearchResult = {
+      input: { type: "manual", query: "discogs helper test" },
+      listings,
+      marketSnapshot: {
+        discogs: {
+          confidence: "high",
+          matchedTitle: "Discogs Helper Test",
+          salesStats: {
+            importedAt: new Date().toISOString(),
+            medianPrice: { currency: "USD", value: 8 },
+            source: "browser_extension",
+          },
+          status: "available",
+          warnings: [],
+        },
+      },
+      source: "ebay-mock",
+      timestamp: new Date().toISOString(),
+      warnings: [],
+    };
+
+    const decision = scoreRecord(result);
+
+    expect(decision.decision).toBe("GREEN");
+    expect(decision.confidence).toBe(1);
+    expect(decision.reasons[0]).toContain("Discogs browser helper median");
+  });
+
   it("uses the same marketplace interface for barcode, catalog, manual, and image inputs", async () => {
     const client = new MockEbayClient();
     const barcode = await client.search({ type: "barcode", barcode: "012345LOW" });
