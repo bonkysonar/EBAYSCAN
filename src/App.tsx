@@ -7,7 +7,7 @@ import { SearchInputPanel } from "./components/SearchInputPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { EbayClient } from "./lib/ebay/client";
 import { MockEbayClient } from "./lib/ebay/mockClient";
-import type { SearchInput, SearchResult } from "./lib/ebay/types";
+import type { DiscogsMarketSnapshot, DiscogsSalesStats, SearchInput, SearchResult } from "./lib/ebay/types";
 import { scoreRecord } from "./lib/scoring/scoreRecord";
 import type { ScoringSettings, TriageDecision } from "./lib/scoring/types";
 import { loadSettings, saveSettings } from "./lib/storage/localSettings";
@@ -95,6 +95,49 @@ export function App() {
     setError(null);
   }
 
+  function importDiscogsSalesStats(stats: DiscogsSalesStats) {
+    if (!searchResult?.marketSnapshot?.discogs) return;
+    applyDiscogsSalesStats(stats);
+  }
+
+  async function pullDiscogsSalesStats(discogs: DiscogsMarketSnapshot): Promise<DiscogsSalesStats> {
+    const response = await fetch("/api/discogs/stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        releaseId: discogs.releaseId,
+        releaseUrl: discogs.releaseUrl,
+      }),
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Discogs stats pull failed.");
+    }
+
+    const stats = payload as DiscogsSalesStats;
+    applyDiscogsSalesStats(stats);
+    return stats;
+  }
+
+  function applyDiscogsSalesStats(stats: DiscogsSalesStats) {
+    if (!searchResult?.marketSnapshot?.discogs) return;
+
+    const nextResult: SearchResult = {
+      ...searchResult,
+      marketSnapshot: {
+        ...searchResult.marketSnapshot,
+        discogs: {
+          ...searchResult.marketSnapshot.discogs,
+          salesStats: stats,
+        },
+      },
+    };
+    const nextDecision = scoreRecord(nextResult, settings);
+    setSearchResult(nextResult);
+    setDecision(nextDecision);
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -122,6 +165,8 @@ export function App() {
                 discogs={searchResult?.marketSnapshot?.discogs}
                 ebayResearchKeywords={searchResult?.marketSnapshot?.ebayResearchKeywords}
                 ebayResearchUrl={searchResult?.marketSnapshot?.ebayResearchUrl}
+                onDiscogsSalesStatsImport={importDiscogsSalesStats}
+                onDiscogsSalesStatsPull={pullDiscogsSalesStats}
                 sourceSummary={searchResult?.rawSummary}
                 summary={decision.priceSummary}
               />

@@ -38,6 +38,15 @@ export type MoneyValue = {
   value: number;
 };
 
+export type DiscogsSalesStats = {
+  highPrice?: MoneyValue;
+  importedAt: string;
+  lastSold?: string;
+  lowPrice?: MoneyValue;
+  medianPrice?: MoneyValue;
+  source: "browser_extension" | "manual_import" | "page_fetch";
+};
+
 export type DiscogsMarketSnapshot = {
   catno?: string;
   confidence: "high" | "medium" | "low";
@@ -48,6 +57,7 @@ export type DiscogsMarketSnapshot = {
   numForSale?: number;
   releaseId?: number;
   releaseUrl?: string;
+  salesStats?: DiscogsSalesStats;
   status: "available" | "unavailable" | "not_configured";
   warnings: string[];
   want?: number;

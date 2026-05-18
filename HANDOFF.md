@@ -1,10 +1,10 @@
 ﻿# Handoff
 
-Last updated: 2026-05-17
+Last updated: 2026-05-18
 
 ## Current Branch
 
-- Branch: `feature/ebay-browse-integration`
+- Branch: `feature/discogs-stats-import`
 - Base/current pushed main commit: `15a343e Build record scanner MVP`
 - Current feature work is uncommitted unless this file is committed later.
 - Do not deploy unless David explicitly asks.
@@ -181,6 +181,18 @@ The saved Discogs HTML showed page-visible sales stats for release 2165798: Last
 ## Speed Mode
 
 `SearchInputPanel` now has a Speed Mode toggle for barcode-only scanner sessions. When enabled, it focuses/selects the barcode input immediately, disables catalog/manual/image controls, and focuses/selects the barcode input again when `isSearching` transitions from true to false. This supports scan, glance, scan, glance workflows.
+
+## Manual Discogs Sales Stats Import
+
+Discogs page-visible sales statistics (Last Sold, Low, Median, High) are not available in the official API response currently used by the app, and automatic page scraping was avoided because Discogs terms restrict scraping/data extraction and sales-history marketplace data. The UI now accepts user-provided Discogs Statistics text or saved HTML/XML/text in `PriceClusterSummary`. Parser lives in `src/lib/discogs/parseSalesStats.ts`. Imported stats are stored on `discogs.salesStats`, displayed in the Discogs panel, and `scoreRecord` uses imported Discogs sales median to block GREEN when the median is at or below the configured threshold.
+
+## Discogs Sales Stats Pull
+
+David explicitly accepted one-release-at-a-time page pulls because Discogs median is a key pricing signal. The app now adds `/api/discogs/stats` for hosted Vercel and matching local Vite middleware. It fetches the matched Discogs release URL/ID, parses Last Sold/Low/Median/High from page HTML with `parseDiscogsSalesStats`, and stores the result as `discogs.salesStats` with source `page_fetch`. `PriceClusterSummary` auto-attempts the pull once per matched release and includes a Pull Discogs Data retry button. If Discogs returns a Cloudflare/browser challenge, the API returns a clear error and the manual paste/file import remains the fallback.
+
+## Discogs Browser Helper Extension
+
+Companion Chrome extension lives in `browser-extension/discogs-stats-helper`. Install/reload via Chrome `chrome://extensions` -> Developer mode -> Load unpacked. The extension now has `appContent.js`, `background.js`, and Discogs `content.js`. `PriceClusterSummary` automatically posts a helper request when a Discogs match appears. The app content script forwards that request to the extension background worker, which opens the matched Discogs release in an inactive tab, adds hash params `recordScanner=1`, `recordScannerMode=background`, and a one-time token, then waits for the Discogs content script to parse Last Sold/Low/Median/High from `#release-stats` or the visible Statistics block. The background worker forwards results back to the app tab and closes the helper tab. App accepts only messages with the matching token and stores the stats as source `browser_extension`. Browser-helper median is a hard threshold signal in `scoreRecord`: above threshold GREEN/100%, at or below threshold RED/100%.
 
 ## Hosting Prep
 

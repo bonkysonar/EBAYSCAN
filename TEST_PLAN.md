@@ -11,7 +11,11 @@
 7. Upload an image and verify the image path uses mock data with an image-placeholder warning.
 8. Switch Condition to New and Both and verify searches still run.
 9. Turn on Speed Mode. Verify the barcode input receives focus immediately, catalog/manual/image inputs are disabled, scanning/submitting a barcode works, and focus returns to the barcode input after the result appears.
-10. Adjust the threshold in Settings and verify the result changes after searching again.
+10. When a Discogs match appears, verify the Discogs panel automatically tries to pull sales stats once and that the Pull Discogs Data button can retry it. If Discogs blocks the page pull, expect a clear blocker message.
+11. Paste or upload saved Discogs Statistics text/HTML containing Last Sold, Low, Median, and High. Verify the Discogs panel displays the imported values and a below-threshold Discogs median prevents GREEN.
+12. Install or reload the Chrome helper from `browser-extension/discogs-stats-helper`, run a result with a Discogs match, and verify the helper opens an inactive Discogs tab, sends visible Discogs stats back to Record Scanner, and closes the helper tab.
+13. Click Run Discogs Helper and verify it retries the same background flow.
+14. Adjust the threshold in Settings and verify the result changes after searching again.
 
 ## Automated Tests
 
@@ -27,6 +31,10 @@ Coverage should include:
 - Manual artist/title searches calculate low-end value from the cheapest title-matching comparable listings.
 - Visible candidate listings are sorted from lowest total price upward.
 - Real eBay searches with more than 200 active matches paginate beyond the first page and report pages/returned counts in the source summary.
+- Discogs sales statistics parser extracts Last Sold, Low, Median, and High from pasted text or saved HTML.
+- Imported Discogs sales median prevents GREEN when it is at or below the configured threshold.
+- Browser-helper Discogs median acts as the hard threshold decision with 100% confidence.
+- Best-effort Discogs page pull reports blocked/failed page fetches without fabricating sales stats.
 - Barcode, catalog-number, manual, and image inputs share the marketplace interface.
 - Price normalization.
 - Title normalization.
@@ -51,6 +59,7 @@ After a Vercel deployment, verify:
 - Barcode search still accepts scanner-style Enter submit.
 - Condition filter defaults to Used.
 - Discogs data appears only when `DISCOGS_USER_TOKEN` is configured.
+- Discogs sales stats pull either displays Last Sold/Low/Median/High or shows the Discogs browser-challenge/blocker message.
 - No secrets appear in browser source, network payloads, or committed files.
 
 

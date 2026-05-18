@@ -57,11 +57,34 @@ Each result includes an Open eBay sold research link. It uses eBay Seller Hub Pr
 
 Optional Discogs marketplace stats are available when .env.local includes:
 
-`env
+```env
 DISCOGS_USER_TOKEN=your_discogs_personal_token_here
-` 
+```
 
 The app searches Discogs releases in parallel with eBay and displays matched release, lowest marketplace price, number for sale, have/want counts, and match confidence. Discogs median/sold-history price is shown as unavailable unless the API returns it.
+
+## Discogs Sales Stats Pull / Import
+
+Discogs release pages show useful sales statistics such as Last Sold, Low, Median, and High. Those sales-history values are not available from the official API response used by the app. When a result has a Discogs match, the app can try a one-release-at-a-time pull of the matched Discogs page, or you can paste the visible Statistics text / upload a saved Discogs HTML/XML/text file into the Discogs import box. Parsed Discogs sales median becomes a stricter GREEN gate.
+
+Discogs may block the automatic pull with a browser challenge; when that happens, the app shows the blocker and the paste/file import box remains the fallback. Do not use this as a batch data-mining feature.
+
+## Discogs Browser Helper
+
+For the fastest workflow, install the companion Chrome extension from `browser-extension/discogs-stats-helper`:
+
+1. Open Chrome and go to `chrome://extensions`.
+2. Turn on Developer mode.
+3. Click Load unpacked.
+4. Choose `C:\Users\dbort\OneDrive\Documents\Codex Projects\Record Scanner\browser-extension\discogs-stats-helper`.
+5. In Record Scanner, scan/search a record with a Discogs match.
+6. Click Open Discogs Helper.
+
+The helper opens the matched Discogs release in a tab, reads the visible Last Sold / Low / Median / High stats from your real browser session, and sends them back to Record Scanner. This avoids waiting on Google Sheets and avoids pretending the server can read Discogs pages when Discogs blocks automated page fetches.
+
+Once installed, Record Scanner asks the helper automatically when a Discogs match appears. The helper opens an inactive background tab, reads the stats, sends them back, and closes the helper tab. The Run Discogs Helper button retries the same background flow.
+
+When the browser helper returns a Discogs sales median, that median becomes the hard threshold signal: median above the configured threshold is GREEN, and median at/below the threshold is RED.
 
 ## Identifier Search Expansion
 
@@ -80,6 +103,7 @@ npm run build
 - `src/server/marketplaceApi.ts` contains shared server-side eBay and Discogs lookup logic.
 - `vite.config.ts` wires that shared lookup into local Vite dev at `/api/ebay/search`.
 - `api/ebay/search.ts` exposes the same lookup as a hosted Vercel serverless function.
+- `api/discogs/stats.ts` exposes the best-effort one-release Discogs stats pull.
 - `src/lib/scoring` contains GREEN/YELLOW/RED triage logic.
 - `src/lib/normalization` contains price, title, and consensus helpers.
 - `src/components` contains focused UI components.
