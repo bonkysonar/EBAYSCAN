@@ -4,9 +4,12 @@ export type DecisionColor = "GREEN" | "YELLOW" | "RED";
 
 export type PriceSummary = {
   lowestTotalPrice: number | null;
+  averageCheapestTenTotalPrice: number | null;
+  cheapestTenCount: number;
   medianTotalPrice: number | null;
   trimmedMedianTotalPrice: number | null;
   resultCount: number;
+  relevantResultCount: number;
   sameTitleClusterCount: number;
   highOutlierCount: number;
   priceSpread: number | null;
@@ -14,8 +17,8 @@ export type PriceSummary = {
 
 export type ScoringSettings = {
   threshold: number;
-  minimumResultsForGreen: number;
-  minimumConfidenceForGreen: number;
+  minimumResultsForSkip: number;
+  minimumConfidenceForSkip: number;
   highOutlierMultiplier: number;
   wideSpreadMultiplier: number;
 };
@@ -33,8 +36,8 @@ export type TriageDecision = {
 
 export const defaultScoringSettings: ScoringSettings = {
   threshold: 5,
-  minimumResultsForGreen: 4,
-  minimumConfidenceForGreen: 0.72,
+  minimumResultsForSkip: 4,
+  minimumConfidenceForSkip: 0.72,
   highOutlierMultiplier: 3,
   wideSpreadMultiplier: 4,
 };

@@ -1,4 +1,4 @@
-﻿import type { SearchInput } from "../lib/ebay/types";
+﻿import type { ListingConditionFilter, SearchInput } from "../lib/ebay/types";
 import type { TriageDecision } from "../lib/scoring/types";
 
 type Props = {
@@ -23,8 +23,15 @@ export function DecisionBanner({ decision, input }: Props) {
 }
 
 function inputLabel(input: SearchInput): string {
-  if (input.type === "barcode") return `Barcode: ${input.barcode}`;
-  if (input.type === "catalog") return `Catalog: ${input.catalogNumber}`;
-  if (input.type === "manual") return `Manual: ${input.query}`;
-  return `Image: ${input.fileName ?? "uploaded cover"}`;
+  const condition = ` · ${conditionLabel(input.conditionFilter)}`;
+  if (input.type === "barcode") return `Barcode: ${input.barcode}${condition}`;
+  if (input.type === "catalog") return `Catalog: ${input.catalogNumber}${condition}`;
+  if (input.type === "manual") return `Manual: ${input.query}${condition}`;
+  return `Image: ${input.fileName ?? "uploaded cover"}${condition}`;
+}
+
+function conditionLabel(conditionFilter: ListingConditionFilter = "used"): string {
+  if (conditionFilter === "new") return "new";
+  if (conditionFilter === "both") return "new + used";
+  return "used";
 }

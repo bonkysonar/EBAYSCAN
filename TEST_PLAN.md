@@ -3,13 +3,15 @@
 ## Manual Flow
 
 1. Run `npm install`.
-2. Run `npm run dev`.
-3. Enter `012345LOW` in barcode mode and press Enter. Expect GREEN.
-4. Enter `999999RARE` in barcode mode and press Enter. Expect RED or YELLOW depending on risk mix.
-5. Enter `60296-1` in catalog-number mode and press Enter. Expect YELLOW because the mock includes overlapping matches.
-6. Enter `mixed ambiguous vinyl` in manual mode and press Enter. Expect YELLOW.
-7. Adjust the threshold in Settings and verify the result changes after searching again.
-8. Upload an image and verify the image path uses the same marketplace/scoring flow.
+2. Create `.env.local` with `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET` if testing real eBay lookup.
+3. Run `npm run dev`.
+4. Leave Condition set to Used, enter `fleetwood mac rumours` in manual mode, and press Enter. Expect real eBay used-condition results if the token is valid.
+5. Enter `BXL1 0209` in catalog-number mode and press Enter. Expect a source summary showing both a catalog-number query and an expanded artist/title query if eBay returns enough title clues. If `DISCOGS_USER_TOKEN` is configured, expect a Discogs match with lowest price and for-sale/have/want counts.
+6. Enter `012345LOW` in barcode mode and press Enter. Expect real eBay lookup if token is valid; explicit mock fallback should classify this demo input as RED skip if real lookup fails.
+7. Upload an image and verify the image path uses mock data with an image-placeholder warning.
+8. Switch Condition to New and Both and verify searches still run.
+9. Turn on Speed Mode. Verify the barcode input receives focus immediately, catalog/manual/image inputs are disabled, scanning/submitting a barcode works, and focus returns to the barcode input after the result appears.
+10. Adjust the threshold in Settings and verify the result changes after searching again.
 
 ## Automated Tests
 
@@ -17,11 +19,14 @@ Run `npm test`.
 
 Coverage should include:
 
-- Low-value obvious records score GREEN.
-- High-value obvious records score RED.
+- Low-value obvious records score RED.
+- High-value obvious records score GREEN.
 - Mixed or ambiguous results score YELLOW.
 - Overlapping catalog-number results stay YELLOW.
-- Risk keywords prevent GREEN.
+- Risk keywords prevent RED skip.
+- Manual artist/title searches calculate low-end value from the cheapest title-matching comparable listings.
+- Visible candidate listings are sorted from lowest total price upward.
+- Real eBay searches with more than 200 active matches paginate beyond the first page and report pages/returned counts in the source summary.
 - Barcode, catalog-number, manual, and image inputs share the marketplace interface.
 - Price normalization.
 - Title normalization.
@@ -33,4 +38,19 @@ Mocks should remain deterministic and credential-free. Add fixture cases wheneve
 
 ## Future Real eBay Testing
 
-Use official eBay APIs only. Add integration tests behind environment-gated configuration and keep unit tests independent from credentials.
+Use official eBay APIs only. Keep unit tests independent from credentials. Add integration tests behind environment-gated configuration once token minting is automated.
+
+## Hosted Testing
+
+Before deploying, run `npm test` and `npm run build`.
+
+After a Vercel deployment, verify:
+
+- Manual search returns real eBay results from `/api/ebay/search`.
+- Catalog search still performs identifier expansion.
+- Barcode search still accepts scanner-style Enter submit.
+- Condition filter defaults to Used.
+- Discogs data appears only when `DISCOGS_USER_TOKEN` is configured.
+- No secrets appear in browser source, network payloads, or committed files.
+
+

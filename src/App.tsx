@@ -5,6 +5,7 @@ import { PriceClusterSummary } from "./components/PriceClusterSummary";
 import { ReasonCodesPanel } from "./components/ReasonCodesPanel";
 import { SearchInputPanel } from "./components/SearchInputPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { EbayClient } from "./lib/ebay/client";
 import { MockEbayClient } from "./lib/ebay/mockClient";
 import type { SearchInput, SearchResult } from "./lib/ebay/types";
 import { scoreRecord } from "./lib/scoring/scoreRecord";
@@ -18,14 +19,15 @@ export function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TriageDecision[]>([]);
-  const client = useMemo(() => new MockEbayClient(), []);
+  const ebayClient = useMemo(() => new EbayClient(), []);
+  const mockClient = useMemo(() => new MockEbayClient(), []);
 
   async function runSearch(input: SearchInput) {
     setIsSearching(true);
     setError(null);
 
     try {
-      const result = await client.search(input);
+      const result = await searchWithFallback(input);
       const nextDecision = scoreRecord(result, settings);
       setSearchResult(result);
       setDecision(nextDecision);
@@ -35,6 +37,48 @@ export function App() {
     } finally {
       setIsSearching(false);
     }
+  }
+
+  async function searchWithFallback(input: SearchInput): Promise<SearchResult> {
+    if (input.type === "image") {
+      return mockClient.search(input);
+    }
+
+    try {
+      return await ebayClient.search(input);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Unknown eBay error";
+
+      if (shouldUseMockFallback(input)) {
+        const fallback = await mockClient.search(input);
+        return {
+          ...fallback,
+          warnings: [`Real eBay lookup failed, showing demo mock fallback: ${message}`, ...fallback.warnings],
+        };
+      }
+
+      return {
+        input,
+        listings: [],
+        source: "ebay",
+        timestamp: new Date().toISOString(),
+        warnings: [`Real eBay lookup failed: ${message}. Generate a fresh eBay application token or try again.`],
+        rawSummary: "No live eBay results were shown because the real lookup failed.",
+      };
+    }
+  }
+
+  function shouldUseMockFallback(input: SearchInput): boolean {
+    if (input.type === "barcode") {
+      return ["012345LOW", "999999RARE"].includes(input.barcode.toUpperCase());
+    }
+
+    if (input.type === "manual") {
+      const query = input.query.toLowerCase();
+      return query.includes("mixed ambiguous") || query.includes("promo white label");
+    }
+
+    return false;
   }
 
   function updateSettings(nextSettings: ScoringSettings) {
@@ -74,11 +118,15 @@ export function App() {
           {decision ? (
             <>
               <DecisionBanner decision={decision} input={searchResult?.input ?? null} />
-              <div className="result-details">
-                <PriceClusterSummary summary={decision.priceSummary} />
-                <ReasonCodesPanel reasons={decision.reasons} warnings={decision.warnings} />
-              </div>
+              <PriceClusterSummary
+                discogs={searchResult?.marketSnapshot?.discogs}
+                ebayResearchKeywords={searchResult?.marketSnapshot?.ebayResearchKeywords}
+                ebayResearchUrl={searchResult?.marketSnapshot?.ebayResearchUrl}
+                sourceSummary={searchResult?.rawSummary}
+                summary={decision.priceSummary}
+              />
               <CandidateListingList listings={decision.topListings} />
+              <ReasonCodesPanel reasons={decision.reasons} warnings={decision.warnings} />
             </>
           ) : (
             <section className="empty-state">
@@ -88,7 +136,7 @@ export function App() {
                 <span>Try: 012345LOW</span>
                 <span>Try: 999999RARE</span>
                 <span>Try catalog: 60296-1</span>
-                <span>Try: mixed ambiguous vinyl</span>
+                <span>Try real search: fleetwood mac rumours</span>
               </div>
             </section>
           )}
@@ -109,6 +157,5 @@ export function App() {
     </main>
   );
 }
-
 
 

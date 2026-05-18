@@ -4,6 +4,7 @@ node_modules/
 # builds
 dist/
 *.tsbuildinfo
+.vercel/
 
 # local env/secrets
 .env
@@ -19,3 +20,4 @@ vite.config.d.ts
 Thumbs.db
 .vscode/
 .idea/
+.vercel

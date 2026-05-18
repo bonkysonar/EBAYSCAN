@@ -20,12 +20,12 @@ export function SettingsPanel({ settings, onChange }: Props) {
         <input type="number" min="0" step="0.5" value={settings.threshold} onChange={(event) => updateNumber("threshold", event.target.value)} />
       </label>
       <label>
-        Min results for GREEN
-        <input type="number" min="1" step="1" value={settings.minimumResultsForGreen} onChange={(event) => updateNumber("minimumResultsForGreen", event.target.value)} />
+        Min results for RED skip
+        <input type="number" min="1" step="1" value={settings.minimumResultsForSkip} onChange={(event) => updateNumber("minimumResultsForSkip", event.target.value)} />
       </label>
       <label>
-        Min GREEN confidence
-        <input type="number" min="0" max="1" step="0.05" value={settings.minimumConfidenceForGreen} onChange={(event) => updateNumber("minimumConfidenceForGreen", event.target.value)} />
+        Min RED skip confidence
+        <input type="number" min="0" max="1" step="0.05" value={settings.minimumConfidenceForSkip} onChange={(event) => updateNumber("minimumConfidenceForSkip", event.target.value)} />
       </label>
     </section>
   );

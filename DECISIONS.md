@@ -6,7 +6,7 @@ The app uses a `MarketplaceClient` interface with a mock eBay client first. This
 
 ## 2026-05-16: Conservative Triage Defaults
 
-Uncertain records go YELLOW. The app should only return GREEN when there are enough similar listings, low prices, no meaningful risk flags, and adequate confidence.
+Uncertain records go YELLOW. GREEN means likely worth processing because comparable prices cluster above the threshold. RED means likely safe to skip, and should only be returned when there are enough similar listings, low prices, no meaningful risk flags, and adequate confidence.
 
 ## 2026-05-16: Local-first MVP
 
@@ -15,3 +15,35 @@ Settings are stored in browser localStorage and fixtures are local TypeScript da
 ## 2026-05-16: React + Vite + TypeScript
 
 The initial stack is React + Vite + TypeScript with Vitest. This keeps the MVP lightweight, easy to run locally, and friendly to modular UI and logic tests.
+
+## 2026-05-16: Local eBay Browse API Endpoint
+
+Real eBay lookup is routed through a local Vite dev-server endpoint so OAuth credentials and minted tokens stay out of browser bundles. Barcode, catalog-number, and manual search can use real Browse API search. Searches default to used listings because used vinyl is the primary workflow, with New and Both available as operator controls. Real lookup failures return YELLOW/no-results warnings instead of generic mock matches; mock fallback is reserved for explicit demo inputs and image placeholder work. Image search remains mocked until official image-search access is confirmed.
+
+## 2026-05-16: Identifier Search Expansion
+
+Catalog numbers and barcodes can be too narrow by themselves. Identifier searches now run a primary identifier query, derive likely artist/title tokens from the returned titles, run an expanded artist/title query, and merge/dedupe the results. eBay total-match counts are preserved in the raw summary so future scoring can reason about market saturation separately from the returned candidate list.
+
+
+## 2026-05-17: Discogs Marketplace Stats
+
+Discogs lookup uses DISCOGS_USER_TOKEN server-side only. The app searches Discogs releases, fetches release details and marketplace stats, and displays matched release, lowest price, number for sale, have/want counts, and match confidence. Current API responses did not provide median/sold-history price, so the UI labels median as unavailable rather than inventing it.
+
+## 2026-05-17: Vercel-Ready Server Boundary
+
+Marketplace lookup logic now lives in `src/server/marketplaceApi.ts` so local Vite middleware and hosted serverless routes share the same implementation. The hosted entrypoint is `api/ebay/search.ts`, and `vercel.json` configures the Vite build plus serverless function. This keeps eBay and Discogs secrets server-side while allowing the app to run from other computers once deployed.
+
+## 2026-05-17: Low-End Comparable Price Signal
+
+Broad median listing price can be misleading for common records with many cheap copies and a few expensive outliers. Scoring now emphasizes the average of the cheapest 10 title-matching comparable listings, and visible candidate tiles are sorted from lowest total price upward. This better supports fast culling decisions such as `BOZ SCAGGS Slow Dancer`, where many active listings are below the processing threshold.
+
+For threshold decisions, `averageCheapestTenTotalPrice` is the primary benchmark. If it is above the configured threshold and enough comparable listings exist, the app returns GREEN even when listing consensus is imperfect. This matches the workbench rule: above-threshold low-end comps mean "go/process," not "skip."
+
+Catalog-number Discogs matching is stricter than general text search. Catalog results are ranked by normalized catno similarity, shared catalog tokens, standalone series numbers, and plausible original-year preference so values such as `ECM 1 1216` prefer `ECM-1-1216`/1982-style matches over later reissues.
+
+Barcode searches can use Discogs as an eBay expansion source. If eBay GTIN/text barcode search returns no usable listings but Discogs identifies the release, the API runs a second eBay search using the Discogs artist/title. This fixes cases such as `07599254741`, where Discogs identifies `Peter Cetera - Solitude / Solitaire` but eBay GTIN search returns zero.
+
+## 2026-05-17: Paginate Active eBay Candidates
+
+The eBay Browse API endpoint is queried in 200-listing pages, up to 1,000 returned listings per query leg. This prevents title-match and market-saturation logic from silently maxing out at the first page while preserving eBay's reported total count in the raw summary.
+
