@@ -82,7 +82,7 @@ For the fastest workflow, install the companion Chrome extension from `browser-e
 
 The helper opens the matched Discogs release in a tab, reads the visible Last Sold / Low / Median / High stats from your real browser session, and sends them back to Record Scanner. This avoids waiting on Google Sheets and avoids pretending the server can read Discogs pages when Discogs blocks automated page fetches.
 
-Once installed, Record Scanner asks the helper automatically when a Discogs match appears. The helper opens an inactive background tab, reads the stats, sends them back, and closes the helper tab. The Run Discogs Helper button retries the same background flow.
+Once installed, Record Scanner opens the helper automatically shortly after a Discogs match appears. The helper uses the visible Discogs page flow because that is the fastest proven path in David's browser session. The Run Discogs Helper button retries that same visible helper flow.
 
 When the browser helper returns a Discogs sales median, that median becomes the hard threshold signal: median above the configured threshold is GREEN, and median at/below the threshold is RED.
 

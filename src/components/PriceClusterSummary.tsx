@@ -65,10 +65,10 @@ function DiscogsSummary({
   const [pullMessage, setPullMessage] = useState<string | null>(null);
   const [extensionMessage, setExtensionMessage] = useState<string | null>(null);
   const [isPulling, setIsPulling] = useState(false);
-  const attemptedPullKey = useRef<string | null>(null);
+  const autoVisibleHelperKey = useRef<string | null>(null);
   const extensionToken = useRef<string | null>(null);
   const extensionTimeout = useRef<number | null>(null);
-  const visibleFallbackOpened = useRef(false);
+  const visibleHelperWindow = useRef<Window | null>(null);
 
   const pullKey = discogs.releaseUrl ?? (discogs.releaseId ? String(discogs.releaseId) : "");
 
@@ -87,11 +87,6 @@ function DiscogsSummary({
         token?: string;
         type?: string;
       };
-
-      if (payload?.type === "record-scanner-discogs-helper-status" && extensionToken.current === payload.token) {
-        if (payload.message) setExtensionMessage(payload.message);
-        return;
-      }
 
       if (payload?.type !== "record-scanner-discogs-helper-result") return;
       if (!extensionToken.current || payload.token !== extensionToken.current) return;
@@ -124,10 +119,14 @@ function DiscogsSummary({
 
   useEffect(() => {
     if (discogs.status !== "available" || discogs.salesStats || !pullKey) return;
-    if (attemptedPullKey.current === pullKey) return;
+    if (autoVisibleHelperKey.current === pullKey) return;
 
-    attemptedPullKey.current = pullKey;
-    requestDiscogsHelper("auto");
+    autoVisibleHelperKey.current = pullKey;
+    const timer = window.setTimeout(() => {
+      openVisibleDiscogsHelper("auto");
+    }, 500);
+
+    return () => window.clearTimeout(timer);
   }, [discogs.salesStats, discogs.status, pullKey]);
 
   if (discogs.status !== "available") {
@@ -169,7 +168,7 @@ function DiscogsSummary({
         {pullMessage ? <p className="source-summary">{pullMessage}</p> : null}
       </div>
       <div className="discogs-pull">
-        <button disabled={!discogs.releaseUrl} type="button" onClick={() => requestDiscogsHelper("manual")}>
+        <button disabled={!discogs.releaseUrl} type="button" onClick={() => openVisibleDiscogsHelper("manual")}>
           Run Discogs Helper
         </button>
         {extensionMessage ? <p className="source-summary">{extensionMessage}</p> : null}
@@ -219,43 +218,16 @@ function DiscogsSummary({
     }
   }
 
-  function requestDiscogsHelper(mode: "auto" | "manual") {
+  function openVisibleDiscogsHelper(mode: "auto" | "manual") {
     if (!discogs.releaseUrl) return;
 
     const token = crypto.randomUUID();
     extensionToken.current = token;
-    visibleFallbackOpened.current = false;
     setExtensionMessage(
       mode === "auto"
-        ? "Asking the Discogs browser helper for sales stats..."
-        : "Running Discogs helper in a background tab...",
+        ? "Opening Discogs helper automatically..."
+        : "Opening Discogs helper...",
     );
-
-    window.postMessage(
-      {
-        releaseUrl: discogs.releaseUrl,
-        token,
-        type: "record-scanner-discogs-helper-request",
-      },
-      window.location.origin,
-    );
-
-    clearExtensionTimeout();
-    extensionTimeout.current = window.setTimeout(() => {
-      if (extensionToken.current !== token) return;
-      if (mode === "manual") {
-        openVisibleDiscogsHelper(token);
-        setExtensionMessage("Background helper did not answer, so I opened the visible Discogs helper fallback.");
-        return;
-      }
-
-      setExtensionMessage("Discogs helper did not respond. Reload the Chrome extension and refresh this page, then try Run Discogs Helper.");
-    }, 6_000);
-  }
-
-  function openVisibleDiscogsHelper(token: string) {
-    if (!discogs.releaseUrl || visibleFallbackOpened.current) return;
-    visibleFallbackOpened.current = true;
 
     const url = new URL(discogs.releaseUrl);
     url.hash = new URLSearchParams({
@@ -263,7 +235,18 @@ function DiscogsSummary({
       recordScannerOrigin: window.location.origin,
       recordScannerToken: token,
     }).toString();
-    window.open(url.toString(), "_blank", "popup,width=960,height=760");
+    visibleHelperWindow.current = window.open(url.toString(), "record-scanner-discogs-helper", "popup,width=960,height=760");
+
+    if (!visibleHelperWindow.current) {
+      setExtensionMessage("Chrome blocked the Discogs helper popup. Click Run Discogs Helper to allow it.");
+      return;
+    }
+
+    clearExtensionTimeout();
+    extensionTimeout.current = window.setTimeout(() => {
+      if (extensionToken.current !== token) return;
+      setExtensionMessage("Discogs helper window opened, but no stats came back yet. Check whether Discogs finished loading.");
+    }, 15_000);
   }
 
   function importStatsText(text: string) {

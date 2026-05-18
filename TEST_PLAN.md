@@ -13,8 +13,8 @@
 9. Turn on Speed Mode. Verify the barcode input receives focus immediately, catalog/manual/image inputs are disabled, scanning/submitting a barcode works, and focus returns to the barcode input after the result appears.
 10. When a Discogs match appears, verify the Discogs panel automatically tries to pull sales stats once and that the Pull Discogs Data button can retry it. If Discogs blocks the page pull, expect a clear blocker message.
 11. Paste or upload saved Discogs Statistics text/HTML containing Last Sold, Low, Median, and High. Verify the Discogs panel displays the imported values and a below-threshold Discogs median prevents GREEN.
-12. Install or reload the Chrome helper from `browser-extension/discogs-stats-helper`, run a result with a Discogs match, and verify the helper opens an inactive Discogs tab, sends visible Discogs stats back to Record Scanner, and closes the helper tab.
-13. Click Run Discogs Helper and verify it retries the same background flow.
+12. Install or reload the Chrome helper from `browser-extension/discogs-stats-helper`, run a result with a Discogs match, and verify Record Scanner automatically opens the visible Discogs helper shortly after the Discogs match appears.
+13. Click Run Discogs Helper and verify it retries the same visible helper flow.
 14. Adjust the threshold in Settings and verify the result changes after searching again.
 
 ## Automated Tests
