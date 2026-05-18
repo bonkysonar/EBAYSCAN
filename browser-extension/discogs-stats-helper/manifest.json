@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Record Scanner Discogs Helper",
   "description": "Reads Discogs release sales stats for the Record Scanner workbench.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "permissions": ["tabs"],
   "host_permissions": ["https://www.discogs.com/*", "https://discogs.com/*"],
   "background": {
@@ -13,7 +13,8 @@
       "matches": [
         "http://127.0.0.1:*/*",
         "http://localhost:*/*",
-        "https://ebayscan.vercel.app/*"
+        "https://ebayscan.vercel.app/*",
+        "https://*.vercel.app/*"
       ],
       "js": ["appContent.js"],
       "run_at": "document_start"

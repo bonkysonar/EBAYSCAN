@@ -68,6 +68,7 @@ function DiscogsSummary({
   const attemptedPullKey = useRef<string | null>(null);
   const extensionToken = useRef<string | null>(null);
   const extensionTimeout = useRef<number | null>(null);
+  const visibleFallbackOpened = useRef(false);
 
   const pullKey = discogs.releaseUrl ?? (discogs.releaseId ? String(discogs.releaseId) : "");
 
@@ -217,6 +218,7 @@ function DiscogsSummary({
 
     const token = crypto.randomUUID();
     extensionToken.current = token;
+    visibleFallbackOpened.current = false;
     setExtensionMessage(
       mode === "auto"
         ? "Asking the Discogs browser helper for sales stats..."
@@ -235,8 +237,27 @@ function DiscogsSummary({
     clearExtensionTimeout();
     extensionTimeout.current = window.setTimeout(() => {
       if (extensionToken.current !== token) return;
-      setExtensionMessage("Discogs helper did not respond. Reload the Chrome extension, then try Run Discogs Helper.");
+      if (mode === "manual") {
+        openVisibleDiscogsHelper(token);
+        setExtensionMessage("Background helper did not answer, so I opened the visible Discogs helper fallback.");
+        return;
+      }
+
+      setExtensionMessage("Discogs helper did not respond. Reload the Chrome extension and refresh this page, then try Run Discogs Helper.");
     }, 6_000);
+  }
+
+  function openVisibleDiscogsHelper(token: string) {
+    if (!discogs.releaseUrl || visibleFallbackOpened.current) return;
+    visibleFallbackOpened.current = true;
+
+    const url = new URL(discogs.releaseUrl);
+    url.hash = new URLSearchParams({
+      recordScanner: "1",
+      recordScannerOrigin: window.location.origin,
+      recordScannerToken: token,
+    }).toString();
+    window.open(url.toString(), "_blank", "popup,width=960,height=760");
   }
 
   function importStatsText(text: string) {
