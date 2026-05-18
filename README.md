@@ -11,6 +11,10 @@ npm run dev
 
 Then open the Vite URL shown in the terminal, usually `http://127.0.0.1:5173`.
 
+## Hosting Status
+
+The app is prepared for Vercel hosting but has not been deployed. See `HOSTING.md` for setup steps, required environment variables, and deployment notes.
+
 ## Color Semantics
 
 - GREEN: likely worth processing/listing because prices cluster above the threshold.
@@ -41,9 +45,27 @@ The local server mints and caches short-lived eBay application tokens automatica
 - Mock/manual ambiguous fallback: `mixed ambiguous vinyl`
 - Image placeholder: upload any image to exercise the image input path against mocks.
 
+## Speed Mode
+
+Speed Mode is a barcode-only workflow for scanner sessions. Turning it on focuses the barcode input immediately, disables catalog/manual/image inputs, and returns focus to the barcode input after each lookup finishes so David can scan, glance at the result, then scan the next record.
+
+## eBay Product Research Link
+
+Each result includes an Open eBay sold research link. It uses eBay Seller Hub Product Research with 	abName=SOLD, dayRange=90, categoryId=176985, limit=50, and the best query available. For barcode/catalog searches, the link prefers the expanded artist/title query over the raw identifier.
+
+## Discogs Setup
+
+Optional Discogs marketplace stats are available when .env.local includes:
+
+`env
+DISCOGS_USER_TOKEN=your_discogs_personal_token_here
+` 
+
+The app searches Discogs releases in parallel with eBay and displays matched release, lowest marketplace price, number for sale, have/want counts, and match confidence. Discogs median/sold-history price is shown as unavailable unless the API returns it.
+
 ## Identifier Search Expansion
 
-Barcode and catalog-number lookups use a two-stage search. The app first searches the identifier, then derives likely artist/title terms from those results and runs a broader eBay search. Results are merged and deduped. The local endpoint requests up to 200 active listings per search page and reports eBay total-match counts in the source summary.
+Barcode and catalog-number lookups use a two-stage search. The app first searches the identifier, then derives likely artist/title terms from those results and runs a broader eBay search. Results are merged and deduped. The local endpoint paginates eBay Browse results in 200-listing pages, up to 1,000 returned listings per query, and reports eBay total-match counts in the source summary.
 
 ## Test Commands
 
@@ -55,7 +77,9 @@ npm run build
 ## Architecture
 
 - `src/lib/ebay` contains the marketplace client interface, browser client, and mock eBay client.
-- `vite.config.ts` contains the local dev-only eBay Browse API endpoint.
+- `src/server/marketplaceApi.ts` contains shared server-side eBay and Discogs lookup logic.
+- `vite.config.ts` wires that shared lookup into local Vite dev at `/api/ebay/search`.
+- `api/ebay/search.ts` exposes the same lookup as a hosted Vercel serverless function.
 - `src/lib/scoring` contains GREEN/YELLOW/RED triage logic.
 - `src/lib/normalization` contains price, title, and consensus helpers.
 - `src/components` contains focused UI components.
@@ -67,6 +91,8 @@ npm run build
 The real integration uses eBay OAuth client-credentials token minting with the Production Client ID and Client Secret.
 
 Browse API search currently powers barcode, catalog-number, and manual text inputs. These searches default to used listings, with New and Both available in the lookup panel. Image search remains a mock placeholder until eBay image-search access and request behavior are confirmed.
+
+
 
 
 

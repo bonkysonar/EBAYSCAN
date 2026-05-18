@@ -53,6 +53,19 @@ Marketplace candidate returned by a client:
 - `topListings`
 - `suggestedAction`
 
+## Price Summary
+
+- `lowestTotalPrice`
+- `averageCheapestTenTotalPrice`: average of the cheapest title-matching comparable listings, used as the main low-end triage signal
+- `cheapestTenCount`
+- `medianTotalPrice`
+- `trimmedMedianTotalPrice`
+- `resultCount`
+- `relevantResultCount`: title-matching listings used for low-end pricing when manual artist/title search is available
+- `sameTitleClusterCount`
+- `highOutlierCount`
+- `priceSpread`
+
 ## Settings
 
 - `threshold`: default target value threshold, initially `5`

@@ -1,4 +1,4 @@
-# Handoff
+﻿# Handoff
 
 Last updated: 2026-05-17
 
@@ -53,7 +53,7 @@ Catalog/barcode search:
 - Derives likely artist/title tokens from the primary results.
 - Runs an expanded artist/title query.
 - Merges and dedupes both result sets.
-- Uses eBay `limit=200` instead of the previous `20`.
+- Paginates eBay Browse results in 200-listing pages, up to 1,000 returned listings per query.
 
 Condition filter:
 
@@ -102,7 +102,7 @@ Request production access to the Buy Marketplace Insights API, specifically item
 - eBay Browse results can include irrelevant listings; scoring is conservative but still early.
 - Identifier expansion is heuristic. It works for the tested `BXL1 0209` example but needs more real-world cases.
 - Browser automation had clipboard issues in Codex, so some UI checks were verified through direct local API calls instead.
-- Vite middleware currently lives in `vite.config.ts`; long term, a dedicated backend/API module would be cleaner.
+- Hosted deployment is prepared for Vercel, but not deployed. Secrets must be set as server-side environment variables.
 
 ## Verification Commands
 
@@ -111,7 +111,13 @@ npm test
 npm run build
 ```
 
-Both passed after the latest scoring and eBay integration changes.
+Both passed after the latest hosting-prep refactor.
+
+Local API smoke test passed on port 5190:
+
+```text
+manual "fleetwood mac rumours vinyl record" total=781 returned=781 pages=4
+```
 
 Manual dev run:
 
@@ -129,7 +135,11 @@ Useful inputs:
 
 ## Files Most Relevant For Next Session
 
-- `vite.config.ts`: local eBay endpoint, token minting, Browse API query, identifier expansion.
+- `src/server/marketplaceApi.ts`: shared server-side eBay token minting, Browse API query, identifier expansion, Discogs lookup, and Product Research URL generation.
+- `vite.config.ts`: local Vite `/api/ebay/search` middleware that calls the shared server module.
+- `api/ebay/search.ts`: hosted Vercel serverless function for `/api/ebay/search`.
+- `vercel.json`: Vercel build/output/function config.
+- `HOSTING.md`: hosting setup notes and environment variable checklist.
 - `src/lib/ebay/types.ts`: shared marketplace/search types.
 - `src/lib/ebay/client.ts`: browser-side client calling local endpoint.
 - `src/lib/scoring/scoreRecord.ts`: GREEN/YELLOW/RED scoring.
@@ -142,5 +152,37 @@ Useful inputs:
 1. Add a Market Snapshot component showing active listed total, returned/analyzed count, search plans used, and sold-comps status.
 2. Commit the current feature branch once David is happy with the direction.
 3. Add more catalog/barcode real-world fixtures and tune identifier expansion.
-4. Split Vite middleware logic out of `vite.config.ts` into a dedicated local server module.
+4. Import the GitHub repo into Vercel and set server-side environment variables when David is ready to deploy.
 5. Request eBay Marketplace Insights API access for sold comps.
+
+## Discogs Status
+
+DISCOGS_USER_TOKEN is configured locally. Discogs release search + marketplace stats are wired into the local API and Price Cluster panel. Verified with catalog BXL1 0209: Discogs returned a high-confidence Quah match, lowest marketplace price, number for sale, have/want counts, and a warning that median/sold-history price is unavailable from current API responses.
+
+
+## Product Research Link
+
+The local API now returns marketSnapshot.ebayResearchUrl and ebayResearchKeywords. The UI renders an Open eBay sold research button in PriceClusterSummary. The URL targets Seller Hub Product Research SOLD tab for 90 days, vinyl category 176985, limit 50, and prefers expanded artist/title keywords for catalog/barcode lookups. Verified BXL1 0209 generated keywords quah jorma kaukonen tom hobson.
+
+## Boz Scaggs / Low-End Pricing Update
+
+`BOZ SCAGGS Slow Dancer` exposed that broad median active listing price is not enough for common records. Scoring now uses `averageCheapestTenTotalPrice`, calculated from the cheapest title-matching comparable listings for manual artist/title searches. Candidate tiles are sorted low-to-high from `decision.topListings`, which is now built from the cheapest relevant listings instead of the API's original order. Local smoke test returned 200 eBay listings for Boz, with cheapest visible totals starting at 1.99, 2.99, 2.99, 3.99, 4.79.
+
+The saved Discogs HTML showed page-visible sales stats for release 2165798: Last Sold Jan 25, 2026; Low $0.63; Median $2.70; High $33.26. The official release and marketplace stats API responses currently provided current marketplace lowest price and number for sale, but not those historical low/median/high sales values.
+
+## ECM Catalog Matching Update
+
+`ECM 1 1216` exposed that Discogs `catno` search can return later reissues before the intended catalog variant. Catalog-result ranking now scores normalized catno equality/containment, matching catalog tokens, standalone series number `1`, and plausible original year. Local API smoke test for `ECM 1 1216` returned Discogs `ECM-1-1216`, `Offramp`, release 7654911, confidence high, year 1982. eBay returned 112 merged listings with cheapest active totals starting at 10, 10.69, 10.99, 11.33.
+
+## Barcode Discogs-To-eBay Expansion
+
+`07599254741` exposed that eBay GTIN search can return zero listings while Discogs correctly identifies the release. The API now runs a Discogs-derived eBay fallback query for identifier searches when eBay cannot derive an artist/title expansion. Local smoke test: primary eBay barcode GTIN total=0, Discogs matched `Peter Cetera - Solitude / Solitaire`, fallback eBay query returned 75 listings, and Product Research keywords became `Peter Cetera Solitude / Solitaire`.
+
+## Speed Mode
+
+`SearchInputPanel` now has a Speed Mode toggle for barcode-only scanner sessions. When enabled, it focuses/selects the barcode input immediately, disables catalog/manual/image controls, and focuses/selects the barcode input again when `isSearching` transitions from true to false. This supports scan, glance, scan, glance workflows.
+
+## Hosting Prep
+
+Marketplace API logic was moved from `vite.config.ts` into `src/server/marketplaceApi.ts`. Local dev still works through Vite middleware, and hosted Vercel deploys can use `api/ebay/search.ts`. `vercel.json` is present, `.vercel/` is ignored, and `HOSTING.md` documents the environment variables and deployment checks.
+

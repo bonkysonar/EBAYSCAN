@@ -118,11 +118,15 @@ export function App() {
           {decision ? (
             <>
               <DecisionBanner decision={decision} input={searchResult?.input ?? null} />
-              <div className="result-details">
-                <PriceClusterSummary sourceSummary={searchResult?.rawSummary} summary={decision.priceSummary} />
-                <ReasonCodesPanel reasons={decision.reasons} warnings={decision.warnings} />
-              </div>
+              <PriceClusterSummary
+                discogs={searchResult?.marketSnapshot?.discogs}
+                ebayResearchKeywords={searchResult?.marketSnapshot?.ebayResearchKeywords}
+                ebayResearchUrl={searchResult?.marketSnapshot?.ebayResearchUrl}
+                sourceSummary={searchResult?.rawSummary}
+                summary={decision.priceSummary}
+              />
               <CandidateListingList listings={decision.topListings} />
+              <ReasonCodesPanel reasons={decision.reasons} warnings={decision.warnings} />
             </>
           ) : (
             <section className="empty-state">
@@ -153,4 +157,5 @@ export function App() {
     </main>
   );
 }
+
 

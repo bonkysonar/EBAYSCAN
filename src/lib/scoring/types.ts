@@ -4,9 +4,12 @@ export type DecisionColor = "GREEN" | "YELLOW" | "RED";
 
 export type PriceSummary = {
   lowestTotalPrice: number | null;
+  averageCheapestTenTotalPrice: number | null;
+  cheapestTenCount: number;
   medianTotalPrice: number | null;
   trimmedMedianTotalPrice: number | null;
   resultCount: number;
+  relevantResultCount: number;
   sameTitleClusterCount: number;
   highOutlierCount: number;
   priceSpread: number | null;
