@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Record Scanner Discogs Helper",
   "description": "Reads Discogs release sales stats for the Record Scanner workbench.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "permissions": ["tabs"],
   "host_permissions": ["https://www.discogs.com/*", "https://discogs.com/*"],
   "background": {
@@ -22,7 +22,7 @@
     {
       "matches": ["https://www.discogs.com/*", "https://discogs.com/*"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ]
 }

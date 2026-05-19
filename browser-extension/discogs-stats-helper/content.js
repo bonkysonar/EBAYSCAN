@@ -7,9 +7,9 @@
   const token = params.get("recordScannerToken");
   if (!token) return;
 
-  showHelperStatus("Record Scanner helper active. Waiting for Discogs stats...");
+  setTimeout(() => showHelperStatus("Record Scanner helper active. Checking Discogs stats before full page load..."), 50);
 
-  waitForStats()
+  waitForStatsAfterFixedDelay()
     .then((stats) => {
       showHelperStatus("Record Scanner helper found stats. Sending them back...");
       sendResult({ stats, token });
@@ -52,14 +52,16 @@
     }
   }
 
-  async function waitForStats() {
+  async function waitForStatsAfterFixedDelay() {
+    await sleep(500);
+
     const startedAt = Date.now();
-    const timeoutMs = 12_000;
+    const timeoutMs = 6_000;
 
     while (Date.now() - startedAt < timeoutMs) {
       const stats = readStats();
       if (stats) return stats;
-      await sleep(250);
+      await sleep(100);
     }
 
     throw new Error("Discogs helper could not find Last Sold / Low / Median / High on this page.");
@@ -142,6 +144,12 @@
       "font:14px/1.4 sans-serif",
       "box-shadow:0 12px 30px rgba(0,0,0,.2)",
     ].join(";");
-    document.documentElement.appendChild(box);
+    const parent = document.documentElement || document.body;
+    if (parent) {
+      parent.appendChild(box);
+      return;
+    }
+
+    setTimeout(() => showHelperStatus(message), 50);
   }
 })();
