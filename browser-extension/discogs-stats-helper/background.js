@@ -47,15 +47,17 @@ async function openDiscogsTab(message, sender) {
 
 async function completeRequest(message, sender) {
   const request = pendingRequests.get(message.token);
-  if (!request) return;
+  if (!request) {
+    await broadcastResultToScannerTabs(message);
+    closeHelperTab(sender.tab?.id);
+    return;
+  }
 
   pendingRequests.delete(message.token);
   await chrome.tabs.sendMessage(request.appTabId, message);
 
   const helperTabId = sender.tab?.id || request.helperTabId;
-  if (helperTabId) {
-    chrome.tabs.remove(helperTabId).catch(() => undefined);
-  }
+  closeHelperTab(helperTabId);
 }
 
 async function expireRequest(token) {
@@ -70,6 +72,30 @@ async function expireRequest(token) {
   });
 
   if (request.helperTabId) {
-    chrome.tabs.remove(request.helperTabId).catch(() => undefined);
+    closeHelperTab(request.helperTabId);
   }
+}
+
+async function broadcastResultToScannerTabs(message) {
+  const tabs = await chrome.tabs.query({
+    url: [
+      "http://127.0.0.1:*/*",
+      "http://localhost:*/*",
+      "https://ebayscan.vercel.app/*",
+      "https://*.vercel.app/*",
+    ],
+  });
+
+  await Promise.all(
+    tabs.map((tab) =>
+      tab.id
+        ? chrome.tabs.sendMessage(tab.id, message).catch(() => undefined)
+        : Promise.resolve(),
+    ),
+  );
+}
+
+function closeHelperTab(tabId) {
+  if (!tabId) return;
+  chrome.tabs.remove(tabId).catch(() => undefined);
 }

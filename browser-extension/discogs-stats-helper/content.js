@@ -35,21 +35,20 @@
       type: "record-scanner-discogs-helper-result",
     };
 
-    if (mode === "background") {
-      chrome.runtime.sendMessage(message);
-      return;
-    }
+    chrome.runtime.sendMessage({
+      ...message,
+      recordScannerOrigin: origin,
+    });
+
+    if (mode === "background") return;
 
     if (origin && window.opener) {
       window.opener.postMessage(message, origin);
       showHelperStatus("Record Scanner helper sent stats back to the scanner window.");
+      return;
     }
 
-    // If Discogs or Chrome severs window.opener, leave a visible breadcrumb for debugging
-    // instead of failing silently inside the helper popup.
-    if (origin && !window.opener) {
-      showHelperStatus("Record Scanner helper could not reach the opener window.");
-    }
+    showHelperStatus("Record Scanner helper sent stats through the extension bridge.");
   }
 
   async function waitForStatsAfterFixedDelay() {
