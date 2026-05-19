@@ -54,7 +54,7 @@ async function completeRequest(message, sender) {
   }
 
   pendingRequests.delete(message.token);
-  await chrome.tabs.sendMessage(request.appTabId, message);
+  await sendResultToScannerTab(request.appTabId, message);
 
   const helperTabId = sender.tab?.id || request.helperTabId;
   closeHelperTab(helperTabId);
@@ -65,7 +65,7 @@ async function expireRequest(token) {
   if (!request) return;
 
   pendingRequests.delete(token);
-  await chrome.tabs.sendMessage(request.appTabId, {
+  await sendResultToScannerTab(request.appTabId, {
     error: "Discogs helper timed out before it could read the sales stats.",
     token,
     type: "record-scanner-discogs-helper-result",
@@ -89,10 +89,26 @@ async function broadcastResultToScannerTabs(message) {
   await Promise.all(
     tabs.map((tab) =>
       tab.id
-        ? chrome.tabs.sendMessage(tab.id, message).catch(() => undefined)
+        ? sendResultToScannerTab(tab.id, message).catch(() => undefined)
         : Promise.resolve(),
     ),
   );
+}
+
+async function sendResultToScannerTab(tabId, message) {
+  if (!tabId) return;
+
+  await chrome.scripting
+    .executeScript({
+      target: { tabId },
+      func: (payload) => {
+        window.postMessage(payload, window.location.origin);
+      },
+      args: [message],
+    })
+    .catch(async () => {
+      await chrome.tabs.sendMessage(tabId, message).catch(() => undefined);
+    });
 }
 
 function closeHelperTab(tabId) {
