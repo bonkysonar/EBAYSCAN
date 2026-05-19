@@ -49,6 +49,9 @@
     }
 
     showHelperStatus("Record Scanner helper sent stats through the extension bridge.");
+    if (origin) {
+      setTimeout(() => returnViaScannerStorage(origin, token, message), 350);
+    }
   }
 
   async function waitForStatsAfterFixedDelay() {
@@ -117,6 +120,14 @@
     const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const queryParams = new URLSearchParams(window.location.search);
     return hashParams.get("recordScanner") ? hashParams : queryParams;
+  }
+
+  function returnViaScannerStorage(origin, token, message) {
+    const url = new URL(origin);
+    url.searchParams.set("recordScannerReturn", "1");
+    url.searchParams.set("recordScannerToken", token);
+    url.searchParams.set("recordScannerPayload", btoa(encodeURIComponent(JSON.stringify(message))));
+    window.location.href = url.toString();
   }
 
   function showHelperStatus(message) {

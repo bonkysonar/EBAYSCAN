@@ -111,10 +111,26 @@ function DiscogsSummary({
     }
 
     window.addEventListener("message", receiveDiscogsStats);
+    window.addEventListener("storage", receiveStoredDiscogsStats);
     return () => {
       window.removeEventListener("message", receiveDiscogsStats);
+      window.removeEventListener("storage", receiveStoredDiscogsStats);
       clearExtensionTimeout();
     };
+
+    function receiveStoredDiscogsStats(event: StorageEvent) {
+      if (event.key !== "record-scanner-discogs-helper-result" || !event.newValue) return;
+      const stored = JSON.parse(event.newValue) as { payload?: string; token?: string };
+      if (!extensionToken.current || stored.token !== extensionToken.current || !stored.payload) return;
+
+      const payload = JSON.parse(decodeURIComponent(atob(stored.payload))) as {
+        error?: string;
+        stats?: DiscogsSalesStats;
+        token?: string;
+        type?: string;
+      };
+      window.dispatchEvent(new MessageEvent("message", { data: payload, origin: window.location.origin }));
+    }
   }, [onSalesStatsImport]);
 
   useEffect(() => {

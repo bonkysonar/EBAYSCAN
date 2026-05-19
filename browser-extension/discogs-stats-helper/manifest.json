@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Record Scanner Discogs Helper",
   "description": "Reads Discogs release sales stats for the Record Scanner workbench.",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "permissions": ["tabs", "scripting"],
   "host_permissions": [
     "http://127.0.0.1:*/*",
