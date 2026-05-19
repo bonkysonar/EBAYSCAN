@@ -1,5 +1,5 @@
 (() => {
-  const params = new URLSearchParams(window.location.hash.replace(/^#/, "") || window.location.search);
+  const params = readHelperParams();
   if (params.get("recordScanner") !== "1") return;
 
   const mode = params.get("recordScannerMode");
@@ -7,11 +7,15 @@
   const token = params.get("recordScannerToken");
   if (!token) return;
 
+  showHelperStatus("Record Scanner helper active. Waiting for Discogs stats...");
+
   waitForStats()
     .then((stats) => {
+      showHelperStatus("Record Scanner helper found stats. Sending them back...");
       sendResult({ stats, token });
     })
     .catch((error) => {
+      showHelperStatus(error instanceof Error ? error.message : "Discogs helper could not read stats.");
       sendResult({
         error: error instanceof Error ? error.message : "Discogs helper could not read stats.",
         token,
@@ -38,6 +42,7 @@
 
     if (origin && window.opener) {
       window.opener.postMessage(message, origin);
+      showHelperStatus("Record Scanner helper sent stats back to the scanner window.");
     }
 
     // If Discogs or Chrome severs window.opener, leave a visible breadcrumb for debugging
@@ -107,8 +112,21 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  function readHelperParams() {
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const queryParams = new URLSearchParams(window.location.search);
+    return hashParams.get("recordScanner") ? hashParams : queryParams;
+  }
+
   function showHelperStatus(message) {
+    const existing = document.getElementById("record-scanner-helper-status");
+    if (existing) {
+      existing.textContent = message;
+      return;
+    }
+
     const box = document.createElement("div");
+    box.id = "record-scanner-helper-status";
     box.textContent = message;
     box.style.cssText = [
       "position:fixed",

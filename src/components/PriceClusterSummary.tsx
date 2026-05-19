@@ -230,11 +230,15 @@ function DiscogsSummary({
     );
 
     const url = new URL(discogs.releaseUrl);
-    url.hash = new URLSearchParams({
+    const helperParams = {
       recordScanner: "1",
       recordScannerOrigin: window.location.origin,
       recordScannerToken: token,
-    }).toString();
+    };
+    for (const [key, value] of Object.entries(helperParams)) {
+      url.searchParams.set(key, value);
+    }
+    url.hash = new URLSearchParams(helperParams).toString();
     visibleHelperWindow.current = window.open(url.toString(), "_blank", "popup,width=960,height=760");
 
     if (!visibleHelperWindow.current) {
