@@ -235,7 +235,7 @@ function DiscogsSummary({
       recordScannerOrigin: window.location.origin,
       recordScannerToken: token,
     }).toString();
-    visibleHelperWindow.current = window.open(url.toString(), "record-scanner-discogs-helper", "popup,width=960,height=760");
+    visibleHelperWindow.current = window.open(url.toString(), "_blank", "popup,width=960,height=760");
 
     if (!visibleHelperWindow.current) {
       setExtensionMessage("Chrome blocked the Discogs helper popup. Click Run Discogs Helper to allow it.");

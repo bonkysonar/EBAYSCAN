@@ -39,6 +39,12 @@
     if (origin && window.opener) {
       window.opener.postMessage(message, origin);
     }
+
+    // If Discogs or Chrome severs window.opener, leave a visible breadcrumb for debugging
+    // instead of failing silently inside the helper popup.
+    if (origin && !window.opener) {
+      showHelperStatus("Record Scanner helper could not reach the opener window.");
+    }
   }
 
   async function waitForStats() {
@@ -99,5 +105,25 @@
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function showHelperStatus(message) {
+    const box = document.createElement("div");
+    box.textContent = message;
+    box.style.cssText = [
+      "position:fixed",
+      "z-index:2147483647",
+      "top:12px",
+      "right:12px",
+      "max-width:360px",
+      "padding:12px",
+      "background:#fff8dc",
+      "border:2px solid #b45309",
+      "border-radius:10px",
+      "color:#111827",
+      "font:14px/1.4 sans-serif",
+      "box-shadow:0 12px 30px rgba(0,0,0,.2)",
+    ].join(";");
+    document.documentElement.appendChild(box);
   }
 })();
