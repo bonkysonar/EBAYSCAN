@@ -1,5 +1,5 @@
 (() => {
-  const params = readHelperParams();
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, "") || window.location.search);
   if (params.get("recordScanner") !== "1") return;
 
   const mode = params.get("recordScannerMode");
@@ -7,15 +7,11 @@
   const token = params.get("recordScannerToken");
   if (!token) return;
 
-  setTimeout(() => showHelperStatus("Record Scanner helper active. Checking Discogs stats before full page load..."), 50);
-
-  waitForStatsAfterFixedDelay()
+  waitForStats()
     .then((stats) => {
-      showHelperStatus("Record Scanner helper found stats. Sending them back...");
       sendResult({ stats, token });
     })
     .catch((error) => {
-      showHelperStatus(error instanceof Error ? error.message : "Discogs helper could not read stats.");
       sendResult({
         error: error instanceof Error ? error.message : "Discogs helper could not read stats.",
         token,
@@ -35,35 +31,24 @@
       type: "record-scanner-discogs-helper-result",
     };
 
-    chrome.runtime.sendMessage({
-      ...message,
-      recordScannerOrigin: origin,
-    });
-
-    if (mode === "background") return;
-
-    if (origin && window.opener) {
-      window.opener.postMessage(message, origin);
-      showHelperStatus("Record Scanner helper sent stats back to the scanner window.");
+    if (mode === "background") {
+      chrome.runtime.sendMessage(message);
       return;
     }
 
-    showHelperStatus("Record Scanner helper sent stats through the extension bridge.");
-    if (origin) {
-      setTimeout(() => returnViaScannerStorage(origin, token, message), 350);
+    if (origin && window.opener) {
+      window.opener.postMessage(message, origin);
     }
   }
 
-  async function waitForStatsAfterFixedDelay() {
-    await sleep(500);
-
+  async function waitForStats() {
     const startedAt = Date.now();
-    const timeoutMs = 6_000;
+    const timeoutMs = 12_000;
 
     while (Date.now() - startedAt < timeoutMs) {
       const stats = readStats();
       if (stats) return stats;
-      await sleep(100);
+      await sleep(250);
     }
 
     throw new Error("Discogs helper could not find Last Sold / Low / Median / High on this page.");
@@ -114,52 +99,5 @@
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  function readHelperParams() {
-    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-    const queryParams = new URLSearchParams(window.location.search);
-    return hashParams.get("recordScanner") ? hashParams : queryParams;
-  }
-
-  function returnViaScannerStorage(origin, token, message) {
-    const url = new URL(origin);
-    url.searchParams.set("recordScannerReturn", "1");
-    url.searchParams.set("recordScannerToken", token);
-    url.searchParams.set("recordScannerPayload", btoa(encodeURIComponent(JSON.stringify(message))));
-    window.location.href = url.toString();
-  }
-
-  function showHelperStatus(message) {
-    const existing = document.getElementById("record-scanner-helper-status");
-    if (existing) {
-      existing.textContent = message;
-      return;
-    }
-
-    const box = document.createElement("div");
-    box.id = "record-scanner-helper-status";
-    box.textContent = message;
-    box.style.cssText = [
-      "position:fixed",
-      "z-index:2147483647",
-      "top:12px",
-      "right:12px",
-      "max-width:360px",
-      "padding:12px",
-      "background:#fff8dc",
-      "border:2px solid #b45309",
-      "border-radius:10px",
-      "color:#111827",
-      "font:14px/1.4 sans-serif",
-      "box-shadow:0 12px 30px rgba(0,0,0,.2)",
-    ].join(";");
-    const parent = document.documentElement || document.body;
-    if (parent) {
-      parent.appendChild(box);
-      return;
-    }
-
-    setTimeout(() => showHelperStatus(message), 50);
   }
 })();

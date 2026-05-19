@@ -111,26 +111,10 @@ function DiscogsSummary({
     }
 
     window.addEventListener("message", receiveDiscogsStats);
-    window.addEventListener("storage", receiveStoredDiscogsStats);
     return () => {
       window.removeEventListener("message", receiveDiscogsStats);
-      window.removeEventListener("storage", receiveStoredDiscogsStats);
       clearExtensionTimeout();
     };
-
-    function receiveStoredDiscogsStats(event: StorageEvent) {
-      if (event.key !== "record-scanner-discogs-helper-result" || !event.newValue) return;
-      const stored = JSON.parse(event.newValue) as { payload?: string; token?: string };
-      if (!extensionToken.current || stored.token !== extensionToken.current || !stored.payload) return;
-
-      const payload = JSON.parse(decodeURIComponent(atob(stored.payload))) as {
-        error?: string;
-        stats?: DiscogsSalesStats;
-        token?: string;
-        type?: string;
-      };
-      window.dispatchEvent(new MessageEvent("message", { data: payload, origin: window.location.origin }));
-    }
   }, [onSalesStatsImport]);
 
   useEffect(() => {
@@ -246,16 +230,12 @@ function DiscogsSummary({
     );
 
     const url = new URL(discogs.releaseUrl);
-    const helperParams = {
+    url.hash = new URLSearchParams({
       recordScanner: "1",
       recordScannerOrigin: window.location.origin,
       recordScannerToken: token,
-    };
-    for (const [key, value] of Object.entries(helperParams)) {
-      url.searchParams.set(key, value);
-    }
-    url.hash = new URLSearchParams(helperParams).toString();
-    visibleHelperWindow.current = window.open(url.toString(), "_blank", "popup,width=960,height=760");
+    }).toString();
+    visibleHelperWindow.current = window.open(url.toString(), "record-scanner-discogs-helper", "popup,width=960,height=760");
 
     if (!visibleHelperWindow.current) {
       setExtensionMessage("Chrome blocked the Discogs helper popup. Click Run Discogs Helper to allow it.");

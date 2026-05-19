@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useMemo, useState } from "react";
 import { CandidateListingList } from "./components/CandidateListingList";
 import { DecisionBanner } from "./components/DecisionBanner";
 import { PriceClusterSummary } from "./components/PriceClusterSummary";
@@ -13,7 +13,6 @@ import type { ScoringSettings, TriageDecision } from "./lib/scoring/types";
 import { loadSettings, saveSettings } from "./lib/storage/localSettings";
 
 export function App() {
-  const [isHelperReturn, setIsHelperReturn] = useState(false);
   const [settings, setSettings] = useState<ScoringSettings>(() => loadSettings());
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [decision, setDecision] = useState<TriageDecision | null>(null);
@@ -22,27 +21,6 @@ export function App() {
   const [history, setHistory] = useState<TriageDecision[]>([]);
   const ebayClient = useMemo(() => new EbayClient(), []);
   const mockClient = useMemo(() => new MockEbayClient(), []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("recordScannerReturn") !== "1") return;
-
-    setIsHelperReturn(true);
-    const token = params.get("recordScannerToken");
-    const payload = params.get("recordScannerPayload");
-    if (token && payload) {
-      localStorage.setItem(
-        "record-scanner-discogs-helper-result",
-        JSON.stringify({
-          deliveredAt: new Date().toISOString(),
-          payload,
-          token,
-        }),
-      );
-    }
-
-    window.setTimeout(() => window.close(), 600);
-  }, []);
 
   async function runSearch(input: SearchInput) {
     setIsSearching(true);
@@ -160,17 +138,6 @@ export function App() {
     setDecision(nextDecision);
   }
 
-  if (isHelperReturn) {
-    return (
-      <main className="app-shell helper-return">
-        <section className="panel empty-state">
-          <h1>Discogs stats returned</h1>
-          <p>You can close this helper window if it does not close automatically.</p>
-        </section>
-      </main>
-    );
-  }
-
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -235,6 +202,5 @@ export function App() {
     </main>
   );
 }
-
 
 

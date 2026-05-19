@@ -47,17 +47,15 @@ async function openDiscogsTab(message, sender) {
 
 async function completeRequest(message, sender) {
   const request = pendingRequests.get(message.token);
-  if (!request) {
-    await broadcastResultToScannerTabs(message);
-    closeHelperTab(sender.tab?.id);
-    return;
-  }
+  if (!request) return;
 
   pendingRequests.delete(message.token);
-  await sendResultToScannerTab(request.appTabId, message);
+  await chrome.tabs.sendMessage(request.appTabId, message);
 
   const helperTabId = sender.tab?.id || request.helperTabId;
-  closeHelperTab(helperTabId);
+  if (helperTabId) {
+    chrome.tabs.remove(helperTabId).catch(() => undefined);
+  }
 }
 
 async function expireRequest(token) {
@@ -65,53 +63,13 @@ async function expireRequest(token) {
   if (!request) return;
 
   pendingRequests.delete(token);
-  await sendResultToScannerTab(request.appTabId, {
+  await chrome.tabs.sendMessage(request.appTabId, {
     error: "Discogs helper timed out before it could read the sales stats.",
     token,
     type: "record-scanner-discogs-helper-result",
   });
 
   if (request.helperTabId) {
-    closeHelperTab(request.helperTabId);
+    chrome.tabs.remove(request.helperTabId).catch(() => undefined);
   }
-}
-
-async function broadcastResultToScannerTabs(message) {
-  const tabs = await chrome.tabs.query({
-    url: [
-      "http://127.0.0.1:*/*",
-      "http://localhost:*/*",
-      "https://ebayscan.vercel.app/*",
-      "https://*.vercel.app/*",
-    ],
-  });
-
-  await Promise.all(
-    tabs.map((tab) =>
-      tab.id
-        ? sendResultToScannerTab(tab.id, message).catch(() => undefined)
-        : Promise.resolve(),
-    ),
-  );
-}
-
-async function sendResultToScannerTab(tabId, message) {
-  if (!tabId) return;
-
-  await chrome.scripting
-    .executeScript({
-      target: { tabId },
-      func: (payload) => {
-        window.postMessage(payload, window.location.origin);
-      },
-      args: [message],
-    })
-    .catch(async () => {
-      await chrome.tabs.sendMessage(tabId, message).catch(() => undefined);
-    });
-}
-
-function closeHelperTab(tabId) {
-  if (!tabId) return;
-  chrome.tabs.remove(tabId).catch(() => undefined);
 }
