@@ -1,9 +1,10 @@
-﻿import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CandidateListingList } from "./components/CandidateListingList";
 import { DecisionBanner } from "./components/DecisionBanner";
 import { PriceClusterSummary } from "./components/PriceClusterSummary";
 import { ReasonCodesPanel } from "./components/ReasonCodesPanel";
 import { SearchInputPanel } from "./components/SearchInputPanel";
+import { SellerPriceAnalyzer } from "./components/SellerPriceAnalyzer";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { EbayClient } from "./lib/ebay/client";
 import { MockEbayClient } from "./lib/ebay/mockClient";
@@ -13,6 +14,7 @@ import type { ScoringSettings, TriageDecision } from "./lib/scoring/types";
 import { loadSettings, saveSettings } from "./lib/storage/localSettings";
 
 export function App() {
+  const [route, setRoute] = useState<"scanner" | "seller">(() => routeFromHash());
   const [settings, setSettings] = useState<ScoringSettings>(() => loadSettings());
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [decision, setDecision] = useState<TriageDecision | null>(null);
@@ -21,6 +23,15 @@ export function App() {
   const [history, setHistory] = useState<TriageDecision[]>([]);
   const ebayClient = useMemo(() => new EbayClient(), []);
   const mockClient = useMemo(() => new MockEbayClient(), []);
+
+  useEffect(() => {
+    function syncRoute() {
+      setRoute(routeFromHash());
+    }
+
+    window.addEventListener("hashchange", syncRoute);
+    return () => window.removeEventListener("hashchange", syncRoute);
+  }, []);
 
   async function runSearch(input: SearchInput) {
     setIsSearching(true);
@@ -145,12 +156,18 @@ export function App() {
           <h1>Record Scanner</h1>
           <p>Fast conservative triage for David's vinyl resale workflow.</p>
         </div>
-        <button className="next-button" type="button" onClick={resetForNextRecord}>
-          Next Record
-        </button>
+        <nav className="app-nav" aria-label="App pages">
+          <a className={route === "scanner" ? "active" : ""} href="#/scanner">Scanner</a>
+          <a className={route === "seller" ? "active" : ""} href="#/seller-prices">Seller Price Analyzer</a>
+        </nav>
+        {route === "scanner" ? (
+          <button className="next-button" type="button" onClick={resetForNextRecord}>
+            Next Record
+          </button>
+        ) : null}
       </header>
 
-      <section className="workbench-grid">
+      {route === "seller" ? <SellerPriceAnalyzer /> : <section className="workbench-grid">
         <div className="panel stack">
           <SearchInputPanel isSearching={isSearching} onSearch={runSearch} />
           <SettingsPanel settings={settings} onChange={updateSettings} />
@@ -167,7 +184,6 @@ export function App() {
                 ebayResearchUrl={searchResult?.marketSnapshot?.ebayResearchUrl}
                 onDiscogsSalesStatsImport={importDiscogsSalesStats}
                 onDiscogsSalesStatsPull={pullDiscogsSalesStats}
-                sourceSummary={searchResult?.rawSummary}
                 summary={decision.priceSummary}
               />
               <CandidateListingList listings={decision.topListings} />
@@ -198,9 +214,15 @@ export function App() {
             </div>
           ))}
         </aside>
-      </section>
+      </section>}
     </main>
   );
 }
+
+function routeFromHash(): "scanner" | "seller" {
+  return window.location.hash === "#/seller-prices" ? "seller" : "scanner";
+}
+
+
 
 

@@ -2,6 +2,7 @@
 
 type SearchInputOptions = {
   conditionFilter?: ListingConditionFilter;
+  searchProfile?: "scanner" | "seller-pricing";
 };
 
 export type SearchInput =
@@ -68,6 +69,15 @@ export type MarketSnapshot = {
   discogs?: DiscogsMarketSnapshot;
   ebayResearchKeywords?: string;
   ebayResearchUrl?: string;
+  ebaySearchPages?: MarketSearchPageSummary[];
+};
+
+export type MarketSearchPageSummary = {
+  label: string;
+  pageCount: number;
+  query: string;
+  returnedCount: number;
+  total: number | null;
 };
 
 export type SearchResult = {

@@ -75,3 +75,39 @@ Marketplace candidate returned by a client:
 - `wideSpreadMultiplier`
 - `riskKeywords`
 
+## Seller Price Analyzer
+
+`SellerListing` is a read-only active eBay store listing:
+
+- `id`
+- `title`
+- `sku`
+- `customLabel`
+- `currentPrice`
+- `currency`
+- `condition`
+- `availableQuantity`
+- `quantitySold`
+- `imageUrl`
+- `itemUrl`
+- `startTime`
+- `endTime`
+
+`SellerPricingAnalysis` compares a seller listing against active eBay comps:
+
+- `benchmarkPrice`: active eBay cheapest-10 average
+- `activeComparableCount`: eBay reported active match count for the best comparable query
+- `deltaValue`
+- `deltaPercent`
+- `status`: `PRICE_HIGH`, `PRICE_LOW`, `CROWDED_PRICE_HIGH`, `VERY_CROWDED_PRICE_HIGH`, `OK`, or `NEEDS_REVIEW`
+- `reasons`
+
+Seller analyzer rows may also store browser-local workflow fields:
+
+- `isTaggedForChange`
+- `proposedPrice`
+- `changeNote`
+- `searchResult`: cached active eBay analytics for the row
+
+The analyzer is read-only and does not revise live eBay listings. CSV exports include `sku`, `custom_label`, proposed price, change note, pricing recommendation fields, active comp count, and item URL for later bulk-change workflows.
+

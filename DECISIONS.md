@@ -59,3 +59,9 @@ Because Discogs can block server-side page fetches while a normal signed-in Chro
 
 The background extension path proved less reliable than the visible helper flow because it introduced extra injection, service-worker, and timing failure points. The app now waits until a Discogs release URL is available, waits a short 500ms settle delay, then automatically opens the visible helper flow that was already proven to work. Browser-helper medians are treated as authoritative threshold decisions: above threshold GREEN, at/below threshold RED, with confidence set to 100%.
 
+## 2026-05-20: Separate Seller Price Analyzer
+
+Store-pricing analysis is a separate hash route at `#/seller-prices` so the scanner page remains focused on fast record triage. The analyzer is read-only: it can pull active seller listings and compare current asking prices to active eBay cheapest-10 comps, but it does not call any eBay revise/end/relist mutation APIs.
+
+Seller recommendations intentionally use active eBay cheapest-10 average and active comparable count rather than Discogs median. This answers a different question than the scanner: not "is this record worth processing?" but "is David's live listing competitive in the current active market?"
+

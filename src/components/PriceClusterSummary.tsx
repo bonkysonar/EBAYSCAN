@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { DiscogsMarketSnapshot, DiscogsSalesStats } from "../lib/ebay/types";
-import { parseDiscogsSalesStats } from "../lib/discogs/parseSalesStats";
 import type { PriceSummary } from "../lib/scoring/types";
 
 type Props = {
@@ -9,7 +8,6 @@ type Props = {
   ebayResearchUrl?: string;
   onDiscogsSalesStatsImport?: (stats: DiscogsSalesStats) => void;
   onDiscogsSalesStatsPull?: (discogs: DiscogsMarketSnapshot) => Promise<DiscogsSalesStats>;
-  sourceSummary?: string;
   summary: PriceSummary;
 };
 
@@ -19,7 +17,6 @@ export function PriceClusterSummary({
   ebayResearchUrl,
   onDiscogsSalesStatsImport,
   onDiscogsSalesStatsPull,
-  sourceSummary,
   summary,
 }: Props) {
   return (
@@ -31,15 +28,12 @@ export function PriceClusterSummary({
         <div><dt>Median</dt><dd>{money(summary.medianTotalPrice)}</dd></div>
         <div><dt>Title matches</dt><dd>{summary.relevantResultCount}</dd></div>
         <div><dt>Total results</dt><dd>{summary.resultCount}</dd></div>
-        <div><dt>Same cluster</dt><dd>{summary.sameTitleClusterCount}</dd></div>
-        <div><dt>High outliers</dt><dd>{summary.highOutlierCount}</dd></div>
       </dl>
       {ebayResearchUrl ? (
         <a className="research-link" href={ebayResearchUrl} rel="noreferrer" target="_blank">
-          Open eBay sold research{ebayResearchKeywords ? `: ${ebayResearchKeywords}` : ""}
+          Open eBay sold research
         </a>
       ) : null}
-      {sourceSummary ? <p className="source-summary">{sourceSummary}</p> : null}
       {discogs ? (
         <DiscogsSummary
           discogs={discogs}
@@ -60,14 +54,13 @@ function DiscogsSummary({
   onSalesStatsImport?: (stats: DiscogsSalesStats) => void;
   onSalesStatsPull?: (discogs: DiscogsMarketSnapshot) => Promise<DiscogsSalesStats>;
 }) {
-  const [statsText, setStatsText] = useState("");
-  const [parseMessage, setParseMessage] = useState<string | null>(null);
   const [pullMessage, setPullMessage] = useState<string | null>(null);
   const [extensionMessage, setExtensionMessage] = useState<string | null>(null);
   const [isPulling, setIsPulling] = useState(false);
   const autoVisibleHelperKey = useRef<string | null>(null);
   const extensionToken = useRef<string | null>(null);
   const extensionTimeout = useRef<number | null>(null);
+  const bridgeFallbackTimeout = useRef<number | null>(null);
   const visibleHelperWindow = useRef<Window | null>(null);
 
   const pullKey = discogs.releaseUrl ?? (discogs.releaseId ? String(discogs.releaseId) : "");
@@ -88,12 +81,22 @@ function DiscogsSummary({
         type?: string;
       };
 
+      if (payload?.type === "record-scanner-discogs-helper-status") {
+        if (!extensionToken.current || payload.token !== extensionToken.current) return;
+        clearBridgeFallbackTimeout();
+        setExtensionMessage(payload.message ?? "Discogs helper bridge connected.");
+        requestScannerInputRefocus();
+        return;
+      }
+
       if (payload?.type !== "record-scanner-discogs-helper-result") return;
       if (!extensionToken.current || payload.token !== extensionToken.current) return;
       clearExtensionTimeout();
+      clearBridgeFallbackTimeout();
 
       if (payload.error) {
         setExtensionMessage(payload.error);
+        requestScannerInputRefocus();
         return;
       }
 
@@ -108,12 +111,14 @@ function DiscogsSummary({
         source: "browser_extension",
       });
       setExtensionMessage("Imported Discogs stats from the browser helper.");
+      requestScannerInputRefocus();
     }
 
     window.addEventListener("message", receiveDiscogsStats);
     return () => {
       window.removeEventListener("message", receiveDiscogsStats);
       clearExtensionTimeout();
+      clearBridgeFallbackTimeout();
     };
   }, [onSalesStatsImport]);
 
@@ -123,7 +128,7 @@ function DiscogsSummary({
 
     autoVisibleHelperKey.current = pullKey;
     const timer = window.setTimeout(() => {
-      openVisibleDiscogsHelper("auto");
+      openDiscogsHelper("auto");
     }, 500);
 
     return () => window.clearTimeout(timer);
@@ -153,10 +158,6 @@ function DiscogsSummary({
         <div><dt>Sales Median</dt><dd>{discogs.salesStats?.medianPrice ? `${money(discogs.salesStats.medianPrice.value)} ${discogs.salesStats.medianPrice.currency}` : isPulling ? "Pulling..." : "Needs pull/import"}</dd></div>
         <div><dt>Last Sold</dt><dd>{discogs.salesStats?.lastSold ?? "n/a"}</dd></div>
         <div><dt>Low / High</dt><dd>{discogs.salesStats?.lowPrice ? money(discogs.salesStats.lowPrice.value) : "n/a"} / {discogs.salesStats?.highPrice ? money(discogs.salesStats.highPrice.value) : "n/a"}</dd></div>
-        <div><dt>For sale</dt><dd>{discogs.numForSale ?? "n/a"}</dd></div>
-        <div><dt>Have / Want</dt><dd>{discogs.have ?? "n/a"} / {discogs.want ?? "n/a"}</dd></div>
-        <div><dt>Cat #</dt><dd>{discogs.catno ?? "n/a"}</dd></div>
-        <div><dt>Match</dt><dd>{discogs.confidence}</dd></div>
       </dl>
       <div className="discogs-pull">
         <button disabled={isPulling || !onSalesStatsPull} type="button" onClick={() => pullSalesStats("manual")}>
@@ -168,39 +169,14 @@ function DiscogsSummary({
         {pullMessage ? <p className="source-summary">{pullMessage}</p> : null}
       </div>
       <div className="discogs-pull">
-        <button disabled={!discogs.releaseUrl} type="button" onClick={() => openVisibleDiscogsHelper("manual")}>
+        <button disabled={!discogs.releaseUrl} type="button" onClick={() => openDiscogsHelper("manual")}>
           Run Discogs Helper
         </button>
         {extensionMessage ? <p className="source-summary">{extensionMessage}</p> : null}
       </div>
-      <div className="discogs-import">
-        <label htmlFor="discogs-stats-text">Discogs sales stats import</label>
-        <textarea
-          id="discogs-stats-text"
-          placeholder="Paste Discogs Statistics text or saved HTML/XML here."
-          value={statsText}
-          onChange={(event) => setStatsText(event.target.value)}
-        />
-        <div className="discogs-import-actions">
-          <input
-            type="file"
-            accept=".html,.htm,.xml,.txt,text/html,text/xml,text/plain"
-            onChange={(event) => importStatsFile(event.target.files?.[0])}
-          />
-          <button type="button" onClick={() => importStatsText(statsText)}>
-            Import Stats
-          </button>
-        </div>
-        {parseMessage ? <p className="source-summary">{parseMessage}</p> : null}
-      </div>
       {discogs.warnings.length ? <p className="source-summary">{discogs.warnings[0]}</p> : null}
     </div>
   );
-
-  async function importStatsFile(file: File | undefined) {
-    if (!file) return;
-    importStatsText(await file.text());
-  }
 
   async function pullSalesStats(mode: "auto" | "manual") {
     if (!onSalesStatsPull || isPulling) return;
@@ -218,16 +194,43 @@ function DiscogsSummary({
     }
   }
 
-  function openVisibleDiscogsHelper(mode: "auto" | "manual") {
+  function openDiscogsHelper(mode: "auto" | "manual") {
     if (!discogs.releaseUrl) return;
 
     const token = crypto.randomUUID();
     extensionToken.current = token;
     setExtensionMessage(
       mode === "auto"
-        ? "Opening Discogs helper automatically..."
+        ? "Asking Discogs helper to run in the background..."
         : "Opening Discogs helper...",
     );
+    clearExtensionTimeout();
+    clearBridgeFallbackTimeout();
+    requestScannerInputRefocus();
+
+    window.postMessage(
+      {
+        releaseUrl: discogs.releaseUrl,
+        token,
+        type: "record-scanner-discogs-helper-request",
+      },
+      window.location.origin,
+    );
+
+    bridgeFallbackTimeout.current = window.setTimeout(() => {
+      if (extensionToken.current !== token) return;
+      if (mode === "auto") {
+        setExtensionMessage("Discogs helper bridge did not answer automatically. Scanner input kept focused; click Run Discogs Helper if you need this one.");
+        requestScannerInputRefocus();
+        return;
+      }
+
+      openVisibleDiscogsHelper(token, "manual");
+    }, 900);
+  }
+
+  function openVisibleDiscogsHelper(token: string, mode: "manual") {
+    if (!discogs.releaseUrl) return;
 
     const url = new URL(discogs.releaseUrl);
     url.hash = new URLSearchParams({
@@ -243,21 +246,16 @@ function DiscogsSummary({
     }
 
     clearExtensionTimeout();
+    reclaimScannerFocus();
+    window.setTimeout(reclaimScannerFocus, 100);
+    window.setTimeout(reclaimScannerFocus, 350);
+    window.setTimeout(reclaimScannerFocus, 1_200);
+    window.setTimeout(reclaimScannerFocus, 2_500);
     extensionTimeout.current = window.setTimeout(() => {
       if (extensionToken.current !== token) return;
       setExtensionMessage("Discogs helper window opened, but no stats came back yet. Check whether Discogs finished loading.");
+      reclaimScannerFocus();
     }, 15_000);
-  }
-
-  function importStatsText(text: string) {
-    const stats = parseDiscogsSalesStats(text);
-    if (!stats) {
-      setParseMessage("Could not find Last Sold / Low / Median / High in that text.");
-      return;
-    }
-
-    onSalesStatsImport?.(stats);
-    setParseMessage("Imported Discogs sales stats for this result.");
   }
 
   function clearExtensionTimeout() {
@@ -265,6 +263,21 @@ function DiscogsSummary({
     window.clearTimeout(extensionTimeout.current);
     extensionTimeout.current = null;
   }
+
+  function clearBridgeFallbackTimeout() {
+    if (bridgeFallbackTimeout.current === null) return;
+    window.clearTimeout(bridgeFallbackTimeout.current);
+    bridgeFallbackTimeout.current = null;
+  }
+
+  function reclaimScannerFocus() {
+    visibleHelperWindow.current?.blur();
+    requestScannerInputRefocus();
+  }
+}
+
+function requestScannerInputRefocus() {
+  window.dispatchEvent(new CustomEvent("record-scanner-refocus-last-input"));
 }
 
 function money(value: number | null): string {

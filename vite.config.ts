@@ -4,6 +4,7 @@ import { type Plugin } from "vite";
 import { defineConfig } from "vitest/config";
 import { fetchDiscogsSalesStatsPage } from "./src/server/discogsStatsPage";
 import { readLocalEnv, searchMarketplace } from "./src/server/marketplaceApi";
+import { fetchSellerActiveListings } from "./src/server/sellerListingsApi";
 import type { SearchInput } from "./src/lib/ebay/types";
 
 function ebayLocalApiPlugin(): Plugin {
@@ -37,6 +38,20 @@ function ebayLocalApiPlugin(): Plugin {
           sendJson(res, 200, stats);
         } catch (error) {
           sendJson(res, 502, { error: error instanceof Error ? error.message : "Unknown Discogs stats pull error" });
+        }
+      });
+
+      server.middlewares.use("/api/ebay/seller-listings", async (req, res) => {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "Method not allowed" });
+          return;
+        }
+
+        try {
+          const result = await fetchSellerActiveListings(readLocalEnv(process.cwd()));
+          sendJson(res, 200, result);
+        } catch (error) {
+          sendJson(res, 500, { error: error instanceof Error ? error.message : "Unknown seller listings API error" });
         }
       });
     },

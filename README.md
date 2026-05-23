@@ -49,6 +49,29 @@ The local server mints and caches short-lived eBay application tokens automatica
 
 Speed Mode is a barcode-only workflow for scanner sessions. Turning it on focuses the barcode input immediately, disables catalog/manual/image inputs, and returns focus to the barcode input after each lookup finishes so David can scan, glance at the result, then scan the next record.
 
+## Seller Price Analyzer
+
+The Seller Price Analyzer is a separate page at `#/seller-prices`. It does not change the scanner workflow and it does not mutate eBay listings.
+
+Optional setup:
+
+```env
+EBAY_USER_ACCESS_TOKEN=your_user_oauth_access_token_here
+```
+
+The analyzer pulls active store listings read-only through eBay Trading API `GetMyeBaySelling` via a local/hosted `POST /api/ebay/seller-listings` action, then runs each listing title through the existing active eBay lookup. Recommendations compare your current asking price against the active eBay cheapest-10 average:
+
+- More than 25% above cheapest-10 average: priced high.
+- More than 20% below cheapest-10 average: possible underpricing.
+- 50+ active comps: crowded.
+- 150+ active comps: very crowded.
+
+The analyzer saves its queue, completed analytics, and tagged change notes in browser localStorage so leaving and returning to `#/seller-prices` does not require reloading active listings. Rows use a compact spreadsheet-style layout; clicking a row opens an analytics panel with comparable active listings, eBay links, and fields to tag proposed price changes. CSV exports include both `sku` and `custom_label`; `sku` falls back to `custom_label` when eBay does not return a separate SKU.
+
+If a long browser analysis has already been exported, use Import Snapshot CSV to restore those analyzed rows without making new eBay Browse calls. Imports support the browser snapshot columns `title`, `item_url`, `meta`, `your_price`, `cheapest_10_average`, `delta`, `active_comps`, `recommendation`, and `reason`. SKU/custom label metadata is preserved when the current browser cache already has matching active listings by item ID or title.
+
+Seller analysis uses a lighter eBay Browse profile than the scanner: it requests the lowest-price active comps first, caps each row at 50 returned comps, skips Discogs, processes 25 rows per run, waits between rows, and auto-pauses on eBay `429 Too many requests`.
+
 ## eBay Product Research Link
 
 Each result includes an Open eBay sold research link. It uses eBay Seller Hub Product Research with 	abName=SOLD, dayRange=90, categoryId=176985, limit=50, and the best query available. For barcode/catalog searches, the link prefers the expanded artist/title query over the raw identifier.
@@ -103,6 +126,7 @@ npm run build
 - `src/server/marketplaceApi.ts` contains shared server-side eBay and Discogs lookup logic.
 - `vite.config.ts` wires that shared lookup into local Vite dev at `/api/ebay/search`.
 - `api/ebay/search.ts` exposes the same lookup as a hosted Vercel serverless function.
+- `api/ebay/seller-listings.ts` exposes the read-only active seller listings endpoint.
 - `api/discogs/stats.ts` exposes the best-effort one-release Discogs stats pull.
 - `src/lib/scoring` contains GREEN/YELLOW/RED triage logic.
 - `src/lib/normalization` contains price, title, and consensus helpers.

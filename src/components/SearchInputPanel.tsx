@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, RefObject, useEffect, useRef, useState } from "react";
 import type { ListingConditionFilter, SearchInput } from "../lib/ebay/types";
 
 type Props = {
@@ -13,7 +13,19 @@ export function SearchInputPanel({ isSearching, onSearch }: Props) {
   const [conditionFilter, setConditionFilter] = useState<ListingConditionFilter>("used");
   const [isSpeedMode, setIsSpeedMode] = useState(false);
   const barcodeRef = useRef<HTMLInputElement>(null);
+  const catalogRef = useRef<HTMLInputElement>(null);
+  const manualRef = useRef<HTMLInputElement>(null);
+  const lastEntryRef = useRef<RefObject<HTMLInputElement | null>>(barcodeRef);
   const wasSearchingRef = useRef(false);
+
+  useEffect(() => {
+    function refocusLastEntry() {
+      focusNextEntry(lastEntryRef.current, true);
+    }
+
+    window.addEventListener("record-scanner-refocus-last-input", refocusLastEntry);
+    return () => window.removeEventListener("record-scanner-refocus-last-input", refocusLastEntry);
+  }, []);
 
   useEffect(() => {
     if (!isSpeedMode) return;
@@ -33,21 +45,28 @@ export function SearchInputPanel({ isSearching, onSearch }: Props) {
   function runBarcodeSearch() {
     const value = barcode.trim();
     if (!value) return;
+    lastEntryRef.current = barcodeRef;
     onSearch({ type: "barcode", barcode: value, conditionFilter });
     setBarcode("");
-    barcodeRef.current?.focus();
+    focusNextEntry(barcodeRef, true);
   }
 
   function runCatalogSearch() {
     const value = catalogNumber.trim();
     if (!value || isSpeedMode) return;
+    lastEntryRef.current = catalogRef;
     onSearch({ type: "catalog", catalogNumber: value, conditionFilter });
+    setCatalogNumber("");
+    focusNextEntry(catalogRef, true);
   }
 
   function runManualSearch() {
     const value = query.trim();
     if (!value || isSpeedMode) return;
+    lastEntryRef.current = manualRef;
     onSearch({ type: "manual", query: value, conditionFilter });
+    setQuery("");
+    focusNextEntry(manualRef, true);
   }
 
   function submitBarcode(event: FormEvent) {
@@ -140,6 +159,7 @@ export function SearchInputPanel({ isSearching, onSearch }: Props) {
       <form className="input-group" onSubmit={submitCatalog}>
         <label htmlFor="catalog">Catalog number</label>
         <input
+          ref={catalogRef}
           id="catalog"
           disabled={isSpeedMode}
           value={catalogNumber}
@@ -155,6 +175,7 @@ export function SearchInputPanel({ isSearching, onSearch }: Props) {
       <form className="input-group" onSubmit={submitManual}>
         <label htmlFor="manual">Manual artist / title search</label>
         <input
+          ref={manualRef}
           id="manual"
           disabled={isSpeedMode}
           value={query}
@@ -179,6 +200,14 @@ export function SearchInputPanel({ isSearching, onSearch }: Props) {
       </div>
     </section>
   );
+}
+
+function focusNextEntry(ref: RefObject<HTMLInputElement | null>, focusWindow = false) {
+  window.requestAnimationFrame(() => {
+    if (focusWindow) window.focus();
+    ref.current?.focus();
+    ref.current?.select();
+  });
 }
 
 function fileToBase64(file: File): Promise<string> {
