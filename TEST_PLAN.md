@@ -16,6 +16,17 @@
 12. Install or reload the Chrome helper from `browser-extension/discogs-stats-helper`, run a result with a Discogs match, and verify Record Scanner automatically opens the visible Discogs helper shortly after the Discogs match appears.
 13. Click Run Discogs Helper and verify it retries the same visible helper flow.
 14. Adjust the threshold in Settings and verify the result changes after searching again.
+15. Open `#/seller-prices`. Verify the Seller Price Analyzer page is separate from the scanner and does not change scanner inputs/results.
+16. With `EBAY_USER_ACCESS_TOKEN` configured, click Load Active Listings and verify active store listings load read-only.
+17. Click Analyze Prices and verify rows are analyzed incrementally with current price, cheapest-10 average, delta percent, active comp count, and recommendation.
+18. Click Pause Analysis while analysis is running. Verify the current row finishes, no new row starts, and Analyze Next continues pending rows without re-running completed rows.
+19. Leave `#/seller-prices` and return. Verify active listings and completed analysis are restored from browser storage.
+20. Click a compact seller row. Verify an analytics panel opens instead of navigating to eBay.
+21. In the analytics panel, tag a row for change, enter a proposed price/note, close and reopen the row, and verify the values persist.
+22. Filter by status and verify only matching analyzer rows remain visible, including tagged rows.
+23. Sort by current price, delta, status, and active comps in both directions.
+24. Click Download CSV and verify the export includes `sku`, `custom_label`, `item_id`, proposed price, change note, pricing recommendation, delta, active comp count, and item URL.
+25. Click Import Snapshot CSV with a saved browser snapshot export. Verify analyzed rows restore without running eBay Browse calls, and SKU/custom label values are preserved when matching active listings were already loaded.
 
 ## Automated Tests
 
@@ -35,6 +46,14 @@ Coverage should include:
 - Imported Discogs sales median prevents GREEN when it is at or below the configured threshold.
 - Browser-helper Discogs median acts as the hard threshold decision with 100% confidence.
 - Best-effort Discogs page pull reports blocked/failed page fetches without fabricating sales stats.
+- Seller Price Analyzer flags listings more than 25% above active eBay cheapest-10 average.
+- Seller Price Analyzer flags possible underpricing more than 20% below active eBay cheapest-10 average.
+- Seller Price Analyzer flags crowded pricing risk at 50+ active comps and very crowded risk at 150+ active comps.
+- Seller Price Analyzer marks too-few-comps cases as NEEDS_REVIEW.
+- Seller Price Analyzer uses the seller-pricing lookup profile, limiting Browse calls to the cheapest active comps and auto-pausing on 429 rate limits.
+- Seller listing XML parser maps GetMyeBaySelling ActiveList XML to normalized seller listings.
+- Seller listing parser captures SKU and CustomLabel for export workflows.
+- Seller browser snapshot CSV import restores analyzed rows and preserves matching SKU/custom label metadata.
 - Barcode, catalog-number, manual, and image inputs share the marketplace interface.
 - Price normalization.
 - Title normalization.

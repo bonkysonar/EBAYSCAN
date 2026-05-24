@@ -5,6 +5,7 @@ import type {
   CandidateListing,
   DiscogsMarketSnapshot,
   ListingConditionFilter,
+  MarketSearchPageSummary,
   MoneyValue,
   SearchInput,
   SearchResult,
@@ -32,6 +33,8 @@ type EbaySearchRequest = {
   gtin?: string;
   label: string;
 };
+
+type SearchProfile = "scanner" | "seller-pricing";
 
 type EbaySearchPage = {
   label: string;
@@ -91,8 +94,10 @@ export type MarketplaceApiEnv = {
 };
 
 let cachedApplicationToken: { token: string; expiresAt: number } | null = null;
-const EBAY_PAGE_LIMIT = 200;
-const EBAY_MAX_RETURNED_LISTINGS_PER_QUERY = 1000;
+const EBAY_PAGE_LIMIT = 50;
+const EBAY_MAX_RETURNED_LISTINGS_PER_QUERY = 50;
+const SELLER_PRICING_PAGE_LIMIT = 50;
+const SELLER_PRICING_MAX_RETURNED_LISTINGS = 50;
 
 export async function searchMarketplace(input: SearchInput, env: MarketplaceApiEnv): Promise<SearchResult> {
   const marketplaceId = env.EBAY_MARKETPLACE_ID || "EBAY_US";
@@ -162,6 +167,7 @@ async function searchEbayBrowse(
 
   const endpointRoot = config.ebayEnv === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
   const conditionFilter = buildConditionFilter(input.conditionFilter);
+  const searchProfile = input.searchProfile ?? "scanner";
   const primaryRequest = buildPrimarySearchRequest(input);
   const pages: EbaySearchPage[] = [];
 
@@ -170,11 +176,12 @@ async function searchEbayBrowse(
     conditionFilter,
     endpointRoot,
     marketplaceId: config.marketplaceId,
+    searchProfile,
     request: primaryRequest,
   });
   pages.push(primaryPage);
 
-  const expandedQuery = shouldExpandIdentifierSearch(input) ? deriveExpandedQuery(primaryPage.listings, input) : null;
+  const expandedQuery = searchProfile === "scanner" && shouldExpandIdentifierSearch(input) ? deriveExpandedQuery(primaryPage.listings, input) : null;
   if (expandedQuery && expandedQuery !== primaryPage.query.toLowerCase()) {
     pages.push(
       await fetchEbaySearchPage({
@@ -182,13 +189,14 @@ async function searchEbayBrowse(
         conditionFilter,
         endpointRoot,
         marketplaceId: config.marketplaceId,
+        searchProfile,
         request: { label: "expanded artist/title", q: expandedQuery },
       }),
     );
   }
 
-  const discogs = await searchDiscogsMarket(input, pages, config.discogsToken);
-  const discogsExpandedQuery = shouldExpandIdentifierSearch(input) && pages.length === 1 ? buildDiscogsExpandedQuery(discogs) : null;
+  const discogs = searchProfile === "scanner" ? await searchDiscogsMarket(input, pages, config.discogsToken) : undefined;
+  const discogsExpandedQuery = discogs && shouldExpandIdentifierSearch(input) && pages.length === 1 ? buildDiscogsExpandedQuery(discogs) : null;
   if (discogsExpandedQuery && discogsExpandedQuery !== primaryPage.query.toLowerCase()) {
     pages.push(
       await fetchEbaySearchPage({
@@ -196,6 +204,7 @@ async function searchEbayBrowse(
         conditionFilter,
         endpointRoot,
         marketplaceId: config.marketplaceId,
+        searchProfile,
         request: { label: "discogs artist/title", q: discogsExpandedQuery },
       }),
     );
@@ -210,13 +219,14 @@ async function searchEbayBrowse(
     listings,
     marketSnapshot: {
       discogs,
+      ebaySearchPages: summarizeEbayPages(pages),
       ebayResearchKeywords,
       ebayResearchUrl: buildEbayResearchUrl(ebayResearchKeywords),
     },
     source: "ebay",
     timestamp: new Date().toISOString(),
     warnings,
-    rawSummary: buildRawSummary(pages, listings.length, input.conditionFilter),
+    rawSummary: buildRawSummary(pages, listings.length, input.conditionFilter, searchProfile),
   };
 }
 
@@ -225,15 +235,19 @@ async function fetchEbaySearchPage(options: {
   conditionFilter: string | null;
   endpointRoot: string;
   marketplaceId: string;
+  searchProfile: SearchProfile;
   request: EbaySearchRequest;
 }): Promise<EbaySearchPage> {
   const listings: CandidateListing[] = [];
   const warnings: string[] = [];
   let total: number | null = null;
   let pageCount = 0;
+  const pageLimit = options.searchProfile === "seller-pricing" ? SELLER_PRICING_PAGE_LIMIT : EBAY_PAGE_LIMIT;
+  const maxReturnedListings =
+    options.searchProfile === "seller-pricing" ? SELLER_PRICING_MAX_RETURNED_LISTINGS : EBAY_MAX_RETURNED_LISTINGS_PER_QUERY;
 
-  for (let offset = 0; offset < EBAY_MAX_RETURNED_LISTINGS_PER_QUERY; offset += EBAY_PAGE_LIMIT) {
-    const payload = await fetchEbaySearchPayload(options, offset);
+  for (let offset = 0; offset < maxReturnedListings; offset += pageLimit) {
+    const payload = await fetchEbaySearchPayload(options, offset, pageLimit);
     total = typeof payload.total === "number" ? payload.total : total;
     warnings.push(...(payload.warnings ?? []).map((warning) => warning.longMessage ?? warning.message ?? "eBay warning"));
     listings.push(...((payload.itemSummaries ?? []).map(mapEbayItemToListing).filter(Boolean) as CandidateListing[]));
@@ -241,7 +255,7 @@ async function fetchEbaySearchPage(options: {
 
     const returnedThisPage = payload.itemSummaries?.length ?? 0;
     const knownTotalReached = typeof total === "number" && listings.length >= total;
-    if (returnedThisPage < EBAY_PAGE_LIMIT || knownTotalReached) break;
+    if (returnedThisPage < pageLimit || knownTotalReached) break;
   }
 
   return {
@@ -260,15 +274,20 @@ async function fetchEbaySearchPayload(
     conditionFilter: string | null;
     endpointRoot: string;
     marketplaceId: string;
+    searchProfile: SearchProfile;
     request: EbaySearchRequest;
   },
   offset: number,
+  limit: number,
 ): Promise<EbaySearchResponse> {
   const url = new URL("/buy/browse/v1/item_summary/search", options.endpointRoot);
   if (options.request.q) url.searchParams.set("q", options.request.q);
   if (options.request.gtin) url.searchParams.set("gtin", options.request.gtin);
-  url.searchParams.set("limit", String(EBAY_PAGE_LIMIT));
+  url.searchParams.set("limit", String(limit));
   url.searchParams.set("offset", String(offset));
+  if (options.searchProfile === "seller-pricing") {
+    url.searchParams.set("sort", "price");
+  }
   if (options.conditionFilter) {
     url.searchParams.set("filter", options.conditionFilter);
   }
@@ -400,13 +419,32 @@ function dedupeListings(listings: CandidateListing[]): CandidateListing[] {
   return deduped;
 }
 
-function buildRawSummary(pages: EbaySearchPage[], returnedCount: number, conditionFilter: ListingConditionFilter = "used"): string {
+function buildRawSummary(
+  pages: EbaySearchPage[],
+  returnedCount: number,
+  conditionFilter: ListingConditionFilter = "used",
+  searchProfile: SearchProfile = "scanner",
+): string {
   const condition = conditionFilter === "both" ? "no condition filter" : `${conditionFilter} condition filter`;
   const parts = pages.map(
     (page) =>
       `${page.label} \"${page.query}\" total=${page.total ?? "unknown"} returned=${page.listings.length} pages=${page.pageCount}`,
   );
-  return `eBay Browse merged ${returnedCount} unique listings using ${condition}; max ${EBAY_MAX_RETURNED_LISTINGS_PER_QUERY} per query. ${parts.join("; ")}.`;
+  const maxReturned =
+    searchProfile === "seller-pricing"
+      ? `max ${SELLER_PRICING_MAX_RETURNED_LISTINGS} cheapest-price results per seller-pricing query`
+      : `max ${EBAY_MAX_RETURNED_LISTINGS_PER_QUERY} fetched listings per query; eBay total count still reported when available`;
+  return `eBay Browse merged ${returnedCount} unique listings using ${condition}; ${maxReturned}. ${parts.join("; ")}.`;
+}
+
+function summarizeEbayPages(pages: EbaySearchPage[]): MarketSearchPageSummary[] {
+  return pages.map((page) => ({
+    label: page.label,
+    pageCount: page.pageCount,
+    query: page.query,
+    returnedCount: page.listings.length,
+    total: page.total,
+  }));
 }
 
 function buildResearchKeywords(input: SearchInput, pages: EbaySearchPage[]): string {

@@ -198,3 +198,23 @@ Companion Chrome extension lives in `browser-extension/discogs-stats-helper`. In
 
 Marketplace API logic was moved from `vite.config.ts` into `src/server/marketplaceApi.ts`. Local dev still works through Vite middleware, and hosted Vercel deploys can use `api/ebay/search.ts`. `vercel.json` is present, `.vercel/` is ignored, and `HOSTING.md` documents the environment variables and deployment checks.
 
+## Seller Price Analyzer Branch
+
+Branch `codex/seller-price-analyzer` adds a separate `#/seller-prices` page. It does not alter scanner inputs or scanner scoring flow. The page pulls active seller listings read-only through `POST /api/ebay/seller-listings`, then analyzes each listing title with the existing `/api/ebay/search` active-market endpoint. The seller endpoint uses POST so Vite dev does not serve the matching `api/ebay/seller-listings.ts` source file as transformed JavaScript.
+
+Required optional env for real seller pulls:
+
+```env
+EBAY_USER_ACCESS_TOKEN=...
+```
+
+Recommendations use active eBay cheapest-10 average and active comparable count. More than 25% above cheapest-10 average is high, more than 20% below is possible underpricing, 50+ active comps is crowded, and 150+ is very crowded. No eBay listing mutation endpoints were added.
+
+The analyzer can pause after the current in-flight lookup, resume pending rows later, filter by recommendation status, sort by status/current price/delta/active comps, and download the currently visible rows as CSV. Seller listing parsing captures both eBay `SKU` and Selling Manager `CustomLabel`; CSV `sku` falls back to `custom_label` when no separate SKU exists.
+
+Seller analyzer rows are cached in browser localStorage under `record-scanner-seller-price-analyzer-v1`, including completed analysis, active comp snapshots, proposed price, change note, and tag-for-change state. Clicking a compact spreadsheet row opens an in-page analytics panel; eBay links live inside that panel so row clicks no longer navigate away from the analyzer.
+
+The seller page can also import a saved browser snapshot CSV from the previous analyzer export shape: `title,item_url,meta,your_price,cheapest_10_average,delta,active_comps,recommendation,reason`. This restores analyzed rows without new Browse calls and merges by item ID/title with currently cached active listings so SKU/custom label metadata is retained when available.
+
+To reduce eBay Browse 429s, seller analysis uses `searchProfile: "seller-pricing"` instead of the full scanner lookup. That profile skips Discogs, requests `sort=price`, caps each row at 50 returned active comps, and preserves eBay's reported active total count. The UI analyzes 25 pending rows per click, waits 2.5 seconds between rows, and auto-pauses when eBay returns 429.
+

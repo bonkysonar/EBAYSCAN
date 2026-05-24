@@ -1,11 +1,23 @@
 (() => {
   const params = new URLSearchParams(window.location.hash.replace(/^#/, "") || window.location.search);
-  if (params.get("recordScanner") !== "1") return;
+  const storedChoice = readStoredChoice();
+  const isRecordScannerPage = params.get("recordScanner") === "1";
+  if (!isRecordScannerPage && !storedChoice) return;
 
-  const mode = params.get("recordScannerMode");
-  const origin = params.get("recordScannerOrigin");
-  const token = params.get("recordScannerToken");
+  const mode = params.get("recordScannerMode") || storedChoice?.mode;
+  const origin = params.get("recordScannerOrigin") || storedChoice?.origin;
+  const token = params.get("recordScannerToken") || storedChoice?.token;
   if (!token) return;
+
+  if (mode === "choose") {
+    storeChoice({ mode, origin, token });
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message?.type !== "record-scanner-discogs-helper-choose-current") return;
+      if (message?.token !== token) return;
+      sendCurrentPressing(token);
+    });
+    return;
+  }
 
   waitForStats()
     .then((stats) => {
@@ -38,6 +50,41 @@
 
     if (origin && window.opener) {
       window.opener.postMessage(message, origin);
+      return;
+    }
+
+    chrome.runtime.sendMessage(message);
+  }
+
+  function sendCurrentPressing(token) {
+    const stats = readStats() || undefined;
+    sendResult({
+      matchedTitle: readReleaseTitle(),
+      releaseId: readReleaseId(),
+      releaseUrl: window.location.href.split("#")[0],
+      stats,
+      token,
+    });
+  }
+
+  function readStoredChoice() {
+    try {
+      const parsed = JSON.parse(window.name || "{}");
+      return parsed?.recordScannerDiscogsChoice || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function storeChoice(choice) {
+    try {
+      const parsed = JSON.parse(window.name || "{}");
+      window.name = JSON.stringify({
+        ...parsed,
+        recordScannerDiscogsChoice: choice,
+      });
+    } catch {
+      window.name = JSON.stringify({ recordScannerDiscogsChoice: choice });
     }
   }
 
@@ -70,6 +117,16 @@
       lowPrice,
       medianPrice,
     };
+  }
+
+  function readReleaseTitle() {
+    const heading = document.querySelector("h1");
+    return (heading?.textContent || document.title || "").replace(/\s+/g, " ").trim();
+  }
+
+  function readReleaseId() {
+    const match = window.location.pathname.match(/\/release\/(\d+)/);
+    return match ? Number(match[1]) : undefined;
   }
 
   function findStatsHeadingBlock() {
