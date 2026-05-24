@@ -156,6 +156,11 @@ input[type="radio"] {
   color: white;
 }
 
+.app-nav a.extension-download-link {
+  background: #f8fbf1;
+  border-color: #17120b;
+}
+
 .workbench-grid {
   display: grid;
   grid-template-columns: minmax(240px, 310px) minmax(300px, 0.72fr) minmax(560px, 1.35fr);

@@ -272,6 +272,9 @@ export function App() {
         <nav className="app-nav" aria-label="App pages">
           <a className={route === "scanner" ? "active" : ""} href="#/scanner">Scanner</a>
           <a className={route === "seller" ? "active" : ""} href="#/seller-prices">Seller Price Analyzer</a>
+          <a className="extension-download-link" download href="/downloads/record-scanner-discogs-helper.zip">
+            Download Chrome Extension
+          </a>
         </nav>
         {route === "scanner" ? (
           <button className="next-button" type="button" onClick={resetForNextRecord}>
