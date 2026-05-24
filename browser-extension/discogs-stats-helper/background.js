@@ -7,6 +7,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "record-scanner-discogs-helper-choose-request") {
+    sendResponse({ accepted: true });
+    openDiscogsChoiceTab(message, sender);
+    return true;
+  }
+
+  if (message?.type === "record-scanner-discogs-helper-accept-current") {
+    sendResponse({ accepted: true });
+    acceptCurrentDiscogsChoice(message, sender);
+    return true;
+  }
+
   if (message?.type === "record-scanner-discogs-helper-result") {
     completeRequest(message, sender);
   }
@@ -32,6 +44,7 @@ async function openDiscogsTab(message, sender) {
     pendingRequests.set(message.token, {
       appTabId,
       helperTabId: tab.id,
+      closeOnComplete: true,
       startedAt: Date.now(),
     });
 
@@ -39,6 +52,72 @@ async function openDiscogsTab(message, sender) {
   } catch (error) {
     chrome.tabs.sendMessage(appTabId, {
       error: error instanceof Error ? error.message : "Discogs helper could not open the release.",
+      token: message.token,
+      type: "record-scanner-discogs-helper-result",
+    });
+  }
+}
+
+async function openDiscogsChoiceTab(message, sender) {
+  const appTabId = sender.tab?.id;
+  if (!appTabId || !message.releaseUrl || !message.token) return;
+
+  try {
+    const url = new URL(message.releaseUrl);
+    if (url.hostname !== "www.discogs.com" && url.hostname !== "discogs.com") {
+      throw new Error("Record Scanner helper only opens Discogs URLs.");
+    }
+
+    url.hash = new URLSearchParams({
+      recordScanner: "1",
+      recordScannerMode: "choose",
+      recordScannerToken: message.token,
+    }).toString();
+
+    const tab = await chrome.tabs.create({ active: true, url: url.toString() });
+    pendingRequests.set(message.token, {
+      appTabId,
+      closeOnComplete: false,
+      helperTabId: tab.id,
+      startedAt: Date.now(),
+    });
+
+    await chrome.tabs.sendMessage(appTabId, {
+      message: "Discogs chooser opened. Navigate to the correct pressing, then return and click Accept New Pressing.",
+      token: message.token,
+      type: "record-scanner-discogs-helper-status",
+    });
+  } catch (error) {
+    chrome.tabs.sendMessage(appTabId, {
+      error: error instanceof Error ? error.message : "Discogs chooser could not open the release.",
+      token: message.token,
+      type: "record-scanner-discogs-helper-result",
+    });
+  }
+}
+
+async function acceptCurrentDiscogsChoice(message, sender) {
+  const request = pendingRequests.get(message.token);
+  const appTabId = sender.tab?.id || request?.appTabId;
+  if (!request?.helperTabId) {
+    if (appTabId) {
+      await chrome.tabs.sendMessage(appTabId, {
+        error: "Discogs chooser tab was not found. Click Manually Choose Pressing again.",
+        token: message.token,
+        type: "record-scanner-discogs-helper-result",
+      });
+    }
+    return;
+  }
+
+  try {
+    await chrome.tabs.sendMessage(request.helperTabId, {
+      token: message.token,
+      type: "record-scanner-discogs-helper-choose-current",
+    });
+  } catch (error) {
+    await chrome.tabs.sendMessage(request.appTabId, {
+      error: error instanceof Error ? error.message : "Discogs chooser could not read the selected pressing.",
       token: message.token,
       type: "record-scanner-discogs-helper-result",
     });
@@ -53,7 +132,7 @@ async function completeRequest(message, sender) {
   await chrome.tabs.sendMessage(request.appTabId, message);
 
   const helperTabId = sender.tab?.id || request.helperTabId;
-  if (helperTabId) {
+  if (helperTabId && request.closeOnComplete) {
     chrome.tabs.remove(helperTabId).catch(() => undefined);
   }
 }

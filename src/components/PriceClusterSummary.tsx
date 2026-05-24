@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import type { DiscogsMarketSnapshot, DiscogsSalesStats } from "../lib/ebay/types";
 import type { PriceSummary } from "../lib/scoring/types";
+import { parseDiscogsReleaseReference } from "../lib/discogs/releaseUrl";
 
 type Props = {
   discogs?: DiscogsMarketSnapshot;
   ebayResearchKeywords?: string;
   ebayResearchUrl?: string;
+  onDiscogsPressingAccept?: (pressing: {
+    matchedTitle?: string;
+    releaseId?: number;
+    releaseUrl: string;
+    salesStats?: DiscogsSalesStats;
+  }) => void;
   onDiscogsSalesStatsImport?: (stats: DiscogsSalesStats) => void;
   onDiscogsSalesStatsPull?: (discogs: DiscogsMarketSnapshot) => Promise<DiscogsSalesStats>;
   summary: PriceSummary;
@@ -15,6 +22,7 @@ export function PriceClusterSummary({
   discogs,
   ebayResearchKeywords,
   ebayResearchUrl,
+  onDiscogsPressingAccept,
   onDiscogsSalesStatsImport,
   onDiscogsSalesStatsPull,
   summary,
@@ -37,6 +45,7 @@ export function PriceClusterSummary({
       {discogs ? (
         <DiscogsSummary
           discogs={discogs}
+          onPressingAccept={onDiscogsPressingAccept}
           onSalesStatsImport={onDiscogsSalesStatsImport}
           onSalesStatsPull={onDiscogsSalesStatsPull}
         />
@@ -47,21 +56,31 @@ export function PriceClusterSummary({
 
 function DiscogsSummary({
   discogs,
+  onPressingAccept,
   onSalesStatsImport,
   onSalesStatsPull,
 }: {
   discogs: DiscogsMarketSnapshot;
+  onPressingAccept?: (pressing: {
+    matchedTitle?: string;
+    releaseId?: number;
+    releaseUrl: string;
+    salesStats?: DiscogsSalesStats;
+  }) => void;
   onSalesStatsImport?: (stats: DiscogsSalesStats) => void;
   onSalesStatsPull?: (discogs: DiscogsMarketSnapshot) => Promise<DiscogsSalesStats>;
 }) {
   const [pullMessage, setPullMessage] = useState<string | null>(null);
   const [extensionMessage, setExtensionMessage] = useState<string | null>(null);
+  const [isChoosingPressing, setIsChoosingPressing] = useState(false);
+  const [isApplyingPressingUrl, setIsApplyingPressingUrl] = useState(false);
   const [isPulling, setIsPulling] = useState(false);
+  const [pressingUrl, setPressingUrl] = useState("");
   const autoVisibleHelperKey = useRef<string | null>(null);
   const extensionToken = useRef<string | null>(null);
+  const extensionMode = useRef<"helper" | "pressing-choice">("helper");
   const extensionTimeout = useRef<number | null>(null);
   const bridgeFallbackTimeout = useRef<number | null>(null);
-  const visibleHelperWindow = useRef<Window | null>(null);
 
   const pullKey = discogs.releaseUrl ?? (discogs.releaseId ? String(discogs.releaseId) : "");
 
@@ -77,6 +96,9 @@ function DiscogsSummary({
         error?: string;
         message?: string;
         stats?: DiscogsSalesStats;
+        matchedTitle?: string;
+        releaseId?: number;
+        releaseUrl?: string;
         token?: string;
         type?: string;
       };
@@ -96,6 +118,19 @@ function DiscogsSummary({
 
       if (payload.error) {
         setExtensionMessage(payload.error);
+        requestScannerInputRefocus();
+        return;
+      }
+
+      if (extensionMode.current === "pressing-choice" && payload.releaseUrl) {
+        onPressingAccept?.({
+          matchedTitle: payload.matchedTitle,
+          releaseId: payload.releaseId,
+          releaseUrl: payload.releaseUrl,
+          salesStats: payload.stats,
+        });
+        setIsChoosingPressing(false);
+        setExtensionMessage("Accepted the selected Discogs pressing.");
         requestScannerInputRefocus();
         return;
       }
@@ -120,7 +155,7 @@ function DiscogsSummary({
       clearExtensionTimeout();
       clearBridgeFallbackTimeout();
     };
-  }, [onSalesStatsImport]);
+  }, [onPressingAccept, onSalesStatsImport]);
 
   useEffect(() => {
     if (discogs.status !== "available" || discogs.salesStats || !pullKey) return;
@@ -172,7 +207,28 @@ function DiscogsSummary({
         <button disabled={!discogs.releaseUrl} type="button" onClick={() => openDiscogsHelper("manual")}>
           Run Discogs Helper
         </button>
+        <button disabled={!discogs.releaseUrl || !onPressingAccept} type="button" onClick={openPressingChooser}>
+          Manually Choose Pressing
+        </button>
+        {isChoosingPressing ? (
+          <button type="button" onClick={acceptChosenPressing}>
+            Accept New Pressing
+          </button>
+        ) : null}
         {extensionMessage ? <p className="source-summary">{extensionMessage}</p> : null}
+      </div>
+      <div className="discogs-manual-pressing">
+        <label>
+          Discogs pressing URL
+          <input
+            placeholder="Paste Discogs /release/ URL"
+            value={pressingUrl}
+            onChange={(event) => setPressingUrl(event.target.value)}
+          />
+        </label>
+        <button disabled={!pressingUrl.trim() || isApplyingPressingUrl || !onPressingAccept} type="button" onClick={applyPressingUrl}>
+          {isApplyingPressingUrl ? "Applying..." : "Apply Pressing URL"}
+        </button>
       </div>
       {discogs.warnings.length ? <p className="source-summary">{discogs.warnings[0]}</p> : null}
     </div>
@@ -199,6 +255,8 @@ function DiscogsSummary({
 
     const token = crypto.randomUUID();
     extensionToken.current = token;
+    extensionMode.current = "helper";
+    setIsChoosingPressing(false);
     setExtensionMessage(
       mode === "auto"
         ? "Asking Discogs helper to run in the background..."
@@ -224,12 +282,14 @@ function DiscogsSummary({
         requestScannerInputRefocus();
         return;
       }
-
-      openVisibleDiscogsHelper(token, "manual");
     }, 900);
+
+    if (mode === "manual") {
+      openVisibleDiscogsHelper(token);
+    }
   }
 
-  function openVisibleDiscogsHelper(token: string, mode: "manual") {
+  function openVisibleDiscogsHelper(token: string) {
     if (!discogs.releaseUrl) return;
 
     const url = new URL(discogs.releaseUrl);
@@ -238,24 +298,87 @@ function DiscogsSummary({
       recordScannerOrigin: window.location.origin,
       recordScannerToken: token,
     }).toString();
-    visibleHelperWindow.current = window.open(url.toString(), "record-scanner-discogs-helper", "popup,width=960,height=760");
+    const visibleHelperWindow = window.open(url.toString(), "record-scanner-discogs-helper", "popup,width=960,height=760");
 
-    if (!visibleHelperWindow.current) {
+    if (!visibleHelperWindow) {
       setExtensionMessage("Chrome blocked the Discogs helper popup. Click Run Discogs Helper to allow it.");
       return;
     }
 
+    visibleHelperWindow.focus();
     clearExtensionTimeout();
-    reclaimScannerFocus();
-    window.setTimeout(reclaimScannerFocus, 100);
-    window.setTimeout(reclaimScannerFocus, 350);
-    window.setTimeout(reclaimScannerFocus, 1_200);
-    window.setTimeout(reclaimScannerFocus, 2_500);
     extensionTimeout.current = window.setTimeout(() => {
       if (extensionToken.current !== token) return;
       setExtensionMessage("Discogs helper window opened, but no stats came back yet. Check whether Discogs finished loading.");
-      reclaimScannerFocus();
     }, 15_000);
+  }
+
+  function openPressingChooser() {
+    if (!discogs.releaseUrl) return;
+
+    const token = crypto.randomUUID();
+    extensionToken.current = token;
+    extensionMode.current = "pressing-choice";
+    setIsChoosingPressing(true);
+    setExtensionMessage("Opening Discogs. Navigate to the right pressing, return here, then click Accept New Pressing.");
+    clearExtensionTimeout();
+    clearBridgeFallbackTimeout();
+
+    window.postMessage(
+      {
+        releaseUrl: discogs.releaseUrl,
+        token,
+        type: "record-scanner-discogs-helper-choose-request",
+      },
+      window.location.origin,
+    );
+  }
+
+  function acceptChosenPressing() {
+    if (!extensionToken.current) {
+      setExtensionMessage("Open the Discogs chooser first.");
+      return;
+    }
+
+    setExtensionMessage("Asking Discogs helper to read the selected pressing...");
+    window.postMessage(
+      {
+        token: extensionToken.current,
+        type: "record-scanner-discogs-helper-accept-current",
+      },
+      window.location.origin,
+    );
+  }
+
+  async function applyPressingUrl() {
+    if (!onPressingAccept) return;
+
+    setIsApplyingPressingUrl(true);
+    setExtensionMessage(null);
+
+    try {
+      const reference = parseDiscogsReleaseReference(pressingUrl);
+      onPressingAccept({
+        ...reference,
+      });
+      setPressingUrl("");
+      setIsChoosingPressing(false);
+      setExtensionMessage("Pressing applied. Trying to pull stats...");
+      requestScannerInputRefocus();
+
+      const { message, stats } = await fetchDiscogsStatsBestEffort(reference);
+      if (stats) {
+        onPressingAccept({
+          ...reference,
+          salesStats: stats,
+        });
+      }
+      setExtensionMessage(message);
+    } catch (error) {
+      setExtensionMessage(error instanceof Error ? error.message : "Could not apply Discogs pressing URL.");
+    } finally {
+      setIsApplyingPressingUrl(false);
+    }
   }
 
   function clearExtensionTimeout() {
@@ -271,13 +394,44 @@ function DiscogsSummary({
   }
 
   function reclaimScannerFocus() {
-    visibleHelperWindow.current?.blur();
     requestScannerInputRefocus();
   }
 }
 
 function requestScannerInputRefocus() {
   window.dispatchEvent(new CustomEvent("record-scanner-refocus-last-input"));
+}
+
+async function fetchDiscogsStatsBestEffort(reference: { releaseId?: number; releaseUrl: string }): Promise<{
+  message: string;
+  stats?: DiscogsSalesStats;
+}> {
+  try {
+    const response = await fetch("/api/discogs/stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        releaseId: reference.releaseId,
+        releaseUrl: reference.releaseUrl,
+      }),
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      return {
+        message: `Pressing applied. Stats still need helper/import: ${payload.error ?? "Discogs stats pull failed."}`,
+      };
+    }
+
+    return {
+      message: "Pressing applied and stats pulled.",
+      stats: payload as DiscogsSalesStats,
+    };
+  } catch (error) {
+    return {
+      message: `Pressing applied. Stats still need helper/import: ${error instanceof Error ? error.message : "Discogs stats pull failed."}`,
+    };
+  }
 }
 
 function money(value: number | null): string {

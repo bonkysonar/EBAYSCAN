@@ -158,7 +158,7 @@ input[type="radio"] {
 
 .workbench-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 390px) minmax(0, 1fr) minmax(230px, 300px);
+  grid-template-columns: minmax(240px, 310px) minmax(300px, 0.72fr) minmax(560px, 1.35fr);
   gap: 0.75rem;
   align-items: start;
 }
@@ -441,6 +441,29 @@ input[type="radio"] {
   font-weight: 800;
 }
 
+.discogs-manual-pressing {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+  align-items: end;
+}
+
+.discogs-manual-pressing label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.discogs-manual-pressing input {
+  border-radius: 10px;
+  padding: 0.48rem 0.6rem;
+  font-size: 0.82rem;
+}
+
 .reasons-panel li {
   margin: 0.25rem 0;
 }
@@ -598,6 +621,235 @@ input[type="radio"] {
 
 .history-item small {
   color: var(--muted);
+}
+
+.bulk-buy-panel {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.bulk-buy-heading {
+  margin-bottom: 0;
+}
+
+.bulk-buy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.bulk-buy-actions button {
+  border-radius: 9px;
+  padding: 0.48rem 0.62rem;
+  font-size: 0.78rem;
+}
+
+.bulk-buy-actions label {
+  display: grid;
+  gap: 0.2rem;
+  flex: 1 1 190px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.bulk-buy-actions input {
+  min-width: 190px;
+  border-radius: 9px;
+  padding: 0.38rem 0.52rem;
+  font-size: 0.76rem;
+}
+
+.bulk-buy-actions select {
+  min-width: 170px;
+  border-radius: 9px;
+  padding: 0.38rem 0.52rem;
+  font-size: 0.76rem;
+}
+
+.bulk-buy-total {
+  display: grid;
+  gap: 0.12rem;
+  border: 2px solid #17120b;
+  border-radius: 14px;
+  padding: 0.62rem;
+  background: #fff8e7;
+}
+
+.bulk-buy-total span,
+.bulk-buy-metrics dt {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.bulk-buy-total strong {
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.bulk-buy-metrics {
+  display: grid;
+  gap: 0.38rem;
+  margin: 0;
+}
+
+.bulk-buy-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.bulk-buy-metrics div {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.46rem;
+  background: #f8fbf1;
+}
+
+.bulk-buy-metrics dd {
+  margin: 0.08rem 0 0;
+  font-weight: 950;
+}
+
+.bulk-buy-alert {
+  border-radius: 12px;
+  margin: 0;
+  padding: 0.48rem 0.58rem;
+  background: var(--yellow-bg);
+  color: var(--yellow);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.bulk-buy-table-wrap {
+  max-height: 56vh;
+  overflow: auto;
+}
+
+.bulk-buy-table {
+  width: 100%;
+  min-width: 850px;
+  border-collapse: separate;
+  border-spacing: 0 0.22rem;
+  font-size: 0.72rem;
+  table-layout: fixed;
+}
+
+.bulk-buy-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.25rem 0.22rem;
+  background: var(--panel);
+  color: var(--muted);
+  text-align: left;
+  vertical-align: top;
+}
+
+.bulk-buy-sort {
+  border-radius: 8px;
+  width: 100%;
+  padding: 0.3rem 0.22rem;
+  background: #f5efe0;
+  color: var(--ink);
+  font-size: 0.66rem;
+  font-weight: 950;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.bulk-buy-static-header {
+  display: block;
+  border-radius: 8px;
+  padding: 0.3rem 0.22rem;
+  background: #f5efe0;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.bulk-buy-resize {
+  position: absolute;
+  top: 0.25rem;
+  right: -0.2rem;
+  z-index: 3;
+  width: 0.45rem;
+  height: calc(100% - 0.5rem);
+  min-height: 1.5rem;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.bulk-buy-resize::after {
+  content: "";
+  position: absolute;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  left: 50%;
+  border-left: 2px solid rgba(21, 21, 21, 0.18);
+}
+
+.bulk-buy-resize:hover::after,
+.bulk-buy-resize:focus::after {
+  border-left-color: #161616;
+}
+
+.bulk-buy-table td {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0.36rem 0.32rem;
+  background: white;
+  font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+
+.bulk-buy-table td:first-child {
+  border-left: 1px solid var(--line);
+  border-radius: 9px 0 0 9px;
+}
+
+.bulk-buy-table td:last-child {
+  border-right: 1px solid var(--line);
+  border-radius: 0 9px 9px 0;
+}
+
+.bulk-buy-clickable-row {
+  cursor: pointer;
+}
+
+.bulk-buy-clickable-row:hover td {
+  background: #fff8e7;
+}
+
+.bulk-buy-album {
+  line-height: 1.18;
+  white-space: normal;
+}
+
+.bulk-buy-delete {
+  border-radius: 8px;
+  padding: 0.32rem 0.4rem;
+  background: #5b5141;
+  font-size: 0.68rem;
+}
+
+.bulk-buy-delete:hover,
+.bulk-buy-delete:focus {
+  background: var(--red);
+}
+
+.bulk-buy-missing {
+  border-radius: 999px;
+  padding: 0.3rem 0.45rem;
+  background: #fff0bd;
+  color: #8a5b00 !important;
+  font-weight: 950 !important;
 }
 
 .error-box {

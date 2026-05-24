@@ -1,12 +1,16 @@
 (() => {
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
-    if (event.data?.type !== "record-scanner-discogs-helper-request") return;
+    if (
+      event.data?.type !== "record-scanner-discogs-helper-request" &&
+      event.data?.type !== "record-scanner-discogs-helper-choose-request" &&
+      event.data?.type !== "record-scanner-discogs-helper-accept-current"
+    ) return;
 
     const request = {
       releaseUrl: event.data.releaseUrl,
       token: event.data.token,
-      type: "record-scanner-discogs-helper-request",
+      type: event.data.type,
     };
 
     try {
