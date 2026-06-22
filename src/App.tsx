@@ -27,7 +27,7 @@ import type { ScoringSettings, TriageDecision } from "./lib/scoring/types";
 import { loadSettings, saveSettings } from "./lib/storage/localSettings";
 
 export function App() {
-  const [route, setRoute] = useState<"scanner" | "seller">(() => routeFromHash());
+  const [route, setRoute] = useState<AppRoute>(() => routeFromHash());
   const [settings, setSettings] = useState<ScoringSettings>(() => loadSettings());
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [decision, setDecision] = useState<TriageDecision | null>(null);
@@ -51,6 +51,7 @@ export function App() {
   async function runSearch(input: SearchInput) {
     setIsSearching(true);
     setError(null);
+    const shouldAddToBulkBuy = route === "bulkBuy";
 
     try {
       const result = await searchWithFallback(input);
@@ -58,19 +59,21 @@ export function App() {
       setSearchResult(result);
       setDecision(nextDecision);
       setHistory((current) => [nextDecision, ...current].slice(0, 6));
-      setBulkBuyRows((current) => {
-        const nextOrder = nextBulkBuyOrder(current);
-        return [
-          createBulkBuyRow({
-            discogs: result.marketSnapshot?.discogs,
-            input: result.input,
-            order: nextOrder,
-            priceSummary: nextDecision.priceSummary,
-            searchResult: result,
-          }),
-          ...current,
-        ];
-      });
+      if (shouldAddToBulkBuy) {
+        setBulkBuyRows((current) => {
+          const nextOrder = nextBulkBuyOrder(current);
+          return [
+            createBulkBuyRow({
+              discogs: result.marketSnapshot?.discogs,
+              input: result.input,
+              order: nextOrder,
+              priceSummary: nextDecision.priceSummary,
+              searchResult: result,
+            }),
+            ...current,
+          ];
+        });
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Search failed.");
     } finally {
@@ -204,13 +207,15 @@ export function App() {
     const nextDecision = scoreRecord(nextResult, settings);
     setSearchResult(nextResult);
     setDecision(nextDecision);
-    setBulkBuyRows((current) =>
-      current.map((row, index) =>
-        index === 0 || bulkBuyRowMatchesDiscogs(row, discogs)
-          ? { ...updateBulkBuyRowFromDiscogs(row, discogs, nextDecision.priceSummary), searchResult: nextResult }
-          : row,
-      ),
-    );
+    if (route === "bulkBuy") {
+      setBulkBuyRows((current) =>
+        current.map((row, index) =>
+          index === 0 || bulkBuyRowMatchesDiscogs(row, discogs)
+            ? { ...updateBulkBuyRowFromDiscogs(row, discogs, nextDecision.priceSummary), searchResult: nextResult }
+            : row,
+        ),
+      );
+    }
   }
 
   function acceptDiscogsPressing(pressing: {
@@ -253,37 +258,43 @@ export function App() {
 
     setSearchResult(nextResult);
     setDecision(nextDecision);
-    setBulkBuyRows((current) =>
-      current.map((row, index) =>
-        index === 0 || bulkBuyRowMatchesDiscogs(row, previousDiscogs)
-          ? { ...updateBulkBuyRowFromDiscogs(row, discogs, nextDecision.priceSummary), searchResult: nextResult }
-          : row,
-      ),
-    );
+    if (route === "bulkBuy") {
+      setBulkBuyRows((current) =>
+        current.map((row, index) =>
+          index === 0 || bulkBuyRowMatchesDiscogs(row, previousDiscogs)
+            ? { ...updateBulkBuyRowFromDiscogs(row, discogs, nextDecision.priceSummary), searchResult: nextResult }
+            : row,
+        ),
+      );
+    }
   }
+
+  const isLookupRoute = route === "scanner" || route === "bulkBuy";
+  const isBulkBuyRoute = route === "bulkBuy";
 
   return (
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <h1>Bulk Buy Scanner</h1>
-          <p>Scan records, estimate offer prices, and tally the buy.</p>
+          <h1>{isBulkBuyRoute ? "Bulk Buy Scanner" : "Record Scanner"}</h1>
+          <p>{isBulkBuyRoute ? "Scan records, estimate offer prices, and tally the buy." : "Fast conservative triage for vinyl resale decisions."}</p>
         </div>
         <nav className="app-nav" aria-label="App pages">
           <a className={route === "scanner" ? "active" : ""} href="#/scanner">Scanner</a>
+          <a className={route === "bulkBuy" ? "active" : ""} href="#/bulk-buy">Bulk Buy</a>
           <a className={route === "seller" ? "active" : ""} href="#/seller-prices">Seller Price Analyzer</a>
           <a className="extension-download-link" download href="/downloads/record-scanner-discogs-helper.zip">
             Download Chrome Extension
           </a>
         </nav>
-        {route === "scanner" ? (
+        {isLookupRoute ? (
           <button className="next-button" type="button" onClick={resetForNextRecord}>
             Next Record
           </button>
         ) : null}
       </header>
 
-      {route === "seller" ? <SellerPriceAnalyzer /> : <section className="workbench-grid">
+      {route === "seller" ? <SellerPriceAnalyzer /> : <section className={`workbench-grid ${isBulkBuyRoute ? "bulk-buy-workbench" : "scanner-workbench"}`}>
         <div className="panel stack">
           <SearchInputPanel isSearching={isSearching} onSearch={runSearch} />
           <SettingsPanel settings={settings} onChange={updateSettings} />
@@ -321,15 +332,17 @@ export function App() {
         </div>
 
         <aside className="stack">
-          <BulkBuyLedger
-            rows={bulkBuyRows}
-            savedBatches={savedBulkBuyBatches}
-            onDelete={deleteBulkBuyRow}
-            onLoadBatch={loadSavedBulkBuyBatch}
-            onOpenRow={openBulkBuyRow}
-            onResetBatch={resetBulkBuyBatch}
-            onSaveBatch={saveCurrentBulkBuyBatch}
-          />
+          {isBulkBuyRoute ? (
+            <BulkBuyLedger
+              rows={bulkBuyRows}
+              savedBatches={savedBulkBuyBatches}
+              onDelete={deleteBulkBuyRow}
+              onLoadBatch={loadSavedBulkBuyBatch}
+              onOpenRow={openBulkBuyRow}
+              onResetBatch={resetBulkBuyBatch}
+              onSaveBatch={saveCurrentBulkBuyBatch}
+            />
+          ) : null}
           <section className="panel history-panel">
             <h2>Recent Decisions</h2>
             {history.length === 0 ? <p className="muted">No records triaged yet.</p> : null}
@@ -347,8 +360,12 @@ export function App() {
   );
 }
 
-function routeFromHash(): "scanner" | "seller" {
-  return window.location.hash === "#/seller-prices" ? "seller" : "scanner";
+type AppRoute = "bulkBuy" | "scanner" | "seller";
+
+function routeFromHash(): AppRoute {
+  if (window.location.hash === "#/seller-prices") return "seller";
+  if (window.location.hash === "#/bulk-buy") return "bulkBuy";
+  return "scanner";
 }
 
 function nextBulkBuyOrder(rows: BulkBuyRow[]): number {

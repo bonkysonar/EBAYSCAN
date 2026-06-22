@@ -163,9 +163,16 @@ input[type="radio"] {
 
 .workbench-grid {
   display: grid;
-  grid-template-columns: minmax(240px, 310px) minmax(300px, 0.72fr) minmax(560px, 1.35fr);
   gap: 0.75rem;
   align-items: start;
+}
+
+.scanner-workbench {
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr) minmax(230px, 300px);
+}
+
+.bulk-buy-workbench {
+  grid-template-columns: minmax(240px, 310px) minmax(300px, 0.72fr) minmax(560px, 1.35fr);
 }
 
 .stack {

@@ -56,7 +56,9 @@ Speed Mode is a barcode-only workflow for scanner sessions. Turning it on focuse
 
 ## Bulk Buy Scanner
 
-The main scanner page is the Bulk Buy workflow. Each scan/search adds a row to the Bulk Buy ledger with:
+Bulk Buy is a separate page at `#/bulk-buy`, available from the top navigation. The default scanner stays in normal triage mode and does not add records to a Bulk Buy batch.
+
+The Bulk Buy page uses the same lookup workflow as the scanner, but each scan/search also adds a row to the Bulk Buy ledger with:
 
 - Stable scan order.
 - Album/title.

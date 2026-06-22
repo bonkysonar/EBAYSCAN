@@ -11,7 +11,7 @@ Last updated: 2026-06-22
 - No open GitHub PRs were visible as of this cleanup.
 - Do not commit `.env.local`; it contains credentials and is ignored.
 
-The merged product now includes the Bulk Buy Scanner, Seller Price Analyzer, hosted Vercel API routes, Discogs helper extension support, and a hosted Chrome helper zip download.
+The merged product now includes the default Scanner, optional Bulk Buy page, Seller Price Analyzer, hosted Vercel API routes, Discogs helper extension support, and a hosted Chrome helper zip download.
 
 ## Product Semantics
 
@@ -189,7 +189,7 @@ The saved Discogs HTML showed page-visible sales stats for release 2165798: Last
 
 ## Bulk Buy Scanner
 
-The scanner page is now titled Bulk Buy Scanner. Every scan/search adds a row to the Bulk Buy ledger. The row stores the scan order, album/title, new/used condition, category, reference price, recommended buy amount, best-case sale price, estimated fees/taxes/shipping supplies, and estimated profit.
+Bulk Buy is a secondary lookup page at `#/bulk-buy`, linked from the top navigation. The default `#/scanner` route stays in normal triage mode and does not add rows to a bulk batch. On the Bulk Buy route, every scan/search adds a row to the Bulk Buy ledger. The row stores the scan order, album/title, new/used condition, category, reference price, recommended buy amount, best-case sale price, estimated fees/taxes/shipping supplies, and estimated profit.
 
 Bulk Buy pricing lives in `src/lib/bulkBuy/calculateBulkBuy.ts`. The reference price is the lower of Discogs sales/market median and eBay average cheapest-10 active price. Under `$5`, the buy price is a flat `$0.50`; otherwise it is `40%` of the reference price. Sale estimates and profit math round down to the nearest `$0.50`. Fees include marketplace fee plus a 5% advertising fee, and tax uses the self-employment tax estimate on post-cost profit.
 

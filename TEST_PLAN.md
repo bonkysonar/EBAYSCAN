@@ -16,25 +16,27 @@
 12. Install or reload the Chrome helper from `browser-extension/discogs-stats-helper`, run a result with a Discogs match, and verify Record Scanner automatically opens the visible Discogs helper shortly after the Discogs match appears.
 13. Click Run Discogs Helper and verify it retries the same visible helper flow.
 14. Adjust the threshold in Settings and verify the result changes after searching again.
-15. Paste a different Discogs `/release/` URL into Discogs pressing URL. Verify the visible Discogs release updates immediately even if the stats pull is blocked.
-16. Verify the Bulk Buy ledger adds each scan/search in stable sequential order.
-17. Sort Bulk Buy by buy, sell, profit, album, condition, category, and reference price. Verify the Order column values do not change.
-18. Resize Bulk Buy table columns and verify the table remains usable.
-19. Delete a Bulk Buy row and verify totals update.
-20. Click a Bulk Buy row and verify the middle review column restores that record's result.
-21. Save a named Bulk Buy batch, load it from the Saved selector, download CSV, and reset the batch.
-22. Verify Bulk Buy values round down to the nearest `$0.50`, show `$0.50` buys under `$5`, and include marketplace fee, 5% ad fee, shipping supplies, and self-employment tax in profit.
-23. Open `#/seller-prices`. Verify the Seller Price Analyzer page is separate from the scanner and does not change scanner inputs/results.
-24. With `EBAY_USER_ACCESS_TOKEN` configured, click Load Active Listings and verify active store listings load read-only.
-25. Click Analyze Prices and verify rows are analyzed incrementally with current price, cheapest-10 average, delta percent, active comp count, and recommendation.
-26. Click Pause Analysis while analysis is running. Verify the current row finishes, no new row starts, and Analyze Next continues pending rows without re-running completed rows.
-27. Leave `#/seller-prices` and return. Verify active listings and completed analysis are restored from browser storage.
-28. Click a compact seller row. Verify an analytics panel opens instead of navigating to eBay.
-29. In the analytics panel, tag a row for change, enter a proposed price/note, close and reopen the row, and verify the values persist.
-30. Filter by status and verify only matching analyzer rows remain visible, including tagged rows.
-31. Sort by current price, delta, status, and active comps in both directions.
-32. Click Download CSV and verify the export includes `sku`, `custom_label`, `item_id`, proposed price, change note, pricing recommendation, delta, active comp count, and item URL.
-33. Click Import Snapshot CSV with a saved browser snapshot export. Verify analyzed rows restore without running eBay Browse calls, and SKU/custom label values are preserved when matching active listings were already loaded.
+15. Verify the default `#/scanner` page does not show the Bulk Buy ledger or add scans to a bulk batch.
+16. Open `#/bulk-buy` from the top navigation. Verify it uses the same lookup controls as the scanner and shows the Bulk Buy ledger.
+17. Paste a different Discogs `/release/` URL into Discogs pressing URL. Verify the visible Discogs release updates immediately even if the stats pull is blocked.
+18. Verify the Bulk Buy ledger adds each Bulk Buy scan/search in stable sequential order.
+19. Sort Bulk Buy by buy, sell, profit, album, condition, category, and reference price. Verify the Order column values do not change.
+20. Resize Bulk Buy table columns and verify the table remains usable.
+21. Delete a Bulk Buy row and verify totals update.
+22. Click a Bulk Buy row and verify the middle review column restores that record's result.
+23. Save a named Bulk Buy batch, load it from the Saved selector, download CSV, and reset the batch.
+24. Verify Bulk Buy values round down to the nearest `$0.50`, show `$0.50` buys under `$5`, and include marketplace fee, 5% ad fee, shipping supplies, and self-employment tax in profit.
+25. Open `#/seller-prices`. Verify the Seller Price Analyzer page is separate from the scanner and does not change scanner inputs/results.
+26. With `EBAY_USER_ACCESS_TOKEN` configured, click Load Active Listings and verify active store listings load read-only.
+27. Click Analyze Prices and verify rows are analyzed incrementally with current price, cheapest-10 average, delta percent, active comp count, and recommendation.
+28. Click Pause Analysis while analysis is running. Verify the current row finishes, no new row starts, and Analyze Next continues pending rows without re-running completed rows.
+29. Leave `#/seller-prices` and return. Verify active listings and completed analysis are restored from browser storage.
+30. Click a compact seller row. Verify an analytics panel opens instead of navigating to eBay.
+31. In the analytics panel, tag a row for change, enter a proposed price/note, close and reopen the row, and verify the values persist.
+32. Filter by status and verify only matching analyzer rows remain visible, including tagged rows.
+33. Sort by current price, delta, status, and active comps in both directions.
+34. Click Download CSV and verify the export includes `sku`, `custom_label`, `item_id`, proposed price, change note, pricing recommendation, delta, active comp count, and item URL.
+35. Click Import Snapshot CSV with a saved browser snapshot export. Verify analyzed rows restore without running eBay Browse calls, and SKU/custom label values are preserved when matching active listings were already loaded.
 
 ## Automated Tests
 
@@ -54,6 +56,7 @@ Coverage should include:
 - Imported Discogs sales median prevents GREEN when it is at or below the configured threshold.
 - Browser-helper Discogs median acts as the hard threshold decision with 100% confidence.
 - Best-effort Discogs page pull reports blocked/failed page fetches without fabricating sales stats.
+- Default scanner route does not show or populate the Bulk Buy ledger.
 - Bulk Buy math rounds down to half-dollar increments and applies the low-price flat buy, title-match markdowns, fees, ad fee, shipping supplies, and tax calculations.
 - Bulk Buy table sorting, deletion, CSV download, named save/load, and row click-to-review behavior.
 - Pasted Discogs pressing URL fallback updates three different releases even when stats pulls are blocked.
