@@ -1,14 +1,17 @@
 ﻿# Handoff
 
-Last updated: 2026-05-18
+Last updated: 2026-06-22
 
-## Current Branch
+## Current State
 
-- Branch: `feature/discogs-stats-import`
-- Base/current pushed main commit: `15a343e Build record scanner MVP`
-- Current feature work is uncommitted unless this file is committed later.
-- Do not deploy unless David explicitly asks.
-- Do not commit `.env.local`; it contains eBay credentials and is ignored.
+- Branch: `main`
+- Latest local/remote commit during this handoff cleanup: `0739d8d Add Chrome extension download link`
+- Production app: `https://ebayscan.vercel.app`
+- Current working tree should be clean before new work starts.
+- No open GitHub PRs were visible as of this cleanup.
+- Do not commit `.env.local`; it contains credentials and is ignored.
+
+The merged product now includes the Bulk Buy Scanner, Seller Price Analyzer, hosted Vercel API routes, Discogs helper extension support, and a hosted Chrome helper zip download.
 
 ## Product Semantics
 
@@ -22,10 +25,11 @@ Default threshold is still `$5`.
 
 ## eBay Integration Status
 
-Real active-listing lookup is wired through a local Vite dev-server endpoint:
+Real active-listing lookup is wired through shared server logic used by both local Vite middleware and hosted Vercel functions:
 
 - Browser client: `src/lib/ebay/client.ts`
 - Local API/server middleware: `vite.config.ts`
+- Hosted API route: `api/ebay/search.ts`
 - Mock fallback: `src/lib/ebay/mockClient.ts`
 
 `.env.local` should contain:
@@ -102,7 +106,9 @@ Request production access to the Buy Marketplace Insights API, specifically item
 - eBay Browse results can include irrelevant listings; scoring is conservative but still early.
 - Identifier expansion is heuristic. It works for the tested `BXL1 0209` example but needs more real-world cases.
 - Browser automation had clipboard issues in Codex, so some UI checks were verified through direct local API calls instead.
-- Hosted deployment is prepared for Vercel, but not deployed. Secrets must be set as server-side environment variables.
+- Discogs may block server-side page pulls with a browser challenge. The Chrome helper and pasted pressing URL are the practical fallback paths.
+- Seller Price Analyzer can hit eBay rate limits; it intentionally pauses on 429 and processes rows in batches.
+- Hosted deployments require secrets to stay in Vercel environment variables, never committed files.
 
 ## Verification Commands
 
@@ -111,7 +117,7 @@ npm test
 npm run build
 ```
 
-Both passed after the latest hosting-prep refactor.
+Both passed during the 2026-06-22 doc cleanup: 10 test files / 41 tests, and production build succeeded.
 
 Local API smoke test passed on port 5190:
 
@@ -149,11 +155,10 @@ Useful inputs:
 
 ## Suggested Next Steps
 
-1. Add a Market Snapshot component showing active listed total, returned/analyzed count, search plans used, and sold-comps status.
-2. Commit the current feature branch once David is happy with the direction.
-3. Add more catalog/barcode real-world fixtures and tune identifier expansion.
-4. Import the GitHub repo into Vercel and set server-side environment variables when David is ready to deploy.
-5. Request eBay Marketplace Insights API access for sold comps.
+1. Add more catalog/barcode real-world fixtures and tune identifier expansion from actual scanning sessions.
+2. Request eBay Marketplace Insights API access for sold comps if sold-through data becomes important.
+3. Consider moving saved Bulk Buy batches from localStorage into durable cloud storage if multi-device batch recall becomes important.
+4. Keep the hosted Chrome extension zip updated any time files in `browser-extension/discogs-stats-helper` change.
 
 ## Discogs Status
 
@@ -182,6 +187,14 @@ The saved Discogs HTML showed page-visible sales stats for release 2165798: Last
 
 `SearchInputPanel` now has a Speed Mode toggle for barcode-only scanner sessions. When enabled, it focuses/selects the barcode input immediately, disables catalog/manual/image controls, and focuses/selects the barcode input again when `isSearching` transitions from true to false. This supports scan, glance, scan, glance workflows.
 
+## Bulk Buy Scanner
+
+The scanner page is now titled Bulk Buy Scanner. Every scan/search adds a row to the Bulk Buy ledger. The row stores the scan order, album/title, new/used condition, category, reference price, recommended buy amount, best-case sale price, estimated fees/taxes/shipping supplies, and estimated profit.
+
+Bulk Buy pricing lives in `src/lib/bulkBuy/calculateBulkBuy.ts`. The reference price is the lower of Discogs sales/market median and eBay average cheapest-10 active price. Under `$5`, the buy price is a flat `$0.50`; otherwise it is `40%` of the reference price. Sale estimates and profit math round down to the nearest `$0.50`. Fees include marketplace fee plus a 5% advertising fee, and tax uses the self-employment tax estimate on post-cost profit.
+
+The ledger UI lives in `src/components/BulkBuyLedger.tsx`. It supports sortable columns, adjustable widths, delete row, click row to restore the middle review column, running totals, average buy per record, CSV download, reset, and named saved batches. Saved batches use browser localStorage via `src/lib/bulkBuy/batches.ts`, so they are local to the browser/device for now.
+
 ## Manual Discogs Sales Stats Import
 
 Discogs page-visible sales statistics (Last Sold, Low, Median, High) are not available in the official API response currently used by the app, and automatic page scraping was avoided because Discogs terms restrict scraping/data extraction and sales-history marketplace data. The UI now accepts user-provided Discogs Statistics text or saved HTML/XML/text in `PriceClusterSummary`. Parser lives in `src/lib/discogs/parseSalesStats.ts`. Imported stats are stored on `discogs.salesStats`, displayed in the Discogs panel, and `scoreRecord` uses imported Discogs sales median to block GREEN when the median is at or below the configured threshold.
@@ -194,13 +207,15 @@ David explicitly accepted one-release-at-a-time page pulls because Discogs media
 
 Companion Chrome extension lives in `browser-extension/discogs-stats-helper`. Install/reload via Chrome `chrome://extensions` -> Developer mode -> Load unpacked. Background-helper mode was attempted but proved less reliable than the original visible helper flow. `PriceClusterSummary` now waits until a Discogs release URL is available, waits 500ms, then automatically opens the visible Discogs helper window with hash params `recordScanner=1`, `recordScannerOrigin`, and a one-time token. The Discogs content script parses Last Sold/Low/Median/High from `#release-stats` or the visible Statistics block and posts results back to the opener. App accepts only messages with the matching token and stores the stats as source `browser_extension`. Browser-helper median is a hard threshold signal in `scoreRecord`: above threshold GREEN/100%, at or below threshold RED/100%.
 
-## Hosting Prep
+The production app header includes Download Chrome Extension, which serves `public/downloads/record-scanner-discogs-helper.zip`. Rebuild that zip from `browser-extension/discogs-stats-helper` whenever the extension source changes.
 
-Marketplace API logic was moved from `vite.config.ts` into `src/server/marketplaceApi.ts`. Local dev still works through Vite middleware, and hosted Vercel deploys can use `api/ebay/search.ts`. `vercel.json` is present, `.vercel/` is ignored, and `HOSTING.md` documents the environment variables and deployment checks.
+## Hosting
 
-## Seller Price Analyzer Branch
+Marketplace API logic lives in `src/server/marketplaceApi.ts`. Local dev works through Vite middleware, and hosted Vercel deploys use the routes in `api/`. `vercel.json` is present, `.vercel/` is ignored, and `HOSTING.md` documents the environment variables and deployment checks.
 
-Branch `codex/seller-price-analyzer` adds a separate `#/seller-prices` page. It does not alter scanner inputs or scanner scoring flow. The page pulls active seller listings read-only through `POST /api/ebay/seller-listings`, then analyzes each listing title with the existing `/api/ebay/search` active-market endpoint. The seller endpoint uses POST so Vite dev does not serve the matching `api/ebay/seller-listings.ts` source file as transformed JavaScript.
+## Seller Price Analyzer
+
+The merged Seller Price Analyzer lives at `#/seller-prices`. It does not alter scanner inputs or scanner scoring flow. The page pulls active seller listings read-only through `POST /api/ebay/seller-listings`, then analyzes each listing title with the existing `/api/ebay/search` active-market endpoint. The seller endpoint uses POST so Vite dev does not serve the matching `api/ebay/seller-listings.ts` source file as transformed JavaScript.
 
 Required optional env for real seller pulls:
 

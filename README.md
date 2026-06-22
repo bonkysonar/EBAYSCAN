@@ -13,7 +13,12 @@ Then open the Vite URL shown in the terminal, usually `http://127.0.0.1:5173`.
 
 ## Hosting Status
 
-The app is prepared for Vercel hosting but has not been deployed. See `HOSTING.md` for setup steps, required environment variables, and deployment notes.
+The app is deployed on Vercel from `main`:
+
+- Production app: `https://ebayscan.vercel.app`
+- Chrome helper download: `https://ebayscan.vercel.app/downloads/record-scanner-discogs-helper.zip`
+
+See `HOSTING.md` for required environment variables and deployment notes.
 
 ## Color Semantics
 
@@ -23,7 +28,7 @@ The app is prepared for Vercel hosting but has not been deployed. See `HOSTING.m
 
 ## Real eBay Setup
 
-Real eBay Browse API lookup is optional and local-only. Create `.env.local` with:
+Real eBay Browse API lookup is optional for local development and required for real hosted lookups. Create `.env.local` for local dev with:
 
 ```env
 EBAY_ENV=production
@@ -32,9 +37,9 @@ EBAY_MARKETPLACE_ID=EBAY_US
 EBAY_CLIENT_SECRET=your_production_cert_id_here
 ```
 
-Do not commit `.env.local`. The client secret is used only by the local Vite dev server endpoint at `/api/ebay/search` and is not bundled into browser code.
+Do not commit `.env.local`. For hosted Vercel, set the same values in the project environment variable dashboard. The client secret is used only server-side and is not bundled into browser code.
 
-The local server mints and caches short-lived eBay application tokens automatically. If eBay rejects a real request, normal searches show a YELLOW no-results warning instead of misleading mock matches. Only explicit demo inputs use mock fallback.
+The server mints and caches short-lived eBay application tokens automatically. If eBay rejects a real request, normal searches show a YELLOW no-results warning instead of misleading mock matches. Only explicit demo inputs use mock fallback.
 
 ## Useful Demo Inputs
 
@@ -48,6 +53,22 @@ The local server mints and caches short-lived eBay application tokens automatica
 ## Speed Mode
 
 Speed Mode is a barcode-only workflow for scanner sessions. Turning it on focuses the barcode input immediately, disables catalog/manual/image inputs, and returns focus to the barcode input after each lookup finishes so David can scan, glance at the result, then scan the next record.
+
+## Bulk Buy Scanner
+
+The main scanner page is the Bulk Buy workflow. Each scan/search adds a row to the Bulk Buy ledger with:
+
+- Stable scan order.
+- Album/title.
+- New/used condition.
+- Low-end bulk / sellable / high-end category.
+- Recommended buy amount.
+- Best-case sale amount.
+- Estimated profit after fees, advertising, shipping supplies, and self-employment tax.
+
+Bulk Buy math uses the lower of Discogs sales/market median and eBay average cheapest-10 active price as the reference price. If the reference price is under `$5`, the buy recommendation is a flat `$0.50`; otherwise it is `40%` of the reference. Money values are rounded down to the nearest `$0.50`.
+
+The ledger supports sortable columns, adjustable column widths, row deletion, row click-to-review, running totals, average buy per record, CSV download, reset, and named local saved batches. Saved batches are stored in browser localStorage.
 
 ## Seller Price Analyzer
 
@@ -78,7 +99,7 @@ Each result includes an Open eBay sold research link. It uses eBay Seller Hub Pr
 
 ## Discogs Setup
 
-Optional Discogs marketplace stats are available when .env.local includes:
+Optional Discogs marketplace stats are available when `.env.local` or Vercel environment variables include:
 
 ```env
 DISCOGS_USER_TOKEN=your_discogs_personal_token_here
@@ -94,20 +115,28 @@ Discogs may block the automatic pull with a browser challenge; when that happens
 
 ## Discogs Browser Helper
 
-For the fastest workflow, install the companion Chrome extension from `browser-extension/discogs-stats-helper`:
+For the fastest workflow, install the companion Chrome extension. The current packaged extension is available from the app header as Download Chrome Extension, or directly at:
+
+```text
+https://ebayscan.vercel.app/downloads/record-scanner-discogs-helper.zip
+```
+
+For local development, the unpacked source lives in `browser-extension/discogs-stats-helper`:
 
 1. Open Chrome and go to `chrome://extensions`.
 2. Turn on Developer mode.
-3. Click Load unpacked.
-4. Choose `C:\Users\dbort\OneDrive\Documents\Codex Projects\Record Scanner\browser-extension\discogs-stats-helper`.
+3. Download and unzip the hosted helper, or use the local folder above.
+4. Click Load unpacked and choose the unzipped helper folder.
 5. In Record Scanner, scan/search a record with a Discogs match.
-6. Click Open Discogs Helper.
+6. Click Run Discogs Helper, or let the automatic helper attempt run after a Discogs match appears.
 
 The helper opens the matched Discogs release in a tab, reads the visible Last Sold / Low / Median / High stats from your real browser session, and sends them back to Record Scanner. This avoids waiting on Google Sheets and avoids pretending the server can read Discogs pages when Discogs blocks automated page fetches.
 
 Once installed, Record Scanner opens the helper automatically shortly after a Discogs match appears. The helper uses the visible Discogs page flow because that is the fastest proven path in David's browser session. The Run Discogs Helper button retries that same visible helper flow.
 
 When the browser helper returns a Discogs sales median, that median becomes the hard threshold signal: median above the configured threshold is GREEN, and median at/below the threshold is RED.
+
+If the automatic helper lands on the wrong Discogs pressing, use Manually Choose Pressing, navigate the Discogs tab to the correct release, then return and click Accept New Pressing. You can also paste a Discogs `/release/` URL into the Discogs pressing URL field. Pasted URLs apply immediately even when Discogs blocks the follow-up stats pull.
 
 ## Identifier Search Expansion
 
@@ -128,6 +157,9 @@ npm run build
 - `api/ebay/search.ts` exposes the same lookup as a hosted Vercel serverless function.
 - `api/ebay/seller-listings.ts` exposes the read-only active seller listings endpoint.
 - `api/discogs/stats.ts` exposes the best-effort one-release Discogs stats pull.
+- `src/lib/bulkBuy` contains Bulk Buy batch storage and pricing math.
+- `browser-extension/discogs-stats-helper` contains the unpacked Chrome helper source.
+- `public/downloads/record-scanner-discogs-helper.zip` is the hosted packaged helper.
 - `src/lib/scoring` contains GREEN/YELLOW/RED triage logic.
 - `src/lib/normalization` contains price, title, and consensus helpers.
 - `src/components` contains focused UI components.
