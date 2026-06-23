@@ -43,7 +43,7 @@ export function SearchInputPanel({ isSearching, onSearch }: Props) {
   }, [isSearching, isSpeedMode]);
 
   function runBarcodeSearch() {
-    const value = barcode.trim();
+    const value = normalizeBarcodeInput(barcode);
     if (!value) return;
     lastEntryRef.current = barcodeRef;
     onSearch({ type: "barcode", barcode: value, conditionFilter });
@@ -208,6 +208,10 @@ function focusNextEntry(ref: RefObject<HTMLInputElement | null>, focusWindow = f
     ref.current?.focus();
     ref.current?.select();
   });
+}
+
+function normalizeBarcodeInput(value: string): string {
+  return value.trim().slice(0, 12);
 }
 
 function fileToBase64(file: File): Promise<string> {

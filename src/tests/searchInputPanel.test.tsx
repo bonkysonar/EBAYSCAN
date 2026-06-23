@@ -41,6 +41,16 @@ async function enterText(input: HTMLInputElement, value: string) {
 }
 
 describe("SearchInputPanel focus workflow", () => {
+  it("truncates barcode scans to the first 12 characters", async () => {
+    const { container, onSearch } = renderSearchPanel();
+    const barcode = container.querySelector<HTMLInputElement>("#barcode");
+    expect(barcode).toBeTruthy();
+
+    await enterText(barcode!, "1234567890123");
+
+    expect(onSearch).toHaveBeenCalledWith(expect.objectContaining({ barcode: "123456789012", type: "barcode" }));
+  });
+
   it("submits catalog searches with Enter, clears the field, and keeps catalog focused", async () => {
     const { container, onSearch } = renderSearchPanel();
     const catalog = container.querySelector<HTMLInputElement>("#catalog");
