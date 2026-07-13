@@ -209,6 +209,12 @@ Companion Chrome extension lives in `browser-extension/discogs-stats-helper`. In
 
 The production app header includes Download Chrome Extension, which serves `public/downloads/record-scanner-discogs-helper.zip`. Rebuild that zip from `browser-extension/discogs-stats-helper` whenever the extension source changes.
 
+### 2026-07-13 automatic Discogs pricing route
+
+Repeated helper navigations were not viable for scanner throughput and caused recurring browser challenges. Normal searches now call the documented authenticated Discogs `marketplace/price_suggestions/{release_id}` endpoint alongside the release lookup, select Very Good (VG) as the conservative used-record price guide, and return it on `discogs.suggestedPrice` / `discogs.suggestedPriceCondition`. The marketplace release response now supplies current lowest/for-sale values directly, avoiding a separate marketplace-stats API request.
+
+`PriceClusterSummary` does not auto-launch the extension. The exact historical page Median, Last Sold, Low, and High remain optional manual data: Optional: Pull Historical Stats, Optional: Open Discogs Helper, manual text/file import, or pressing correction. The manual helper opens only the visible helper window instead of also sending a duplicate background-helper request.
+
 ## Hosting
 
 Marketplace API logic lives in `src/server/marketplaceApi.ts`. Local dev works through Vite middleware, and hosted Vercel deploys use the routes in `api/`. `vercel.json` is present, `.vercel/` is ignored, and `HOSTING.md` documents the environment variables and deployment checks.

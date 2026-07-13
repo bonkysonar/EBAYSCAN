@@ -59,6 +59,8 @@ export type DiscogsMarketSnapshot = {
   releaseId?: number;
   releaseUrl?: string;
   salesStats?: DiscogsSalesStats;
+  suggestedPrice?: MoneyValue;
+  suggestedPriceCondition?: string;
   status: "available" | "unavailable" | "not_configured";
   warnings: string[];
   want?: number;

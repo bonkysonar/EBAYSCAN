@@ -259,6 +259,8 @@ export function App() {
         : isSamePressing
           ? previousDiscogs.salesStats
           : undefined,
+      suggestedPrice: isSamePressing ? previousDiscogs.suggestedPrice : undefined,
+      suggestedPriceCondition: isSamePressing ? previousDiscogs.suggestedPriceCondition : undefined,
       status: "available",
       warnings: [],
     };

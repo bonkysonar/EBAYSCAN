@@ -171,6 +171,42 @@ describe("scoreRecord", () => {
     expect(decision.reasons[0]).toContain("Discogs browser helper median");
   });
 
+  it("uses the automatic Discogs VG price guide as a conservative GREEN gate", () => {
+    const listings: CandidateListing[] = [9, 10, 11, 12].map((price, index) => ({
+      id: `discogs-guide-${index}`,
+      title: `Discogs price guide test record ${index}`,
+      price,
+      shippingPrice: 0,
+      totalPrice: price,
+      currency: "USD",
+      condition: "Used",
+      source: "ebay-mock",
+      matchSignals: { sameAlbumCluster: "discogs-price-guide-test", titleSimilarity: 0.9 },
+    }));
+    const result: SearchResult = {
+      input: { type: "manual", query: "discogs price guide test" },
+      listings,
+      marketSnapshot: {
+        discogs: {
+          confidence: "high",
+          matchedTitle: "Discogs Price Guide Test",
+          status: "available",
+          suggestedPrice: { currency: "USD", value: 4.5 },
+          suggestedPriceCondition: "Very Good (VG)",
+          warnings: [],
+        },
+      },
+      source: "ebay-mock",
+      timestamp: new Date().toISOString(),
+      warnings: [],
+    };
+
+    const decision = scoreRecord(result);
+
+    expect(decision.decision).toBe("YELLOW");
+    expect(decision.reasons.join(" ")).toContain("Very Good (VG) price guide");
+  });
+
   it("uses the same marketplace interface for barcode, catalog, manual, and image inputs", async () => {
     const client = new MockEbayClient();
     const barcode = await client.search({ type: "barcode", barcode: "012345LOW" });
