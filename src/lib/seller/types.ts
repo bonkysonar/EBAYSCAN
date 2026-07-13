@@ -15,7 +15,10 @@ export type SellerListing = {
 };
 
 export type SellerListingsResult = {
+  hasMore?: boolean;
   listings: SellerListing[];
+  nextPageNumber?: number;
+  pageCount?: number;
   source: "ebay-trading";
   timestamp: string;
   total: number;

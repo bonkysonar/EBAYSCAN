@@ -1,0 +1,126 @@
+const SALE_LINK_TERMS =
+  /\b(?:sitewide|site-wide|storewide|store-wide|sale|sales|on\s+sale|clearance|outlet|deals?|specials?|last\s+chance|closeout|warehouse|overstock|discount|promo(?:tion)?s?|offers?|bogo|buy\s+more\s+save\s+more)\b/i;
+const SALE_PATH_TERMS =
+  /(?:^|[-_/])(?:sale|sales|on-sale|clearance|outlet|deals?|specials?|last-chance|closeout|warehouse(?:-sale)?|overstock|discounted|promotions?|offers?|bogo|buy-more-save-more)(?:$|[-_/])/i;
+const NON_DISCOVERY_PATH = /\/(?:account|cart|checkout|login|pages\/contact|policies|products?)\b/i;
+
+export function sourceEntryUrls(sourceUrl) {
+  const configured = normalizeHttpUrl(sourceUrl);
+  if (!configured) return [];
+
+  const parsed = new URL(configured);
+  const homepage = `${parsed.origin}/`;
+  return uniqueUrls([configured, homepage]);
+}
+
+export function discoverSaleLinks(html, pageUrl, maxLinks = 5) {
+  const page = normalizeHttpUrl(pageUrl);
+  if (!page || !html || maxLinks <= 0) return [];
+
+  const pageHost = new URL(page).hostname.replace(/^www\./i, "");
+  const candidates = [];
+  const anchors = [...String(html).matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]{0,600}?)<\/a>/gi)];
+
+  for (const match of anchors) {
+    const href = decodeHtmlAttribute(match[1]);
+    if (!href || href.startsWith("#") || /^(?:javascript|mailto|tel):/i.test(href)) continue;
+
+    let url;
+    try {
+      url = new URL(href, page);
+    } catch {
+      continue;
+    }
+
+    if (!/^https?:$/.test(url.protocol)) continue;
+    const targetHost = url.hostname.replace(/^www\./i, "");
+    if (targetHost !== pageHost) continue;
+    if (NON_DISCOVERY_PATH.test(url.pathname)) continue;
+
+    url.hash = "";
+    const label = cleanText(stripTags(match[2]));
+    const searchable = `${label} ${url.pathname.replace(/[-_/]+/g, " ")}`;
+    if (!SALE_LINK_TERMS.test(searchable) && !SALE_PATH_TERMS.test(url.pathname)) continue;
+
+    candidates.push({
+      score: saleLinkScore(label, url),
+      url: url.toString(),
+    });
+  }
+
+  const byUrl = new Map();
+  for (const candidate of candidates) {
+    const current = byUrl.get(candidate.url);
+    if (!current || candidate.score > current.score) byUrl.set(candidate.url, candidate);
+  }
+
+  return [...byUrl.values()]
+    .sort((left, right) => right.score - left.score || left.url.localeCompare(right.url))
+    .slice(0, maxLinks)
+    .map((candidate) => candidate.url);
+}
+
+export function httpFailureKind(status) {
+  if (status === 404 || status === 410) return "not_found";
+  if ([401, 403, 412, 418, 429].includes(status)) return "blocked";
+  if (status >= 500) return "server_error";
+  return "http_error";
+}
+
+export function hasCouponSignal(text) {
+  return /\b(?:(?:promo|coupon|discount)\s+code|use\s+(?:promo\s+)?code|code\s*[:\-]\s*[A-Z0-9][A-Z0-9_-]{2,}|code\s+[A-Z0-9][A-Z0-9_-]{2,}\s+(?:at\s+checkout|to\s+save|for\s+\d)|auto(?:matically)?\s+applied)\b/i.test(
+    String(text ?? ""),
+  );
+}
+
+export function extractPromoCode(text) {
+  const match = String(text ?? "").match(
+    /\b(?:(?:promo|coupon|discount)\s+code|use\s+(?:promo\s+)?code)\s*[:\-]?\s*([A-Z0-9][A-Z0-9_-]{2,})\b|\bcode\s*[:\-]\s*([A-Z0-9][A-Z0-9_-]{2,})\b/i,
+  );
+  return (match?.[1] ?? match?.[2])?.toUpperCase() ?? null;
+}
+
+function saleLinkScore(label, url) {
+  const text = `${label} ${url.pathname}`;
+  let score = 0;
+  if (/\b(?:sitewide|site-wide|storewide|store-wide|entire\s+site|everything)\b/i.test(text)) score += 100;
+  if (/\b(?:all\s+(?:vinyl|records|lps|music)|vinyl\s+sale)\b/i.test(text)) score += 80;
+  if (/\b(?:bogo|buy\s+more\s+save\s+more|[3-9][0-9]\s*%\s*off)\b/i.test(text)) score += 70;
+  if (/\b(?:clearance|closeout|warehouse|overstock|last\s+chance|outlet)\b/i.test(text)) score += 50;
+  if (SALE_PATH_TERMS.test(url.pathname)) score += 30;
+  if (SALE_LINK_TERMS.test(label)) score += 20;
+  if (url.search) score -= 5;
+  return score;
+}
+
+function normalizeHttpUrl(value) {
+  try {
+    const parsed = new URL(String(value));
+    if (!/^https?:$/.test(parsed.protocol)) return null;
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function uniqueUrls(urls) {
+  const seen = new Set();
+  return urls.filter((url) => {
+    if (!url || seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
+}
+
+function decodeHtmlAttribute(value) {
+  return String(value).replace(/&amp;/gi, "&").replace(/&#39;/gi, "'").replace(/&quot;/gi, '"');
+}
+
+function cleanText(value) {
+  return String(value).replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim();
+}
+
+function stripTags(value) {
+  return String(value).replace(/<[^>]+>/g, " ");
+}

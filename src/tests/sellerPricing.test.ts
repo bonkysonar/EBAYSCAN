@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ebaySellerSearchUrl, mediaGradeFromListing, rowsFromSnapshotCsv } from "../components/SellerPriceAnalyzer";
 import type { SearchResult } from "../lib/ebay/types";
 import { analyzeSellerPrice } from "../lib/seller/analyzeSellerPrice";
+import { SellerListingsClient } from "../lib/seller/client";
 import type { SellerListing } from "../lib/seller/types";
-import { parseSellerListingsXml } from "../server/sellerListingsApi";
+import { fetchSellerActiveListings, parseSellerListingsXml } from "../server/sellerListingsApi";
 
 const listing: SellerListing = {
   currency: "USD",
@@ -46,6 +47,10 @@ function resultWithPrices(prices: number[], total = 25): SearchResult {
 }
 
 describe("seller price analysis", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("flags seller listings priced more than 25 percent above cheapest ten average", () => {
     const analysis = analyzeSellerPrice({ ...listing, currentPrice: 15 }, resultWithPrices([10, 10, 10, 10, 10, 10, 10, 10, 10, 10]));
     expect(analysis.status).toBe("PRICE_HIGH");
@@ -103,6 +108,113 @@ describe("seller price analysis", () => {
       sku: "SKU-BOZ-001",
       title: "Boz Scaggs Slow Dancer LP",
     });
+  });
+
+  it("refreshes seller OAuth access tokens before fetching active listings", async () => {
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).includes("/identity/v1/oauth2/token")) {
+        expect(init?.method).toBe("POST");
+        expect(String(init?.body)).toContain("grant_type=refresh_token");
+        return new Response(JSON.stringify({ access_token: "fresh-user-token", expires_in: 7200 }), {
+          headers: { "Content-Type": "application/json" },
+          status: 200,
+        });
+      }
+
+      expect(String(url)).toBe("https://api.ebay.com/ws/api.dll");
+      expect((init?.headers as Record<string, string>)["X-EBAY-API-IAF-TOKEN"]).toBe("fresh-user-token");
+      return new Response(
+        `<?xml version="1.0"?>
+        <GetMyeBaySellingResponse>
+          <Ack>Success</Ack>
+          <ActiveList>
+            <ItemArray />
+            <PaginationResult><PageNumber>1</PageNumber><TotalNumberOfPages>1</TotalNumberOfPages></PaginationResult>
+          </ActiveList>
+        </GetMyeBaySellingResponse>`,
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchSellerActiveListings({
+      EBAY_CLIENT_ID: "client-id",
+      EBAY_CLIENT_SECRET: "client-secret",
+      EBAY_USER_REFRESH_TOKEN: "refresh-token",
+    });
+
+    expect(result.listings).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("fetches seller listing chunks that start after the first page", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      expect(String(init?.body)).toContain("<PageNumber>6</PageNumber>");
+      return new Response(
+        `<?xml version="1.0"?>
+        <GetMyeBaySellingResponse>
+          <Ack>Success</Ack>
+          <ActiveList>
+            <ItemArray>
+              <Item>
+                <ItemID>page-6-item</ItemID>
+                <Title>Page Six LP</Title>
+                <SellingStatus><CurrentPrice currencyID="USD">12.00</CurrentPrice></SellingStatus>
+              </Item>
+            </ItemArray>
+            <PaginationResult><PageNumber>6</PageNumber><TotalNumberOfPages>6</TotalNumberOfPages></PaginationResult>
+          </ActiveList>
+        </GetMyeBaySellingResponse>`,
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchSellerActiveListings({ EBAY_USER_ACCESS_TOKEN: "user-token" }, { maxPages: 5, pageNumber: 6 });
+
+    expect(result.listings.map((row) => row.id)).toEqual(["page-6-item"]);
+    expect(result.hasMore).toBe(false);
+    expect(result.pageCount).toBe(1);
+  });
+
+  it("loads seller listings in paged chunks from the browser client", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            hasMore: true,
+            listings: [{ ...listing, id: "page-1" }],
+            nextPageNumber: 6,
+            source: "ebay-trading",
+            timestamp: "2026-07-03T00:00:00.000Z",
+            total: 1,
+            warnings: [],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            hasMore: false,
+            listings: [{ ...listing, id: "page-2" }],
+            source: "ebay-trading",
+            timestamp: "2026-07-03T00:00:01.000Z",
+            total: 1,
+            warnings: [],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new SellerListingsClient().listActive();
+
+    expect(result.listings.map((row) => row.id)).toEqual(["page-1", "page-2"]);
+    expect(result.total).toBe(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ maxPages: 5, pageNumber: 1 });
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ maxPages: 5, pageNumber: 6 });
   });
 
   it("imports browser snapshot CSV rows while preserving loaded SKU metadata", () => {
