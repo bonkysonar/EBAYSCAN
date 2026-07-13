@@ -13,7 +13,7 @@ import type {
 import {
   selectUsedDiscogsPriceSuggestion,
   type DiscogsPriceSuggestionsResponse,
-} from "../lib/discogs/priceSuggestions";
+} from "../lib/discogs/priceSuggestions.js";
 
 type EbayItemSummary = {
   itemId?: string;
