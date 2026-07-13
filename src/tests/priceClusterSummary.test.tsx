@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 describe("PriceClusterSummary manual Discogs pressing", () => {
-  it("shows the automatic Discogs price guide without launching the browser helper", () => {
+  it("automatically sends each matched release to the persistent Discogs helper", () => {
     vi.useFakeTimers();
     const postMessage = vi.spyOn(window, "postMessage").mockImplementation(() => undefined);
 
@@ -31,12 +31,52 @@ describe("PriceClusterSummary manual Discogs pressing", () => {
     });
 
     act(() => {
-      vi.advanceTimersByTime(1_000);
+      vi.advanceTimersByTime(600);
     });
 
     expect(container?.textContent).toContain("Discogs Price Guide");
     expect(container?.textContent).toContain("$12.34 USD");
     expect(container?.textContent).toContain("loaded automatically");
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        releaseUrl: "https://www.discogs.com/release/1-Original-Pressing",
+        type: "record-scanner-discogs-helper-request",
+      }),
+      window.location.origin,
+    );
+    const request = postMessage.mock.calls[0][0] as { token: string };
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            helperVersion: "0.2.0",
+            token: request.token,
+            type: "record-scanner-discogs-helper-status",
+          },
+          origin: window.location.origin,
+        }),
+      );
+    });
+    expect(container?.textContent).toContain("v0.2.0 is outdated");
+    vi.useRealTimers();
+  });
+
+  it("does not reopen the helper after historical stats are already present", () => {
+    vi.useFakeTimers();
+    const postMessage = vi.spyOn(window, "postMessage").mockImplementation(() => undefined);
+
+    renderSummary(vi.fn(), {
+      salesStats: {
+        importedAt: "2026-07-13T18:00:00.000Z",
+        medianPrice: { currency: "USD", value: 12.34 },
+        source: "browser_extension",
+      },
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
     expect(postMessage).not.toHaveBeenCalled();
     vi.useRealTimers();
   });

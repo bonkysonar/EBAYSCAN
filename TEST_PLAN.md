@@ -11,10 +11,10 @@
 7. Upload an image and verify the image path uses mock data with an image-placeholder warning.
 8. Switch Condition to New and Both and verify searches still run.
 9. Turn on Speed Mode. Verify the barcode input receives focus immediately, catalog/manual/image inputs are disabled, scanning/submitting a barcode works, and focus returns to the barcode input after the result appears.
-10. When a Discogs match appears, verify the Discogs panel automatically displays the Very Good (VG) price guide when the authenticated Discogs API returns one. Verify no Discogs tab or helper window opens.
+10. With helper v0.3 installed, run a Discogs match and verify the first result opens one visible Discogs helper window. Complete any browser challenge and verify the stats return to Record Scanner automatically.
 11. Paste or upload saved Discogs Statistics text/HTML containing Last Sold, Low, Median, and High. Verify the Discogs panel displays the imported values and a below-threshold Discogs median prevents GREEN.
-12. Install or reload the Chrome helper from `browser-extension/discogs-stats-helper`, run a result with a Discogs match, and verify Record Scanner still does not open the helper automatically.
-13. Click Optional: Open Discogs Helper and verify the one manual visible helper flow returns historical stats without opening a duplicate background tab.
+12. Scan a second Discogs match and verify the existing helper window is reused instead of creating another tab/window. Verify a successful read returns focus to the scanner input.
+13. Close the helper window, click Reconnect Discogs Window, and verify helper v0.3 creates one replacement window. Verify an installed v0.2 helper produces an update message.
 14. Adjust the threshold in Settings and verify the result changes after searching again.
 15. Verify the default `#/scanner` page does not show the Bulk Buy ledger or add scans to a bulk batch.
 16. Open `#/bulk-buy` from the top navigation. Verify it uses the same lookup controls as the scanner and shows the Bulk Buy ledger.
@@ -54,7 +54,8 @@ Coverage should include:
 - Real eBay searches with more than 200 active matches paginate beyond the first page and report pages/returned counts in the source summary.
 - Discogs sales statistics parser extracts Last Sold, Low, Median, and High from pasted text or saved HTML.
 - Discogs price-suggestion selection prefers Very Good (VG), falls back through usable conditions, and never labels the result as historical median.
-- Rendering an automatic Discogs price guide does not launch the browser helper.
+- A Discogs match automatically requests the persistent helper unless historical stats are already present.
+- The extension background creates one helper window, reuses it for the next release, and returns focus to the scanner after success.
 - Imported Discogs sales median prevents GREEN when it is at or below the configured threshold.
 - Browser-helper Discogs median acts as the hard threshold decision with 100% confidence.
 - Best-effort Discogs page pull reports blocked/failed page fetches without fabricating sales stats.
@@ -95,7 +96,7 @@ After a Vercel deployment, verify:
 - Condition filter defaults to Used.
 - Discogs data appears only when `DISCOGS_USER_TOKEN` is configured.
 - Discogs VG price guide appears automatically when the authenticated price-suggestions endpoint returns data.
-- Normal scans do not open a Discogs tab; the optional historical-stats pull either returns Last Sold/Low/Median/High or shows the browser-challenge blocker.
+- Helper v0.3 opens one visible Discogs window, allows normal browser verification, and reuses that window across scans.
 - The Download Chrome Extension link returns `record-scanner-discogs-helper.zip`.
 - No secrets appear in browser source, network payloads, or committed files.
 

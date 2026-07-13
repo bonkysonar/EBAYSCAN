@@ -71,3 +71,9 @@ Opening a new Discogs page for every scan was slow, repeatedly triggered browser
 
 The app no longer launches the Chrome helper automatically. Pressing Enter performs the eBay and Discogs API lookup without browser navigation or another click. The page pull, Chrome helper, and pressing chooser remain manual options for cases where David wants the exact page-visible Last Sold / Low / Median / High history or needs to correct a pressing. A below-threshold automatic Discogs price guide conservatively prevents an eBay-only GREEN decision, but it is not treated as the helper median's 100%-confidence historical signal.
 
+## 2026-07-13: Reusable Visible Discogs Session
+
+Production confirmed that the configured Discogs token can read public release/current-lowest data but cannot provide the historical page statistics, and Vercel continues to receive a 403 browser challenge on direct page pulls. The helper therefore returns to the automatic path with a different lifecycle: extension v0.3 creates one visible Chrome popup window, persists its tab/window IDs in `chrome.storage.session`, and reuses that same window for every matched release.
+
+The first helper window is focused so David can complete Discogs' normal browser verification. Challenge detection brings the window forward again when attention is required, allows up to five minutes for a human response, and never attempts to bypass the verification. Successful reads return focus to the scanner. The persistent request map is also stored in session storage so a Manifest V3 service-worker suspension does not lose the response route.
+

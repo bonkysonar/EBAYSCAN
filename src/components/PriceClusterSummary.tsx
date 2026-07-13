@@ -77,9 +77,12 @@ function DiscogsSummary({
   const [isApplyingPressingUrl, setIsApplyingPressingUrl] = useState(false);
   const [isPulling, setIsPulling] = useState(false);
   const [pressingUrl, setPressingUrl] = useState("");
+  const autoHelperKey = useRef<string | null>(null);
+  const bridgeFallbackTimeout = useRef<number | null>(null);
   const extensionToken = useRef<string | null>(null);
   const extensionMode = useRef<"helper" | "pressing-choice">("helper");
   const extensionTimeout = useRef<number | null>(null);
+  const pullKey = discogs.releaseUrl ?? (discogs.releaseId ? String(discogs.releaseId) : "");
 
   useEffect(() => {
     function receiveDiscogsStats(event: MessageEvent) {
@@ -91,6 +94,7 @@ function DiscogsSummary({
 
       const payload = event.data as {
         error?: string;
+        helperVersion?: string;
         message?: string;
         stats?: DiscogsSalesStats;
         matchedTitle?: string;
@@ -102,6 +106,14 @@ function DiscogsSummary({
 
       if (payload?.type === "record-scanner-discogs-helper-status") {
         if (!extensionToken.current || payload.token !== extensionToken.current) return;
+        clearBridgeFallbackTimeout();
+        const isLegacyBridge = !payload.helperVersion && payload.message === "Discogs helper bridge connected.";
+        if (isLegacyBridge || (payload.helperVersion && !supportsPersistentDiscogsWindow(payload.helperVersion))) {
+          setExtensionMessage(
+            `Discogs helper ${payload.helperVersion ? `v${payload.helperVersion}` : "v0.2 or older"} is outdated. Download/reload v0.3, then click Reconnect Discogs Window once.`,
+          );
+          return;
+        }
         setExtensionMessage(payload.message ?? "Discogs helper bridge connected.");
         requestScannerInputRefocus();
         return;
@@ -110,6 +122,7 @@ function DiscogsSummary({
       if (payload?.type !== "record-scanner-discogs-helper-result") return;
       if (!extensionToken.current || payload.token !== extensionToken.current) return;
       clearExtensionTimeout();
+      clearBridgeFallbackTimeout();
 
       if (payload.error) {
         setExtensionMessage(payload.error);
@@ -148,8 +161,21 @@ function DiscogsSummary({
     return () => {
       window.removeEventListener("message", receiveDiscogsStats);
       clearExtensionTimeout();
+      clearBridgeFallbackTimeout();
     };
   }, [onPressingAccept, onSalesStatsImport]);
+
+  useEffect(() => {
+    if (discogs.status !== "available" || discogs.salesStats || !pullKey) return;
+    if (autoHelperKey.current === pullKey) return;
+
+    autoHelperKey.current = pullKey;
+    const timer = window.setTimeout(() => {
+      requestPersistentDiscogsHelper("auto");
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [discogs.salesStats, discogs.status, pullKey]);
 
   if (discogs.status !== "available") {
     return (
@@ -190,8 +216,8 @@ function DiscogsSummary({
         {pullMessage ? <p className="source-summary">{pullMessage}</p> : null}
       </div>
       <div className="discogs-pull">
-        <button disabled={!discogs.releaseUrl} type="button" onClick={openDiscogsHelper}>
-          Optional: Open Discogs Helper
+        <button disabled={!discogs.releaseUrl} type="button" onClick={() => requestPersistentDiscogsHelper("manual")}>
+          Reconnect Discogs Window
         </button>
         <button disabled={!discogs.releaseUrl || !onPressingAccept} type="button" onClick={openPressingChooser}>
           Manually Choose Pressing
@@ -236,41 +262,42 @@ function DiscogsSummary({
     }
   }
 
-  function openDiscogsHelper() {
+  function requestPersistentDiscogsHelper(mode: "auto" | "manual") {
     if (!discogs.releaseUrl) return;
 
     const token = crypto.randomUUID();
     extensionToken.current = token;
     extensionMode.current = "helper";
     setIsChoosingPressing(false);
-    setExtensionMessage("Opening Discogs helper for optional historical stats...");
+    setExtensionMessage(
+      mode === "auto"
+        ? "Sending this record to the reusable Discogs window..."
+        : "Reconnecting the reusable Discogs window...",
+    );
     clearExtensionTimeout();
+    clearBridgeFallbackTimeout();
     requestScannerInputRefocus();
-    openVisibleDiscogsHelper(token);
-  }
 
-  function openVisibleDiscogsHelper(token: string) {
-    if (!discogs.releaseUrl) return;
+    window.postMessage(
+      {
+        releaseUrl: discogs.releaseUrl,
+        token,
+        type: "record-scanner-discogs-helper-request",
+      },
+      window.location.origin,
+    );
 
-    const url = new URL(discogs.releaseUrl);
-    url.hash = new URLSearchParams({
-      recordScanner: "1",
-      recordScannerOrigin: window.location.origin,
-      recordScannerToken: token,
-    }).toString();
-    const visibleHelperWindow = window.open(url.toString(), "record-scanner-discogs-helper", "popup,width=960,height=760");
+    bridgeFallbackTimeout.current = window.setTimeout(() => {
+      if (extensionToken.current !== token) return;
+      setExtensionMessage(
+        "Discogs helper v0.3 did not answer. Download/reload the extension, then click Reconnect Discogs Window once.",
+      );
+    }, 1_200);
 
-    if (!visibleHelperWindow) {
-      setExtensionMessage("Chrome blocked the Discogs helper popup. Click Run Discogs Helper to allow it.");
-      return;
-    }
-
-    visibleHelperWindow.focus();
-    clearExtensionTimeout();
     extensionTimeout.current = window.setTimeout(() => {
       if (extensionToken.current !== token) return;
-      setExtensionMessage("Discogs helper window opened, but no stats came back yet. Check whether Discogs finished loading.");
-    }, 15_000);
+      setExtensionMessage("Discogs helper is still waiting. Check the reusable Discogs window for a browser verification page.");
+    }, 5 * 60 * 1000);
   }
 
   function openPressingChooser() {
@@ -282,6 +309,7 @@ function DiscogsSummary({
     setIsChoosingPressing(true);
     setExtensionMessage("Opening Discogs. Navigate to the right pressing, return here, then click Accept New Pressing.");
     clearExtensionTimeout();
+    clearBridgeFallbackTimeout();
 
     window.postMessage(
       {
@@ -346,6 +374,12 @@ function DiscogsSummary({
     extensionTimeout.current = null;
   }
 
+  function clearBridgeFallbackTimeout() {
+    if (bridgeFallbackTimeout.current === null) return;
+    window.clearTimeout(bridgeFallbackTimeout.current);
+    bridgeFallbackTimeout.current = null;
+  }
+
   function reclaimScannerFocus() {
     requestScannerInputRefocus();
   }
@@ -353,6 +387,11 @@ function DiscogsSummary({
 
 function requestScannerInputRefocus() {
   window.dispatchEvent(new CustomEvent("record-scanner-refocus-last-input"));
+}
+
+function supportsPersistentDiscogsWindow(version: string): boolean {
+  const [major = 0, minor = 0] = version.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  return major > 0 || minor >= 3;
 }
 
 async function fetchDiscogsStatsBestEffort(reference: { releaseId?: number; releaseUrl: string }): Promise<{

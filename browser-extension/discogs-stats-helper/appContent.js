@@ -30,7 +30,10 @@
 
         window.postMessage(
           {
-            message: response?.accepted ? "Discogs helper bridge connected." : "Discogs helper bridge sent request.",
+            helperVersion: response?.helperVersion,
+            message: response?.accepted
+              ? `Discogs helper ${response.helperVersion ? `v${response.helperVersion} ` : ""}connected.`
+              : "Discogs helper bridge sent request.",
             token: request.token,
             type: "record-scanner-discogs-helper-status",
           },
@@ -50,7 +53,10 @@
   });
 
   chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type !== "record-scanner-discogs-helper-result") return;
+    if (
+      message?.type !== "record-scanner-discogs-helper-result" &&
+      message?.type !== "record-scanner-discogs-helper-status"
+    ) return;
     window.postMessage(message, window.location.origin);
   });
 })();

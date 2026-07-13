@@ -9,8 +9,11 @@
   const token = params.get("recordScannerToken") || storedChoice?.token;
   if (!token) return;
 
-  if (mode === "choose") {
+  if (isRecordScannerPage) {
     storeChoice({ mode, origin, token });
+  }
+
+  if (mode === "choose") {
     chrome.runtime.onMessage.addListener((message) => {
       if (message?.type !== "record-scanner-discogs-helper-choose-current") return;
       if (message?.token !== token) return;
@@ -90,15 +93,59 @@
 
   async function waitForStats() {
     const startedAt = Date.now();
-    const timeoutMs = 12_000;
+    const timeoutMs = 5 * 60 * 1000;
+    let attentionSent = false;
 
     while (Date.now() - startedAt < timeoutMs) {
       const stats = readStats();
       if (stats) return stats;
+
+      if (!attentionSent && (looksLikeBrowserChallenge() || Date.now() - startedAt >= 15_000)) {
+        attentionSent = true;
+        sendAttention(
+          looksLikeBrowserChallenge()
+            ? "Discogs needs browser verification in the helper window. Complete it once; this lookup will continue automatically."
+            : "Discogs is open but its sales statistics are not visible yet. Check the reusable helper window.",
+        );
+      }
       await sleep(250);
     }
 
     throw new Error("Discogs helper could not find Last Sold / Low / Median / High on this page.");
+  }
+
+  function sendAttention(message) {
+    const payload = {
+      message,
+      token,
+      type: "record-scanner-discogs-helper-attention",
+    };
+
+    if (mode === "background") {
+      chrome.runtime.sendMessage(payload);
+      return;
+    }
+
+    if (origin && window.opener) {
+      window.opener.postMessage(
+        {
+          ...payload,
+          type: "record-scanner-discogs-helper-status",
+        },
+        origin,
+      );
+    }
+  }
+
+  function looksLikeBrowserChallenge() {
+    if (document.querySelector('iframe[src*="challenges.cloudflare.com"], #challenge-running, .cf-challenge')) {
+      return true;
+    }
+
+    const pageText = `${document.title} ${document.body?.textContent || ""}`.slice(0, 10_000);
+    return /checking your browser|enable javascript and cookies|performing security verification|verify you are human|just a moment/i.test(
+      pageText,
+    );
   }
 
   function readStats() {

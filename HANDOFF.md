@@ -213,7 +213,13 @@ The production app header includes Download Chrome Extension, which serves `publ
 
 Repeated helper navigations were not viable for scanner throughput and caused recurring browser challenges. Normal searches now call the documented authenticated Discogs `marketplace/price_suggestions/{release_id}` endpoint alongside the release lookup, select Very Good (VG) as the conservative used-record price guide, and return it on `discogs.suggestedPrice` / `discogs.suggestedPriceCondition`. The marketplace release response now supplies current lowest/for-sale values directly, avoiding a separate marketplace-stats API request.
 
-`PriceClusterSummary` does not auto-launch the extension. The exact historical page Median, Last Sold, Low, and High remain optional manual data: Optional: Pull Historical Stats, Optional: Open Discogs Helper, manual text/file import, or pressing correction. The manual helper opens only the visible helper window instead of also sending a duplicate background-helper request.
+The initial price-guide deployment stopped auto-launching the extension, but production later confirmed the configured token could not access that endpoint. The persistent v0.3 helper design below supersedes that no-auto-launch behavior.
+
+### 2026-07-13 persistent visible helper v0.3
+
+The price-suggestions endpoint was unavailable to the configured production Discogs token, while Vercel page pulls remained blocked by a 403 browser challenge. Helper v0.3 now restores automatic historical-stat retrieval through one reusable, visible Chrome popup. The extension stores helper and pending-request state in `chrome.storage.session`, waits up to five minutes for normal browser verification, focuses the helper only when it is first created or needs attention, and returns focus to the scanner after success.
+
+`PriceClusterSummary` sends one helper request automatically for each matched release without stats. It detects and warns about pre-0.3 extension versions. The hosted zip must contain `manifest.json` version 0.3.0 and needs to be downloaded/unzipped/reloaded once on each Chrome profile; unpacked extensions do not update themselves from the hosted zip.
 
 ## Hosting
 
