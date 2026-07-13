@@ -1,5 +1,5 @@
 import type { DiscogsSalesStats } from "../lib/ebay/types";
-import { parseDiscogsSalesStats } from "../lib/discogs/parseSalesStats";
+import { parseDiscogsSalesStats } from "../lib/discogs/parseSalesStats.js";
 
 type FetchDiscogsSalesStatsInput = {
   releaseId?: number;

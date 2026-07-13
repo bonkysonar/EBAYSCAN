@@ -22,6 +22,7 @@ import {
 import { EbayClient } from "./lib/ebay/client";
 import { MockEbayClient } from "./lib/ebay/mockClient";
 import type { DiscogsMarketSnapshot, DiscogsSalesStats, SearchInput, SearchResult } from "./lib/ebay/types";
+import { readJsonResponse } from "./lib/http/jsonResponse";
 import { scoreRecord } from "./lib/scoring/scoreRecord";
 import type { ScoringSettings, TriageDecision } from "./lib/scoring/types";
 import { loadSettings, saveSettings } from "./lib/storage/localSettings";
@@ -179,7 +180,7 @@ export function App() {
         releaseUrl: discogs.releaseUrl,
       }),
     });
-    const payload = await response.json();
+    const payload = await readJsonResponse<DiscogsSalesStats & { error?: string }>(response, "Discogs stats endpoint");
 
     if (!response.ok) {
       throw new Error(payload.error ?? "Discogs stats pull failed.");

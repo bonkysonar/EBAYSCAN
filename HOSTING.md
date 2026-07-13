@@ -4,7 +4,7 @@ The app is deployed on Vercel from the `main` branch.
 
 - Production app: `https://ebayscan.vercel.app`
 - Project: `bonkysonars-projects/ebayscan`
-- Latest known production deployment from this workspace: `https://ebayscan-3mnc4qaqt-bonkysonars-projects.vercel.app`
+- Latest known production deployment from this workspace: `https://ebayscan-bmkgc020k-bonkysonars-projects.vercel.app`
 
 ## Why Vercel
 

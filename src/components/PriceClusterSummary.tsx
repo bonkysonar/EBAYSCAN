@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { DiscogsMarketSnapshot, DiscogsSalesStats } from "../lib/ebay/types";
+import { readJsonResponse } from "../lib/http/jsonResponse";
 import type { PriceSummary } from "../lib/scoring/types";
 import { parseDiscogsReleaseReference } from "../lib/discogs/releaseUrl";
 
@@ -415,7 +416,7 @@ async function fetchDiscogsStatsBestEffort(reference: { releaseId?: number; rele
         releaseUrl: reference.releaseUrl,
       }),
     });
-    const payload = await response.json();
+    const payload = await readJsonResponse<DiscogsSalesStats & { error?: string }>(response, "Discogs stats endpoint");
 
     if (!response.ok) {
       return {
