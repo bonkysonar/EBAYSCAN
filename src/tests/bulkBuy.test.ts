@@ -119,4 +119,23 @@ describe("bulk buy math", () => {
     expect(updated.artistTitle).toBe("Resolved Record");
     expect(updated.math?.purchasePrice).toBe(4);
   });
+
+  it("uses the automatic Discogs price guide without waiting for historical stats", () => {
+    const row = createBulkBuyRow({
+      discogs: {
+        confidence: "high",
+        matchedTitle: "Automatic Guide Record",
+        status: "available",
+        suggestedPrice: { currency: "USD", value: 14 },
+        suggestedPriceCondition: "Very Good (VG)",
+        warnings: [],
+      },
+      input: { barcode: "123456789012", conditionFilter: "used", type: "barcode" },
+      order: 1,
+    });
+
+    expect(row.statsStatus).toBe("discogs-price-guide");
+    expect(row.math?.medianPrice).toBe(14);
+    expect(row.math?.purchasePrice).toBe(5.5);
+  });
 });

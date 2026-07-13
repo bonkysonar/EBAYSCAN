@@ -24,7 +24,7 @@ export type BulkBuyRow = {
   order: number;
   scannedAt: string;
   searchResult?: SearchResult;
-  statsStatus: "cheapest-ten" | "estimated-from-market" | "missing" | "sales-stats";
+  statsStatus: "cheapest-ten" | "discogs-price-guide" | "estimated-from-market" | "missing" | "sales-stats";
   warnings: string[];
 };
 
@@ -165,6 +165,9 @@ function bulkBuyReferencePrice(
   const salesMedian = discogs?.salesStats?.medianPrice;
   if (salesMedian) candidates.push({ ...salesMedian, source: "sales-stats" });
 
+  const suggestedPrice = discogs?.suggestedPrice;
+  if (suggestedPrice) candidates.push({ ...suggestedPrice, source: "discogs-price-guide" });
+
   const marketMedian = discogs?.medianPrice;
   if (marketMedian) candidates.push({ ...marketMedian, source: "estimated-from-market" });
 
@@ -189,7 +192,8 @@ function bulkBuySaleInputs(
 } {
   return {
     averageCheapestTenTotalPrice: priceSummary?.averageCheapestTenTotalPrice,
-    discogsMedianPrice: discogs?.salesStats?.medianPrice?.value ?? discogs?.medianPrice?.value,
+    discogsMedianPrice:
+      discogs?.salesStats?.medianPrice?.value ?? discogs?.suggestedPrice?.value ?? discogs?.medianPrice?.value,
     titleMatchCount: priceSummary?.relevantResultCount ?? 0,
   };
 }

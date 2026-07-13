@@ -77,13 +77,9 @@ function DiscogsSummary({
   const [isApplyingPressingUrl, setIsApplyingPressingUrl] = useState(false);
   const [isPulling, setIsPulling] = useState(false);
   const [pressingUrl, setPressingUrl] = useState("");
-  const autoVisibleHelperKey = useRef<string | null>(null);
   const extensionToken = useRef<string | null>(null);
   const extensionMode = useRef<"helper" | "pressing-choice">("helper");
   const extensionTimeout = useRef<number | null>(null);
-  const bridgeFallbackTimeout = useRef<number | null>(null);
-
-  const pullKey = discogs.releaseUrl ?? (discogs.releaseId ? String(discogs.releaseId) : "");
 
   useEffect(() => {
     function receiveDiscogsStats(event: MessageEvent) {
@@ -106,7 +102,6 @@ function DiscogsSummary({
 
       if (payload?.type === "record-scanner-discogs-helper-status") {
         if (!extensionToken.current || payload.token !== extensionToken.current) return;
-        clearBridgeFallbackTimeout();
         setExtensionMessage(payload.message ?? "Discogs helper bridge connected.");
         requestScannerInputRefocus();
         return;
@@ -115,7 +110,6 @@ function DiscogsSummary({
       if (payload?.type !== "record-scanner-discogs-helper-result") return;
       if (!extensionToken.current || payload.token !== extensionToken.current) return;
       clearExtensionTimeout();
-      clearBridgeFallbackTimeout();
 
       if (payload.error) {
         setExtensionMessage(payload.error);
@@ -154,21 +148,8 @@ function DiscogsSummary({
     return () => {
       window.removeEventListener("message", receiveDiscogsStats);
       clearExtensionTimeout();
-      clearBridgeFallbackTimeout();
     };
   }, [onPressingAccept, onSalesStatsImport]);
-
-  useEffect(() => {
-    if (discogs.status !== "available" || discogs.salesStats || !pullKey) return;
-    if (autoVisibleHelperKey.current === pullKey) return;
-
-    autoVisibleHelperKey.current = pullKey;
-    const timer = window.setTimeout(() => {
-      openDiscogsHelper("auto");
-    }, 500);
-
-    return () => window.clearTimeout(timer);
-  }, [discogs.salesStats, discogs.status, pullKey]);
 
   if (discogs.status !== "available") {
     return (
@@ -191,13 +172,17 @@ function DiscogsSummary({
       </p>
       <dl className="discogs-grid">
         <div><dt>Current Lowest</dt><dd>{discogs.lowestPrice ? `${money(discogs.lowestPrice.value)} ${discogs.lowestPrice.currency}` : "n/a"}</dd></div>
-        <div><dt>Sales Median</dt><dd>{discogs.salesStats?.medianPrice ? `${money(discogs.salesStats.medianPrice.value)} ${discogs.salesStats.medianPrice.currency}` : isPulling ? "Pulling..." : "Needs pull/import"}</dd></div>
+        <div><dt>Discogs Price Guide</dt><dd>{discogs.suggestedPrice ? `${money(discogs.suggestedPrice.value)} ${discogs.suggestedPrice.currency}` : "n/a"}</dd></div>
+        <div><dt>Historical Median</dt><dd>{discogs.salesStats?.medianPrice ? `${money(discogs.salesStats.medianPrice.value)} ${discogs.salesStats.medianPrice.currency}` : isPulling ? "Pulling..." : "optional"}</dd></div>
         <div><dt>Last Sold</dt><dd>{discogs.salesStats?.lastSold ?? "n/a"}</dd></div>
         <div><dt>Low / High</dt><dd>{discogs.salesStats?.lowPrice ? money(discogs.salesStats.lowPrice.value) : "n/a"} / {discogs.salesStats?.highPrice ? money(discogs.salesStats.highPrice.value) : "n/a"}</dd></div>
       </dl>
+      {discogs.suggestedPrice ? (
+        <p className="source-summary">Discogs {discogs.suggestedPriceCondition ?? "used-condition"} price guide loaded automatically.</p>
+      ) : null}
       <div className="discogs-pull">
         <button disabled={isPulling || !onSalesStatsPull} type="button" onClick={() => pullSalesStats("manual")}>
-          {isPulling ? "Pulling Discogs Data..." : "Pull Discogs Data"}
+          {isPulling ? "Pulling Historical Stats..." : "Optional: Pull Historical Stats"}
         </button>
         {discogs.salesStats ? (
           <span>Stats source: {statsSourceLabel(discogs.salesStats.source)}</span>
@@ -205,8 +190,8 @@ function DiscogsSummary({
         {pullMessage ? <p className="source-summary">{pullMessage}</p> : null}
       </div>
       <div className="discogs-pull">
-        <button disabled={!discogs.releaseUrl} type="button" onClick={() => openDiscogsHelper("manual")}>
-          Run Discogs Helper
+        <button disabled={!discogs.releaseUrl} type="button" onClick={openDiscogsHelper}>
+          Optional: Open Discogs Helper
         </button>
         <button disabled={!discogs.releaseUrl || !onPressingAccept} type="button" onClick={openPressingChooser}>
           Manually Choose Pressing
@@ -251,43 +236,17 @@ function DiscogsSummary({
     }
   }
 
-  function openDiscogsHelper(mode: "auto" | "manual") {
+  function openDiscogsHelper() {
     if (!discogs.releaseUrl) return;
 
     const token = crypto.randomUUID();
     extensionToken.current = token;
     extensionMode.current = "helper";
     setIsChoosingPressing(false);
-    setExtensionMessage(
-      mode === "auto"
-        ? "Asking Discogs helper to run in the background..."
-        : "Opening Discogs helper...",
-    );
+    setExtensionMessage("Opening Discogs helper for optional historical stats...");
     clearExtensionTimeout();
-    clearBridgeFallbackTimeout();
     requestScannerInputRefocus();
-
-    window.postMessage(
-      {
-        releaseUrl: discogs.releaseUrl,
-        token,
-        type: "record-scanner-discogs-helper-request",
-      },
-      window.location.origin,
-    );
-
-    bridgeFallbackTimeout.current = window.setTimeout(() => {
-      if (extensionToken.current !== token) return;
-      if (mode === "auto") {
-        setExtensionMessage("Discogs helper bridge did not answer automatically. Scanner input kept focused; click Run Discogs Helper if you need this one.");
-        requestScannerInputRefocus();
-        return;
-      }
-    }, 900);
-
-    if (mode === "manual") {
-      openVisibleDiscogsHelper(token);
-    }
+    openVisibleDiscogsHelper(token);
   }
 
   function openVisibleDiscogsHelper(token: string) {
@@ -323,7 +282,6 @@ function DiscogsSummary({
     setIsChoosingPressing(true);
     setExtensionMessage("Opening Discogs. Navigate to the right pressing, return here, then click Accept New Pressing.");
     clearExtensionTimeout();
-    clearBridgeFallbackTimeout();
 
     window.postMessage(
       {
@@ -386,12 +344,6 @@ function DiscogsSummary({
     if (extensionTimeout.current === null) return;
     window.clearTimeout(extensionTimeout.current);
     extensionTimeout.current = null;
-  }
-
-  function clearBridgeFallbackTimeout() {
-    if (bridgeFallbackTimeout.current === null) return;
-    window.clearTimeout(bridgeFallbackTimeout.current);
-    bridgeFallbackTimeout.current = null;
   }
 
   function reclaimScannerFocus() {

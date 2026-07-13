@@ -37,6 +37,7 @@ describe("App Discogs pressing URL fallback", () => {
     await applyPressingUrl("https://www.discogs.com/release/8769631-Various-Pebbles-Vol-One");
     expect(discogsLink()?.href).toBe("https://www.discogs.com/release/8769631-Various-Pebbles-Vol-One");
     expect(container?.textContent).not.toContain("$42.00 USD");
+    expect(container?.textContent).not.toContain("$21.00 USD");
 
     await applyPressingUrl("https://www.discogs.com/release/249504-Fleetwood-Mac-Rumours");
     expect(discogsLink()?.href).toBe("https://www.discogs.com/release/249504-Fleetwood-Mac-Rumours");
@@ -127,6 +128,8 @@ function searchPayload() {
           medianPrice: { currency: "USD", value: 42 },
           source: "page_fetch",
         },
+        suggestedPrice: { currency: "USD", value: 21 },
+        suggestedPriceCondition: "Very Good (VG)",
         status: "available",
         warnings: [],
       },

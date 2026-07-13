@@ -129,17 +129,17 @@ Optional Discogs marketplace stats are available when `.env.local` or Vercel env
 DISCOGS_USER_TOKEN=your_discogs_personal_token_here
 ```
 
-The app searches Discogs releases in parallel with eBay and displays matched release, lowest marketplace price, number for sale, have/want counts, and match confidence. Discogs median/sold-history price is shown as unavailable unless the API returns it.
+The app searches Discogs releases in parallel with eBay and displays the matched release, current lowest price, number for sale, have/want counts, match confidence, and an automatic used-condition price guide. The price guide uses Discogs' documented authenticated price-suggestions endpoint and prefers the conservative Very Good (VG) suggestion. It is labeled separately from historical median because the two values are not interchangeable.
 
 ## Discogs Sales Stats Pull / Import
 
-Discogs release pages show useful sales statistics such as Last Sold, Low, Median, and High. Those sales-history values are not available from the official API response used by the app. When a result has a Discogs match, the app can try a one-release-at-a-time pull of the matched Discogs page, or you can paste the visible Statistics text / upload a saved Discogs HTML/XML/text file into the Discogs import box. Parsed Discogs sales median becomes a stricter GREEN gate.
+Discogs release pages show useful historical statistics such as Last Sold, Low, Median, and High. Those exact page-history values are separate from the official API price guide. Normal scans do not need them: pressing Enter returns the automatic Discogs VG price guide without opening Discogs or requiring another click. If an exact historical median is needed, the app can try a one-release-at-a-time page pull, use the optional Chrome helper, or parse Statistics text / saved Discogs HTML/XML/text supplied by the user.
 
 Discogs may block the automatic pull with a browser challenge; when that happens, the app shows the blocker and the paste/file import box remains the fallback. Do not use this as a batch data-mining feature.
 
 ## Discogs Browser Helper
 
-For the fastest workflow, install the companion Chrome extension. The current packaged extension is available from the app header as Download Chrome Extension, or directly at:
+The companion Chrome extension is optional and is only needed to retrieve the exact page-visible historical statistics or manually correct a pressing. The normal scanner flow uses the API price guide and does not open the helper automatically. The packaged extension is available from the app header as Download Chrome Extension, or directly at:
 
 ```text
 https://ebayscan.vercel.app/downloads/record-scanner-discogs-helper.zip
@@ -152,11 +152,11 @@ For local development, the unpacked source lives in `browser-extension/discogs-s
 3. Download and unzip the hosted helper, or use the local folder above.
 4. Click Load unpacked and choose the unzipped helper folder.
 5. In Record Scanner, scan/search a record with a Discogs match.
-6. Click Run Discogs Helper, or let the automatic helper attempt run after a Discogs match appears.
+6. Click Optional: Open Discogs Helper only when exact historical statistics are needed.
 
-The helper opens the matched Discogs release in a tab, reads the visible Last Sold / Low / Median / High stats from your real browser session, and sends them back to Record Scanner. This avoids waiting on Google Sheets and avoids pretending the server can read Discogs pages when Discogs blocks automated page fetches.
+The helper opens the matched Discogs release in a tab, reads the visible Last Sold / Low / Median / High stats from your real browser session, and sends them back to Record Scanner. It is a manual precision tool, not part of the default scan path.
 
-Once installed, Record Scanner opens the helper automatically shortly after a Discogs match appears. The helper uses the visible Discogs page flow because that is the fastest proven path in David's browser session. The Run Discogs Helper button retries that same visible helper flow.
+Record Scanner never opens the helper automatically. This avoids repeated Discogs navigations and browser challenges during a scanning session.
 
 When the browser helper returns a Discogs sales median, that median becomes the hard threshold signal: median above the configured threshold is GREEN, and median at/below the threshold is RED.
 

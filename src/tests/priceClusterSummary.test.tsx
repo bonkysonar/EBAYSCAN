@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PriceClusterSummary } from "../components/PriceClusterSummary";
-import type { DiscogsSalesStats } from "../lib/ebay/types";
+import type { DiscogsMarketSnapshot, DiscogsSalesStats } from "../lib/ebay/types";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -10,6 +10,7 @@ let root: ReturnType<typeof createRoot> | null = null;
 let container: HTMLDivElement | null = null;
 
 afterEach(() => {
+  vi.useRealTimers();
   act(() => {
     root?.unmount();
   });
@@ -20,6 +21,26 @@ afterEach(() => {
 });
 
 describe("PriceClusterSummary manual Discogs pressing", () => {
+  it("shows the automatic Discogs price guide without launching the browser helper", () => {
+    vi.useFakeTimers();
+    const postMessage = vi.spyOn(window, "postMessage").mockImplementation(() => undefined);
+
+    renderSummary(vi.fn(), {
+      suggestedPrice: { currency: "USD", value: 12.34 },
+      suggestedPriceCondition: "Very Good (VG)",
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(container?.textContent).toContain("Discogs Price Guide");
+    expect(container?.textContent).toContain("$12.34 USD");
+    expect(container?.textContent).toContain("loaded automatically");
+    expect(postMessage).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("accepts three different Discogs pressing URLs even when stats are blocked", async () => {
     const onAccept = vi.fn();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "Discogs blocked the automatic page pull (403)." }), { status: 502 })));
@@ -35,27 +56,32 @@ describe("PriceClusterSummary manual Discogs pressing", () => {
   });
 });
 
-function renderSummary(onDiscogsPressingAccept: (pressing: {
-  matchedTitle?: string;
-  releaseId?: number;
-  releaseUrl: string;
-  salesStats?: DiscogsSalesStats;
-}) => void) {
+function renderSummary(
+  onDiscogsPressingAccept: (pressing: {
+    matchedTitle?: string;
+    releaseId?: number;
+    releaseUrl: string;
+    salesStats?: DiscogsSalesStats;
+  }) => void,
+  overrides: Partial<DiscogsMarketSnapshot> = {},
+) {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
+  const discogs: DiscogsMarketSnapshot = {
+    confidence: "high",
+    matchedTitle: "Original Pressing",
+    releaseId: 1,
+    releaseUrl: "https://www.discogs.com/release/1-Original-Pressing",
+    status: "available",
+    warnings: [],
+    ...overrides,
+  };
 
   act(() => {
     root?.render(
       <PriceClusterSummary
-        discogs={{
-          confidence: "high",
-          matchedTitle: "Original Pressing",
-          releaseId: 1,
-          releaseUrl: "https://www.discogs.com/release/1-Original-Pressing",
-          status: "available",
-          warnings: [],
-        }}
+        discogs={discogs}
         onDiscogsPressingAccept={onDiscogsPressingAccept}
         summary={{
           averageCheapestTenTotalPrice: 10,

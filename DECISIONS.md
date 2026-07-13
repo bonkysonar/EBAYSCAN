@@ -65,3 +65,9 @@ Store-pricing analysis is a separate hash route at `#/seller-prices` so the scan
 
 Seller recommendations intentionally use active eBay cheapest-10 average and active comparable count rather than Discogs median. This answers a different question than the scanner: not "is this record worth processing?" but "is David's live listing competitive in the current active market?"
 
+## 2026-07-13: Automatic Discogs Price Guide Replaces Automatic Browser Helper
+
+Opening a new Discogs page for every scan was slow, repeatedly triggered browser challenges, and defeated the scanner's one-enter workflow. The default search now calls Discogs' documented authenticated `marketplace/price_suggestions/{release_id}` API endpoint and selects the conservative Very Good (VG) suggestion for used-record triage. The UI labels this value as a price guide, not a historical median.
+
+The app no longer launches the Chrome helper automatically. Pressing Enter performs the eBay and Discogs API lookup without browser navigation or another click. The page pull, Chrome helper, and pressing chooser remain manual options for cases where David wants the exact page-visible Last Sold / Low / Median / High history or needs to correct a pressing. A below-threshold automatic Discogs price guide conservatively prevents an eBay-only GREEN decision, but it is not treated as the helper median's 100%-confidence historical signal.
+

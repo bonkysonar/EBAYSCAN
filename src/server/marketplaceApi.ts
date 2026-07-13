@@ -10,6 +10,10 @@ import type {
   SearchInput,
   SearchResult,
 } from "../lib/ebay/types";
+import {
+  selectUsedDiscogsPriceSuggestion,
+  type DiscogsPriceSuggestionsResponse,
+} from "../lib/discogs/priceSuggestions";
 
 type EbayItemSummary = {
   itemId?: string;
@@ -75,14 +79,6 @@ type DiscogsReleaseResponse = {
   title?: string;
   uri?: string;
   year?: number;
-};
-
-type DiscogsStatsResponse = {
-  lowest_price?: {
-    currency?: string;
-    value?: number;
-  };
-  num_for_sale?: number;
 };
 
 export type MarketplaceApiEnv = {
@@ -529,18 +525,33 @@ async function searchDiscogsMarket(
 
     let best: DiscogsSearchResult | null = null;
     let release: DiscogsReleaseResponse | null = null;
-    let stats: DiscogsStatsResponse = {};
+    let priceSuggestion: ReturnType<typeof selectUsedDiscogsPriceSuggestion>;
+    let priceSuggestionWarning = "";
     const skipped: number[] = [];
 
     for (const candidate of candidates) {
-      try {
-        release = await fetchDiscogsRelease(candidate.id, discogsToken);
-        stats = await fetchDiscogsStats(candidate.id, discogsToken);
-        best = candidate;
-        break;
-      } catch {
+      const [releaseResult, suggestionsResult] = await Promise.allSettled([
+        fetchDiscogsRelease(candidate.id, discogsToken),
+        fetchDiscogsPriceSuggestions(candidate.id, discogsToken),
+      ]);
+
+      if (releaseResult.status === "rejected") {
         skipped.push(candidate.id);
+        continue;
       }
+
+      release = releaseResult.value;
+      best = candidate;
+
+      if (suggestionsResult.status === "fulfilled") {
+        priceSuggestion = selectUsedDiscogsPriceSuggestion(suggestionsResult.value);
+        if (!priceSuggestion) {
+          priceSuggestionWarning = "Discogs did not return a usable used-condition price guide for this release.";
+        }
+      } else {
+        priceSuggestionWarning = "Discogs price guide was unavailable; current marketplace data is still shown.";
+      }
+      break;
     }
 
     if (!best || !release) {
@@ -551,8 +562,8 @@ async function searchDiscogsMarket(
       };
     }
 
-    const lowest = stats.lowest_price?.value ?? release.lowest_price;
-    const currency = stats.lowest_price?.currency ?? "USD";
+    const lowest = release.lowest_price;
+    const currency = priceSuggestion?.currency ?? "USD";
 
     return {
       catno: best.catno,
@@ -561,18 +572,22 @@ async function searchDiscogsMarket(
       lowestPrice: typeof lowest === "number" ? { currency, value: roundMoney(lowest) } : undefined,
       matchedTitle: best.title ?? release.title,
       medianPrice: undefined,
-      numForSale: stats.num_for_sale ?? release.num_for_sale,
+      numForSale: release.num_for_sale,
       releaseId: release.id,
       releaseUrl: release.uri ?? best.uri,
+      suggestedPrice: priceSuggestion
+        ? { currency: priceSuggestion.currency, value: priceSuggestion.value }
+        : undefined,
+      suggestedPriceCondition: priceSuggestion?.condition,
       status: "available",
       warnings: [
         [
-          "Discogs median/sold-history price was not available from the current API response; showing lowest marketplace price instead.",
+          priceSuggestionWarning,
           skipped.length ? `Skipped unavailable Discogs release IDs: ${skipped.join(", ")}.` : "",
         ]
           .filter(Boolean)
           .join(" "),
-      ],
+      ].filter(Boolean),
       want: release.community?.want,
       year: release.year ?? parseOptionalYear(best.year),
     };
@@ -612,15 +627,18 @@ async function fetchDiscogsRelease(releaseId: number, token: string): Promise<Di
   return fetchDiscogsJson<DiscogsReleaseResponse>(new URL(`https://api.discogs.com/releases/${releaseId}`), token);
 }
 
-async function fetchDiscogsStats(releaseId: number, token: string): Promise<DiscogsStatsResponse> {
-  return fetchDiscogsJson<DiscogsStatsResponse>(new URL(`https://api.discogs.com/marketplace/stats/${releaseId}`), token);
+async function fetchDiscogsPriceSuggestions(releaseId: number, token: string): Promise<DiscogsPriceSuggestionsResponse> {
+  return fetchDiscogsJson<DiscogsPriceSuggestionsResponse>(
+    new URL(`https://api.discogs.com/marketplace/price_suggestions/${releaseId}`),
+    token,
+  );
 }
 
 async function fetchDiscogsJson<T>(url: URL, token: string): Promise<T> {
   const response = await fetch(url, {
     headers: {
       Authorization: `Discogs token=${token}`,
-      "User-Agent": "RecordScanner/0.1 +local",
+      "User-Agent": "RecordScanner/1.0 +https://ebayscan.vercel.app",
     },
   });
   const payloadText = await response.text();

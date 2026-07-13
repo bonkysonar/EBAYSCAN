@@ -119,6 +119,9 @@ export function scoreRecord(searchResult: SearchResult, settings: Partial<Scorin
   const benchmark = lowEndAverage ?? priceSummary.trimmedMedianTotalPrice ?? priceSummary.medianTotalPrice;
   const discogsSalesStats = searchResult.marketSnapshot?.discogs?.salesStats;
   const discogsSalesMedian = discogsSalesStats?.medianPrice?.value;
+  const discogsPriceGuide = searchResult.marketSnapshot?.discogs?.suggestedPrice;
+  const discogsSuggestedPrice = discogsPriceGuide?.value;
+  const discogsSuggestedCondition = searchResult.marketSnapshot?.discogs?.suggestedPriceCondition ?? "used-condition";
   const topListings = cheapestListings(relevantListings);
   const enoughResults = relevantListings.length >= resolvedSettings.minimumResultsForSkip;
   const goodConsensus = consensus.clusterRatio >= 0.7;
@@ -186,10 +189,35 @@ export function scoreRecord(searchResult: SearchResult, settings: Partial<Scorin
     };
   }
 
+  if (
+    discogsSalesMedian === undefined &&
+    discogsSuggestedPrice !== undefined &&
+    discogsSuggestedPrice <= threshold &&
+    benchmark > threshold
+  ) {
+    reasons.unshift(
+      `Discogs ${discogsSuggestedCondition} price guide is $${discogsSuggestedPrice.toFixed(2)}, at or below the $${threshold.toFixed(2)} threshold.`,
+    );
+    return {
+      decision: "YELLOW",
+      confidence: Math.min(confidence, 0.68),
+      threshold,
+      priceSummary,
+      reasons,
+      warnings,
+      topListings,
+      suggestedAction: "Manual check needed; the Discogs price guide is weaker than active eBay listings.",
+    };
+  }
+
   if (benchmark > threshold && enoughResults) {
     reasons.unshift(`Cheapest comparable listings average above the $${threshold.toFixed(2)} threshold.`);
     if (discogsSalesMedian !== undefined) {
       reasons.push(`Discogs sales median is $${discogsSalesMedian.toFixed(2)}, also above the threshold.`);
+    } else if (discogsSuggestedPrice !== undefined) {
+      reasons.push(
+        `Discogs ${discogsSuggestedCondition} price guide is $${discogsSuggestedPrice.toFixed(2)}, also above the threshold.`,
+      );
     }
     if (!goodConsensus) {
       reasons.push("Consensus is imperfect, but the low-end comparable average is strong enough to avoid skipping.");
