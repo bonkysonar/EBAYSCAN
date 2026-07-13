@@ -1,56 +1,89 @@
 const pendingRequests = new Map();
+const HELPER_SESSION_KEY = "recordScannerDiscogsHelperSession";
+const PENDING_REQUESTS_KEY = "recordScannerDiscogsPendingRequests";
+const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+const STORED_REQUEST_MAX_AGE_MS = 10 * 60 * 1000;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "record-scanner-discogs-helper-request") {
-    sendResponse({ accepted: true });
-    openDiscogsTab(message, sender);
-    return true;
+    sendResponse({
+      accepted: true,
+      helperVersion: chrome.runtime.getManifest().version,
+    });
+    void openDiscogsWindow(message, sender);
+    return;
   }
 
   if (message?.type === "record-scanner-discogs-helper-choose-request") {
-    sendResponse({ accepted: true });
-    openDiscogsChoiceTab(message, sender);
-    return true;
+    sendResponse({
+      accepted: true,
+      helperVersion: chrome.runtime.getManifest().version,
+    });
+    void openDiscogsChoiceWindow(message, sender);
+    return;
   }
 
   if (message?.type === "record-scanner-discogs-helper-accept-current") {
     sendResponse({ accepted: true });
-    acceptCurrentDiscogsChoice(message, sender);
-    return true;
+    void acceptCurrentDiscogsChoice(message, sender);
+    return;
+  }
+
+  if (message?.type === "record-scanner-discogs-helper-attention") {
+    void handleHelperAttention(message);
+    return;
   }
 
   if (message?.type === "record-scanner-discogs-helper-result") {
-    completeRequest(message, sender);
+    void completeRequest(message, sender);
   }
 });
 
-async function openDiscogsTab(message, sender) {
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void clearHelperSessionForTab(tabId);
+});
+
+async function openDiscogsWindow(message, sender) {
   const appTabId = sender.tab?.id;
+  const appWindowId = sender.tab?.windowId;
   if (!appTabId || !message.releaseUrl || !message.token) return;
 
   try {
-    const url = new URL(message.releaseUrl);
-    if (url.hostname !== "www.discogs.com" && url.hostname !== "discogs.com") {
-      throw new Error("Record Scanner helper only opens Discogs URLs.");
-    }
-
-    url.hash = new URLSearchParams({
+    const url = buildDiscogsUrl(message.releaseUrl, {
       recordScanner: "1",
       recordScannerMode: "background",
       recordScannerToken: message.token,
-    }).toString();
-
-    const tab = await chrome.tabs.create({ active: false, url: url.toString() });
-    pendingRequests.set(message.token, {
-      appTabId,
-      helperTabId: tab.id,
-      closeOnComplete: true,
-      startedAt: Date.now(),
     });
+    const { created, tab } = await getOrCreateHelperTab();
+    if (!tab.id || tab.windowId === undefined) {
+      throw new Error("Discogs helper window did not create a usable tab.");
+    }
 
-    setTimeout(() => expireRequest(message.token), 20_000);
+    const request = {
+      appTabId,
+      appWindowId,
+      helperTabId: tab.id,
+      helperWindowId: tab.windowId,
+      startedAt: Date.now(),
+    };
+    await clearPendingRequestsForHelperTab(tab.id);
+    await savePendingRequest(message.token, request);
+    await chrome.tabs.update(tab.id, { active: true, url });
+
+    if (created) {
+      await focusHelperWindow(request);
+    }
+
+    await sendStatus(
+      request,
+      message.token,
+      created
+        ? "Discogs helper window opened. Complete the browser check if Discogs asks; scanning will resume automatically."
+        : "Reusing the Discogs helper window for this record.",
+    );
+    setTimeout(() => void expireRequest(message.token), REQUEST_TIMEOUT_MS);
   } catch (error) {
-    chrome.tabs.sendMessage(appTabId, {
+    await sendResultToApp(appTabId, {
       error: error instanceof Error ? error.message : "Discogs helper could not open the release.",
       token: message.token,
       type: "record-scanner-discogs-helper-result",
@@ -58,37 +91,40 @@ async function openDiscogsTab(message, sender) {
   }
 }
 
-async function openDiscogsChoiceTab(message, sender) {
+async function openDiscogsChoiceWindow(message, sender) {
   const appTabId = sender.tab?.id;
+  const appWindowId = sender.tab?.windowId;
   if (!appTabId || !message.releaseUrl || !message.token) return;
 
   try {
-    const url = new URL(message.releaseUrl);
-    if (url.hostname !== "www.discogs.com" && url.hostname !== "discogs.com") {
-      throw new Error("Record Scanner helper only opens Discogs URLs.");
-    }
-
-    url.hash = new URLSearchParams({
+    const url = buildDiscogsUrl(message.releaseUrl, {
       recordScanner: "1",
       recordScannerMode: "choose",
       recordScannerToken: message.token,
-    }).toString();
+    });
+    const { tab } = await getOrCreateHelperTab();
+    if (!tab.id || tab.windowId === undefined) {
+      throw new Error("Discogs helper window did not create a usable tab.");
+    }
 
-    const tab = await chrome.tabs.create({ active: true, url: url.toString() });
-    pendingRequests.set(message.token, {
+    const request = {
       appTabId,
-      closeOnComplete: false,
+      appWindowId,
       helperTabId: tab.id,
+      helperWindowId: tab.windowId,
       startedAt: Date.now(),
-    });
-
-    await chrome.tabs.sendMessage(appTabId, {
-      message: "Discogs chooser opened. Navigate to the correct pressing, then return and click Accept New Pressing.",
-      token: message.token,
-      type: "record-scanner-discogs-helper-status",
-    });
+    };
+    await clearPendingRequestsForHelperTab(tab.id);
+    await savePendingRequest(message.token, request);
+    await chrome.tabs.update(tab.id, { active: true, url });
+    await focusHelperWindow(request);
+    await sendStatus(
+      request,
+      message.token,
+      "Discogs chooser opened in the reusable helper window. Navigate to the correct pressing, then return and click Accept New Pressing.",
+    );
   } catch (error) {
-    chrome.tabs.sendMessage(appTabId, {
+    await sendResultToApp(appTabId, {
       error: error instanceof Error ? error.message : "Discogs chooser could not open the release.",
       token: message.token,
       type: "record-scanner-discogs-helper-result",
@@ -97,12 +133,12 @@ async function openDiscogsChoiceTab(message, sender) {
 }
 
 async function acceptCurrentDiscogsChoice(message, sender) {
-  const request = pendingRequests.get(message.token);
+  const request = await getPendingRequest(message.token);
   const appTabId = sender.tab?.id || request?.appTabId;
   if (!request?.helperTabId) {
     if (appTabId) {
-      await chrome.tabs.sendMessage(appTabId, {
-        error: "Discogs chooser tab was not found. Click Manually Choose Pressing again.",
+      await sendResultToApp(appTabId, {
+        error: "Discogs chooser window was not found. Click Manually Choose Pressing again.",
         token: message.token,
         type: "record-scanner-discogs-helper-result",
       });
@@ -116,7 +152,7 @@ async function acceptCurrentDiscogsChoice(message, sender) {
       type: "record-scanner-discogs-helper-choose-current",
     });
   } catch (error) {
-    await chrome.tabs.sendMessage(request.appTabId, {
+    await sendResultToApp(request.appTabId, {
       error: error instanceof Error ? error.message : "Discogs chooser could not read the selected pressing.",
       token: message.token,
       type: "record-scanner-discogs-helper-result",
@@ -124,31 +160,173 @@ async function acceptCurrentDiscogsChoice(message, sender) {
   }
 }
 
-async function completeRequest(message, sender) {
-  const request = pendingRequests.get(message.token);
+async function handleHelperAttention(message) {
+  const request = await getPendingRequest(message.token);
   if (!request) return;
 
-  pendingRequests.delete(message.token);
-  await chrome.tabs.sendMessage(request.appTabId, message);
+  await sendStatus(
+    request,
+    message.token,
+    message.message || "Discogs needs attention in the helper window.",
+  );
+  await focusHelperWindow(request);
+}
 
-  const helperTabId = sender.tab?.id || request.helperTabId;
-  if (helperTabId && request.closeOnComplete) {
-    chrome.tabs.remove(helperTabId).catch(() => undefined);
+async function completeRequest(message, sender) {
+  const request = await getPendingRequest(message.token);
+  if (!request) return;
+
+  await removePendingRequest(message.token);
+  await sendResultToApp(request.appTabId, message);
+
+  if (message.error) {
+    await focusHelperWindow({
+      ...request,
+      helperTabId: sender.tab?.id || request.helperTabId,
+    });
+    return;
   }
+
+  await returnFocusToScanner(request);
 }
 
 async function expireRequest(token) {
-  const request = pendingRequests.get(token);
-  if (!request) return;
+  const request = await getPendingRequest(token);
+  if (!request || Date.now() - request.startedAt < REQUEST_TIMEOUT_MS) return;
 
-  pendingRequests.delete(token);
-  await chrome.tabs.sendMessage(request.appTabId, {
-    error: "Discogs helper timed out before it could read the sales stats.",
+  await removePendingRequest(token);
+  await sendResultToApp(request.appTabId, {
+    error: "Discogs helper timed out. Finish any browser check in the reusable helper window, then retry this record.",
     token,
     type: "record-scanner-discogs-helper-result",
   });
+  await focusHelperWindow(request);
+}
 
-  if (request.helperTabId) {
-    chrome.tabs.remove(request.helperTabId).catch(() => undefined);
+function buildDiscogsUrl(releaseUrl, hashValues) {
+  const url = new URL(releaseUrl);
+  if (url.hostname !== "www.discogs.com" && url.hostname !== "discogs.com") {
+    throw new Error("Record Scanner helper only opens Discogs URLs.");
+  }
+  url.hash = new URLSearchParams(hashValues).toString();
+  return url.toString();
+}
+
+async function getOrCreateHelperTab() {
+  const stored = (await chrome.storage.session.get(HELPER_SESSION_KEY))[HELPER_SESSION_KEY];
+  if (stored?.tabId) {
+    try {
+      const tab = await chrome.tabs.get(stored.tabId);
+      return { created: false, tab };
+    } catch {
+      await chrome.storage.session.remove(HELPER_SESSION_KEY);
+    }
+  }
+
+  const helperWindow = await chrome.windows.create({
+    focused: true,
+    height: 820,
+    type: "popup",
+    url: "about:blank",
+    width: 1000,
+  });
+  const tab = helperWindow.tabs?.[0] ?? (await chrome.tabs.query({ windowId: helperWindow.id }))[0];
+  if (!tab?.id || helperWindow.id === undefined) {
+    throw new Error("Chrome did not return the Discogs helper window tab.");
+  }
+
+  await chrome.storage.session.set({
+    [HELPER_SESSION_KEY]: {
+      tabId: tab.id,
+      windowId: helperWindow.id,
+    },
+  });
+  return { created: true, tab };
+}
+
+async function savePendingRequest(token, request) {
+  pendingRequests.set(token, request);
+  const stored = (await chrome.storage.session.get(PENDING_REQUESTS_KEY))[PENDING_REQUESTS_KEY] || {};
+  const cutoff = Date.now() - STORED_REQUEST_MAX_AGE_MS;
+  for (const [storedToken, storedRequest] of Object.entries(stored)) {
+    if (!storedRequest?.startedAt || storedRequest.startedAt < cutoff) {
+      delete stored[storedToken];
+    }
+  }
+  stored[token] = request;
+  await chrome.storage.session.set({ [PENDING_REQUESTS_KEY]: stored });
+}
+
+async function getPendingRequest(token) {
+  if (pendingRequests.has(token)) return pendingRequests.get(token);
+  const stored = (await chrome.storage.session.get(PENDING_REQUESTS_KEY))[PENDING_REQUESTS_KEY] || {};
+  const request = stored[token];
+  if (request) pendingRequests.set(token, request);
+  return request;
+}
+
+async function removePendingRequest(token) {
+  pendingRequests.delete(token);
+  const stored = (await chrome.storage.session.get(PENDING_REQUESTS_KEY))[PENDING_REQUESTS_KEY] || {};
+  delete stored[token];
+  await chrome.storage.session.set({ [PENDING_REQUESTS_KEY]: stored });
+}
+
+async function clearPendingRequestsForHelperTab(helperTabId) {
+  const stored = (await chrome.storage.session.get(PENDING_REQUESTS_KEY))[PENDING_REQUESTS_KEY] || {};
+  for (const [token, request] of Object.entries(stored)) {
+    if (request?.helperTabId === helperTabId) {
+      pendingRequests.delete(token);
+      delete stored[token];
+    }
+  }
+  await chrome.storage.session.set({ [PENDING_REQUESTS_KEY]: stored });
+}
+
+async function clearHelperSessionForTab(tabId) {
+  const stored = (await chrome.storage.session.get(HELPER_SESSION_KEY))[HELPER_SESSION_KEY];
+  if (stored?.tabId === tabId) {
+    await chrome.storage.session.remove(HELPER_SESSION_KEY);
+  }
+  await clearPendingRequestsForHelperTab(tabId);
+}
+
+async function sendStatus(request, token, message) {
+  await sendResultToApp(request.appTabId, {
+    message,
+    token,
+    type: "record-scanner-discogs-helper-status",
+  });
+}
+
+async function sendResultToApp(appTabId, message) {
+  try {
+    await chrome.tabs.sendMessage(appTabId, message);
+  } catch {
+    // The scanner tab may have been closed while Discogs was loading.
+  }
+}
+
+async function focusHelperWindow(request) {
+  try {
+    if (request.helperTabId) {
+      await chrome.tabs.update(request.helperTabId, { active: true });
+    }
+    if (request.helperWindowId !== undefined) {
+      await chrome.windows.update(request.helperWindowId, { focused: true });
+    }
+  } catch {
+    // The user may have closed the helper window between messages.
+  }
+}
+
+async function returnFocusToScanner(request) {
+  try {
+    await chrome.tabs.update(request.appTabId, { active: true });
+    if (request.appWindowId !== undefined) {
+      await chrome.windows.update(request.appWindowId, { focused: true });
+    }
+  } catch {
+    // The scanner tab may no longer exist.
   }
 }

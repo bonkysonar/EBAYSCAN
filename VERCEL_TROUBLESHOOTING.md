@@ -53,7 +53,7 @@ The best-effort `POST /api/discogs/stats` function fetches one Discogs release p
 - Function/package failure: plain-text HTTP 500 from Vercel and an `ERR_MODULE_NOT_FOUND` or similar runtime log.
 - Discogs browser challenge: structured JSON HTTP 502 from the application explaining that Discogs blocked the page fetch.
 
-Do not attempt to bypass Discogs browser challenges. Use the Chrome helper or the manual import flow for sales statistics when Discogs blocks the server request. The official Discogs API can still provide release/marketplace metadata, but it does not supply the historical Low/Median/High values used by this workflow.
+Do not attempt to bypass Discogs browser challenges. Helper v0.3 opens one real Chrome window so the user can complete verification normally, then reuses that browser session for subsequent releases. Keep the helper window open during scanning; use Reconnect Discogs Window if it was closed. The official Discogs API can still provide release/marketplace metadata, but it does not supply the historical Low/Median/High values used by this workflow.
 
 ## Windows local Vercel build note
 
