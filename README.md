@@ -20,6 +20,26 @@ The app is deployed on Vercel from `main`:
 
 See `HOSTING.md` for required environment variables and deployment notes.
 
+## Hosted Retail Arbitrage Uploads
+
+The Retail Arbitrage and Site-wide Sales pages load the newest daily scan from `GET /api/arbitrage/latest`. In production, that endpoint reads from Vercel Blob when `BLOB_READ_WRITE_TOKEN` is configured, so the Vercel site stays usable even when local dev servers are closed.
+
+Production setup:
+
+```env
+BLOB_READ_WRITE_TOKEN=vercel_blob_store_token
+ARBITRAGE_UPLOAD_TOKEN=shared_secret_for_daily_scan_uploads
+```
+
+Daily automation setup on the machine that runs the scan:
+
+```env
+ARBITRAGE_UPLOAD_URL=https://ebayscan.vercel.app/api/arbitrage/upload
+ARBITRAGE_UPLOAD_TOKEN=same_shared_secret_as_production
+```
+
+`node scripts/runRetailArbitrageScan.mjs` still writes a local archive in `exports/arbitrage-finds/`, then uploads the same JSON payload to the hosted site when those automation variables are present. If a workflow enriches or validates the JSON after the first scan pass, run `node scripts/uploadLatestArbitrageFinds.mjs` at the end to publish the newest local JSON file.
+
 ## Color Semantics
 
 - GREEN: likely worth processing/listing because prices cluster above the threshold.
@@ -79,10 +99,10 @@ The Seller Price Analyzer is a separate page at `#/seller-prices`. It does not c
 Optional setup:
 
 ```env
-EBAY_USER_ACCESS_TOKEN=your_user_oauth_access_token_here
+EBAY_USER_REFRESH_TOKEN=your_user_oauth_refresh_token_here
 ```
 
-The analyzer pulls active store listings read-only through eBay Trading API `GetMyeBaySelling` via a local/hosted `POST /api/ebay/seller-listings` action, then runs each listing title through the existing active eBay lookup. Recommendations compare your current asking price against the active eBay cheapest-10 average:
+The analyzer pulls active store listings read-only through eBay Trading API `GetMyeBaySelling` via a local/hosted `POST /api/ebay/seller-listings` action, then runs each listing title through the existing active eBay lookup. With `EBAY_USER_REFRESH_TOKEN`, the server mints and caches short-lived user access tokens automatically. `EBAY_USER_ACCESS_TOKEN` is still accepted as a short-lived fallback, but it will expire quickly and should not be the durable production setup. Recommendations compare your current asking price against the active eBay cheapest-10 average:
 
 - More than 25% above cheapest-10 average: priced high.
 - More than 20% below cheapest-10 average: possible underpricing.
@@ -95,9 +115,11 @@ If a long browser analysis has already been exported, use Import Snapshot CSV to
 
 Seller analysis uses a lighter eBay Browse profile than the scanner: it requests the lowest-price active comps first, caps each row at 50 returned comps, skips Discogs, processes 25 rows per run, waits between rows, and auto-pauses on eBay `429 Too many requests`.
 
+Active seller listings are loaded from Trading API in hosted-safe chunks of five eBay pages per request. This keeps Vercel functions under their timeout while still letting the browser assemble the full active inventory before analysis.
+
 ## eBay Product Research Link
 
-Each result includes an Open eBay sold research link. It uses eBay Seller Hub Product Research with 	abName=SOLD, dayRange=90, categoryId=176985, limit=50, and the best query available. For barcode/catalog searches, the link prefers the expanded artist/title query over the raw identifier.
+Each result includes an Open eBay sold research link. It uses eBay Seller Hub Product Research with `tabName=SOLD`, `dayRange=90`, `categoryId=176985`, `limit=50`, and the best query available. For barcode/catalog searches, the link prefers the expanded artist/title query over the raw identifier.
 
 ## Discogs Setup
 

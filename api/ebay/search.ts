@@ -23,7 +23,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const result = await searchMarketplace(input, process.env);
     res.status(200).json(result);
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : "Unknown marketplace API error" });
+    const message = error instanceof Error ? error.message : "Unknown marketplace API error";
+    res.status(isRateLimitError(message) ? 429 : 500).json({ error: message });
   }
 }
 
@@ -33,4 +34,8 @@ function parseSearchInput(body: unknown): SearchInput {
   }
 
   return body as SearchInput;
+}
+
+function isRateLimitError(message: string): boolean {
+  return /\b429\b|too many requests|rate limit/i.test(message);
 }

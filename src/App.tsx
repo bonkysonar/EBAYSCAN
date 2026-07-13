@@ -4,8 +4,10 @@ import { CandidateListingList } from "./components/CandidateListingList";
 import { DecisionBanner } from "./components/DecisionBanner";
 import { PriceClusterSummary } from "./components/PriceClusterSummary";
 import { ReasonCodesPanel } from "./components/ReasonCodesPanel";
+import { RetailArbitrage } from "./components/RetailArbitrage";
 import { SearchInputPanel } from "./components/SearchInputPanel";
 import { SellerPriceAnalyzer } from "./components/SellerPriceAnalyzer";
+import { SiteWideSales } from "./components/SiteWideSales";
 import { SettingsPanel } from "./components/SettingsPanel";
 import {
   createBulkBuyBatch,
@@ -22,6 +24,7 @@ import {
 import { EbayClient } from "./lib/ebay/client";
 import { MockEbayClient } from "./lib/ebay/mockClient";
 import type { DiscogsMarketSnapshot, DiscogsSalesStats, SearchInput, SearchResult } from "./lib/ebay/types";
+import { readJsonResponse } from "./lib/http/jsonResponse";
 import { scoreRecord } from "./lib/scoring/scoreRecord";
 import type { ScoringSettings, TriageDecision } from "./lib/scoring/types";
 import { loadSettings, saveSettings } from "./lib/storage/localSettings";
@@ -104,10 +107,22 @@ export function App() {
         listings: [],
         source: "ebay",
         timestamp: new Date().toISOString(),
-        warnings: [`Real eBay lookup failed: ${message}. Generate a fresh eBay application token or try again.`],
+        warnings: [liveLookupFailureWarning(message)],
         rawSummary: "No live eBay results were shown because the real lookup failed.",
       };
     }
+  }
+
+  function liveLookupFailureWarning(message: string): string {
+    if (/\b429\b|too many requests|rate limit/i.test(message)) {
+      return `Real eBay lookup failed: ${message}. The configured eBay app is currently rate-limited; wait for the quota window to reset or switch Vercel to a different eBay app key.`;
+    }
+
+    if (/token|credential|client/i.test(message)) {
+      return `Real eBay lookup failed: ${message}. Check the server-side eBay credentials in Vercel.`;
+    }
+
+    return `Real eBay lookup failed: ${message}. Try again or check the eBay API status.`;
   }
 
   function shouldUseMockFallback(input: SearchInput): boolean {
@@ -179,7 +194,7 @@ export function App() {
         releaseUrl: discogs.releaseUrl,
       }),
     });
-    const payload = await response.json();
+    const payload = await readJsonResponse<DiscogsSalesStats & { error?: string }>(response, "Discogs stats endpoint");
 
     if (!response.ok) {
       throw new Error(payload.error ?? "Discogs stats pull failed.");
@@ -283,6 +298,8 @@ export function App() {
           <a className={route === "scanner" ? "active" : ""} href="#/scanner">Scanner</a>
           <a className={route === "bulkBuy" ? "active" : ""} href="#/bulk-buy">Bulk Buy</a>
           <a className={route === "seller" ? "active" : ""} href="#/seller-prices">Seller Price Analyzer</a>
+          <a className={route === "arbitrage" ? "active" : ""} href="#/retail-arbitrage">Retail Arbitrage</a>
+          <a className={route === "siteSales" ? "active" : ""} href="#/site-wide-sales">Site-wide Sales</a>
           <a className="extension-download-link" download href="/downloads/record-scanner-discogs-helper.zip">
             Download Chrome Extension
           </a>
@@ -294,7 +311,7 @@ export function App() {
         ) : null}
       </header>
 
-      {route === "seller" ? <SellerPriceAnalyzer /> : <section className={`workbench-grid ${isBulkBuyRoute ? "bulk-buy-workbench" : "scanner-workbench"}`}>
+      {route === "seller" ? <SellerPriceAnalyzer /> : route === "arbitrage" ? <RetailArbitrage /> : route === "siteSales" ? <SiteWideSales /> : <section className={`workbench-grid ${isBulkBuyRoute ? "bulk-buy-workbench" : "scanner-workbench"}`}>
         <div className="panel stack">
           <SearchInputPanel isSearching={isSearching} onSearch={runSearch} />
           <SettingsPanel settings={settings} onChange={updateSettings} />
@@ -360,10 +377,12 @@ export function App() {
   );
 }
 
-type AppRoute = "bulkBuy" | "scanner" | "seller";
+type AppRoute = "arbitrage" | "bulkBuy" | "scanner" | "seller" | "siteSales";
 
 function routeFromHash(): AppRoute {
   if (window.location.hash === "#/seller-prices") return "seller";
+  if (window.location.hash === "#/retail-arbitrage") return "arbitrage";
+  if (window.location.hash === "#/site-wide-sales") return "siteSales";
   if (window.location.hash === "#/bulk-buy") return "bulkBuy";
   return "scanner";
 }

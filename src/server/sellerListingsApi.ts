@@ -1,9 +1,13 @@
+import { Buffer } from "node:buffer";
 import type { SellerListing, SellerListingsResult } from "../lib/seller/types";
 
 type SellerListingsEnv = {
+  EBAY_CLIENT_ID?: string;
+  EBAY_CLIENT_SECRET?: string;
   EBAY_ENV?: string;
   EBAY_MARKETPLACE_ID?: string;
   EBAY_USER_ACCESS_TOKEN?: string;
+  EBAY_USER_REFRESH_TOKEN?: string;
 };
 
 type PaginationState = {
@@ -11,46 +15,172 @@ type PaginationState = {
   totalPages: number;
 };
 
+export type SellerListingsFetchOptions = {
+  maxPages?: number;
+  pageNumber?: number;
+};
+
+type EbayTokenResponse = {
+  access_token?: string;
+  error_description?: string;
+  expires_in?: number;
+};
+
 const ENTRIES_PER_PAGE = 200;
 const MAX_PAGES = 25;
+let cachedSellerAccessToken: { cacheKey: string; token: string; expiresAt: number } | null = null;
 
-export async function fetchSellerActiveListings(env: SellerListingsEnv): Promise<SellerListingsResult> {
-  if (!env.EBAY_USER_ACCESS_TOKEN) {
-    throw new Error("Missing EBAY_USER_ACCESS_TOKEN. Seller listing analysis needs a user OAuth access token with seller access.");
-  }
-
+export async function fetchSellerActiveListings(
+  env: SellerListingsEnv,
+  options: SellerListingsFetchOptions = {},
+): Promise<SellerListingsResult> {
   const endpoint = env.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com/ws/api.dll" : "https://api.ebay.com/ws/api.dll";
   const siteId = marketplaceToSiteId(env.EBAY_MARKETPLACE_ID ?? "EBAY_US");
   const listings: SellerListing[] = [];
   const warnings: string[] = [];
-  let pageNumber = 1;
-  let totalPages = 1;
+  let pageNumber = normalizePageNumber(options.pageNumber);
+  let totalPages = MAX_PAGES;
+  let pageCount = 0;
+  const maxPages = normalizeMaxPages(options.maxPages);
+  let accessToken = await getSellerAccessToken(env);
 
-  while (pageNumber <= totalPages && pageNumber <= MAX_PAGES) {
-    const xml = await fetchSellerPage({
+  while (pageNumber <= totalPages && pageNumber <= MAX_PAGES && pageCount < maxPages) {
+    const xml = await fetchSellerPageWithTokenRetry(env, {
+      accessToken,
       endpoint,
       pageNumber,
       siteId,
-      token: env.EBAY_USER_ACCESS_TOKEN,
     });
     const parsed = parseSellerListingsXml(xml);
     listings.push(...parsed.listings);
     warnings.push(...parsed.warnings);
     totalPages = parsed.pagination.totalPages;
     pageNumber += 1;
+    pageCount += 1;
+    accessToken = cachedSellerAccessToken?.token ?? accessToken;
   }
 
   if (totalPages > MAX_PAGES) {
     warnings.push(`Stopped after ${MAX_PAGES} pages to avoid a runaway seller-listing pull.`);
   }
 
+  const dedupedListings = dedupeSellerListings(listings);
   return {
-    listings: dedupeSellerListings(listings),
+    hasMore: pageNumber <= totalPages && pageNumber <= MAX_PAGES,
+    listings: dedupedListings,
+    nextPageNumber: pageNumber <= totalPages && pageNumber <= MAX_PAGES ? pageNumber : undefined,
+    pageCount,
     source: "ebay-trading",
     timestamp: new Date().toISOString(),
-    total: listings.length,
+    total: dedupedListings.length,
     warnings,
   };
+}
+
+function normalizePageNumber(value: number | undefined): number {
+  if (!value || !Number.isFinite(value)) return 1;
+  return Math.min(MAX_PAGES, Math.max(1, Math.floor(value)));
+}
+
+function normalizeMaxPages(value: number | undefined): number {
+  if (!value || !Number.isFinite(value)) return MAX_PAGES;
+  return Math.min(MAX_PAGES, Math.max(1, Math.floor(value)));
+}
+
+async function getSellerAccessToken(env: SellerListingsEnv, options: { forceRefresh?: boolean } = {}): Promise<string> {
+  if (env.EBAY_USER_REFRESH_TOKEN) {
+    if (!env.EBAY_CLIENT_ID || !env.EBAY_CLIENT_SECRET) {
+      throw new Error("Missing EBAY_CLIENT_ID or EBAY_CLIENT_SECRET. EBAY_USER_REFRESH_TOKEN requires server-side eBay OAuth credentials.");
+    }
+
+    const now = Date.now();
+    const cacheKey = `${env.EBAY_ENV ?? "production"}:${env.EBAY_CLIENT_ID}:${env.EBAY_USER_REFRESH_TOKEN}`;
+    if (
+      !options.forceRefresh &&
+      cachedSellerAccessToken &&
+      cachedSellerAccessToken.cacheKey === cacheKey &&
+      cachedSellerAccessToken.expiresAt > now + 60_000
+    ) {
+      return cachedSellerAccessToken.token;
+    }
+
+    const token = await refreshSellerAccessToken({
+      clientId: env.EBAY_CLIENT_ID,
+      clientSecret: env.EBAY_CLIENT_SECRET,
+      ebayEnv: env.EBAY_ENV ?? "production",
+      refreshToken: env.EBAY_USER_REFRESH_TOKEN,
+    });
+    cachedSellerAccessToken = { ...token, cacheKey };
+    return token.token;
+  }
+
+  if (env.EBAY_USER_ACCESS_TOKEN) {
+    return env.EBAY_USER_ACCESS_TOKEN;
+  }
+
+  throw new Error(
+    "Missing EBAY_USER_REFRESH_TOKEN or EBAY_USER_ACCESS_TOKEN. Seller listing analysis needs eBay user authorization with seller access.",
+  );
+}
+
+async function refreshSellerAccessToken(config: {
+  clientId: string;
+  clientSecret: string;
+  ebayEnv: string;
+  refreshToken: string;
+}): Promise<{ token: string; expiresAt: number }> {
+  const endpointRoot = config.ebayEnv === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+  const credentials = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64");
+  const response = await fetch(`${endpointRoot}/identity/v1/oauth2/token`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Basic ${credentials}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: config.refreshToken,
+    }),
+  });
+  const payloadText = await response.text();
+  const payload = payloadText ? (JSON.parse(payloadText) as EbayTokenResponse) : {};
+
+  if (!response.ok || !payload.access_token || !payload.expires_in) {
+    throw new Error(`eBay user token refresh failed (${response.status}): ${payload.error_description ?? response.statusText}`);
+  }
+
+  return {
+    token: payload.access_token,
+    expiresAt: Date.now() + payload.expires_in * 1000,
+  };
+}
+
+async function fetchSellerPageWithTokenRetry(
+  env: SellerListingsEnv,
+  options: {
+    accessToken: string;
+    endpoint: string;
+    pageNumber: number;
+    siteId: string;
+  },
+): Promise<string> {
+  try {
+    return await fetchSellerPage({ ...options, token: options.accessToken });
+  } catch (error) {
+    if (!env.EBAY_USER_REFRESH_TOKEN || !isLikelyExpiredSellerTokenError(error)) {
+      throw error;
+    }
+
+    cachedSellerAccessToken = null;
+    const refreshedToken = await getSellerAccessToken(env, { forceRefresh: true });
+    return fetchSellerPage({ ...options, token: refreshedToken });
+  }
+}
+
+function isLikelyExpiredSellerTokenError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /access token|iaf token|token.*expired|token.*invalid|invalid.*token/i.test(message);
 }
 
 async function fetchSellerPage(options: {
