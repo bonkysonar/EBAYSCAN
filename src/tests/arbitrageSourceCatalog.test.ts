@@ -22,6 +22,12 @@ describe("retail arbitrage source catalog", () => {
     expect(activeIds.has("reddit-vgm-vinyl")).toBe(false);
   });
 
+  it("keeps the MVD retail outlet active while distributor-only entries remain excluded", () => {
+    const activeIds = new Set(vinylShopSources.map((source) => source.id));
+    expect(activeIds.has("mvd-shop")).toBe(true);
+    expect(activeIds.has("mvd-entertainment")).toBe(false);
+  });
+
   it("uses stricter thresholds for noisy public sources", () => {
     const noisyPublicSources = getNoisySources().filter((source) =>
       ["barnes-noble", "deep-discount", "popmarket", "target", "udiscover-music", "walmart"].includes(source.id),

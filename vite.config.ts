@@ -2,7 +2,11 @@ import { type IncomingMessage, type ServerResponse } from "node:http";
 import react from "@vitejs/plugin-react";
 import { type Plugin } from "vite";
 import { defineConfig } from "vitest/config";
-import { readLatestArbitrageFinds, uploadArbitrageFinds } from "./src/server/arbitrageFindsApi";
+import {
+  readArbitrageFindsHistory,
+  readLatestArbitrageFinds,
+  uploadArbitrageFinds,
+} from "./src/server/arbitrageFindsApi";
 import type { ArbitrageImportPayload } from "./src/lib/arbitrage/types";
 import { fetchDiscogsSalesStatsPage } from "./src/server/discogsStatsPage";
 import { readLocalEnv, searchMarketplace } from "./src/server/marketplaceApi";
@@ -69,6 +73,37 @@ function ebayLocalApiPlugin(): Plugin {
           sendJson(res, 200, await readLatestArbitrageFinds(process.cwd()));
         } catch (error) {
           sendJson(res, 500, { error: error instanceof Error ? error.message : "Unknown arbitrage finds API error" });
+        }
+      });
+
+      server.middlewares.use("/api/arbitrage/history", async (req, res) => {
+        if (req.method !== "GET") {
+          sendJson(res, 405, { error: "Method not allowed" });
+          return;
+        }
+
+        try {
+          const url = new URL(req.url ?? "", "http://localhost");
+          sendJson(
+            res,
+            200,
+            await readArbitrageFindsHistory(process.cwd(), {
+              limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
+              sourceId: url.searchParams.get("sourceId") ?? undefined,
+              status: (url.searchParams.get("status") as
+                | "changed"
+                | "ended"
+                | "evergreen"
+                | "new"
+                | "ongoing"
+                | "unknown"
+                | null) ?? undefined,
+            }),
+          );
+        } catch (error) {
+          sendJson(res, 500, {
+            error: error instanceof Error ? error.message : "Unknown arbitrage history API error",
+          });
         }
       });
 

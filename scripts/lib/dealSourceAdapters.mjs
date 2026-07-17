@@ -7,6 +7,7 @@ const REDDIT_HELPER_HOSTS = new Set([
   "old.reddit.com",
   "vinyl.fyi",
 ]);
+const AMAZON_ASIN = /^[A-Z0-9]{10}$/i;
 
 export function parseRedditAtomFeed(xml) {
   const entries = [];
@@ -107,9 +108,12 @@ export function splitDealArtistTitle(rawTitle) {
       .replace(/\s*\|\s*direct\b.*$/i, ""),
   );
   const parts = cleaned.match(/^(.{2,100}?)\s+(?:[-–—])\s+(.{2,})$/);
+  const quotedParts = parts
+    ? null
+    : cleaned.match(/^(.{2,100}?)\s+["“]([^"”]{2,})["”](?:\s|$)/);
   return {
-    artist: cleanText(parts?.[1] ?? "Unknown Artist"),
-    title: cleanText(parts?.[2] ?? cleaned),
+    artist: cleanText(parts?.[1] ?? quotedParts?.[1] ?? "Unknown Artist"),
+    title: cleanText(parts?.[2] ?? quotedParts?.[2] ?? cleaned),
   };
 }
 
@@ -128,15 +132,48 @@ function bestExternalDealUrl(html) {
     candidates.push({ score, url });
   }
   const best = candidates.sort((left, right) => right.score - left.score)[0]?.url;
-  return best ? cleanRetailUrl(best) : null;
+  return best ? canonicalizeRetailDealUrl(best) : null;
 }
 
-function cleanRetailUrl(value) {
+export function canonicalizeRetailDealUrl(value) {
   const parsed = new URL(value);
   for (const key of [...parsed.searchParams.keys()]) {
     if (/^(?:tag|linkcode|creativeasin|ascsubtag|ref|ref_|utm_.+|psc)$/i.test(key)) parsed.searchParams.delete(key);
   }
+  const asin = extractAmazonAsin(parsed);
+  if (asin) return `https://${normalizedAmazonHost(parsed.hostname)}/dp/${asin}`;
   return parsed.toString();
+}
+
+export function extractAmazonAsin(value) {
+  let parsed;
+  try {
+    parsed = value instanceof URL ? value : new URL(String(value));
+  } catch {
+    return null;
+  }
+  if (!isAmazonHost(parsed.hostname)) return null;
+
+  const pathMatch = parsed.pathname.match(
+    /\/(?:dp|gp\/product|gp\/aw\/d|exec\/obidos\/ASIN)\/([A-Z0-9]{10})(?:[/?#]|$)/i,
+  );
+  if (pathMatch && AMAZON_ASIN.test(pathMatch[1])) return pathMatch[1].toUpperCase();
+  for (const key of ["asin", "ASIN"]) {
+    const candidate = parsed.searchParams.get(key);
+    if (candidate && AMAZON_ASIN.test(candidate)) return candidate.toUpperCase();
+  }
+  return null;
+}
+
+function isAmazonHost(hostname) {
+  const host = String(hostname ?? "").toLowerCase().replace(/^www\./, "");
+  return /^amazon\.(?:com|ca|com\.mx|co\.uk|de|fr|it|es|nl|se|pl|com\.be|co\.jp|com\.au|in|sg|ae|sa|com\.br|com\.tr)$/.test(
+    host,
+  );
+}
+
+function normalizedAmazonHost(hostname) {
+  return `www.${String(hostname ?? "").toLowerCase().replace(/^www\./, "")}`;
 }
 
 function allPrices(value) {
