@@ -1,17 +1,43 @@
 ﻿# Handoff
 
-Last updated: 2026-06-22
+Last updated: 2026-07-16
 
 ## Current State
 
 - Branch: `main`
-- Latest local/remote commit during this handoff cleanup: `0739d8d Add Chrome extension download link`
+- Latest committed revision at the start of this handoff: `8e4a7a6 Reuse visible Discogs helper window (#8)`
 - Production app: `https://ebayscan.vercel.app`
-- Current working tree should be clean before new work starts.
-- No open GitHub PRs were visible as of this cleanup.
+- The Retail Arbitrage overhaul described below is local work in the current working tree. This handoff does not claim that those changes were committed or deployed.
 - Do not commit `.env.local`; it contains credentials and is ignored.
 
-The merged product now includes the default Scanner, optional Bulk Buy page, Seller Price Analyzer, hosted Vercel API routes, Discogs helper extension support, and a hosted Chrome helper zip download.
+The committed product includes the default Scanner, optional Bulk Buy page, Seller Price Analyzer, hosted Vercel API routes, Discogs helper extension support, and a hosted Chrome helper zip download. The local worktree also contains the Retail Arbitrage and Site-wide Sales overhaul.
+
+## 2026-07-16 Retail Arbitrage Overhaul
+
+The retail scanner is no longer an active-price-first shortlist or a latest-only sale snapshot.
+
+- Source scans retain the full source metadata and honest page-level catalog/sale health, including fallback URLs, resolved URLs, partial coverage, blocks, failures, timeouts, retries, and per-page errors.
+- Shopify discovery paginates JSON catalogs, evaluates available variants individually, and preserves compare-at price, currency, SKU, barcode, inventory, variant identity, and collection context. A cheap CD variant can no longer price the LP variant, and explicit `2LP`/`2xLP`/`2-LP` identity survives active enrichment and downstream filters despite mixed parent-product taxonomy.
+- Obvious navigation, promotion-only, non-record, alternate-format, accessory, merch, and general-retail rows are rejected before expensive enrichment. High-noise marketplaces require explicit product-level vinyl evidence; ISBNs, digital products, turntables, apparel, and conflicting formats are fenced out.
+- General-retailer parsing rejects per-unit prices such as `/lb` and `/ea`, decodes escaped titles and URLs, removes retailer taxonomy from record titles and eBay queries, and admits high-confidence exploratory compare-at markdowns without treating small markdowns as sale-radar finds.
+- Candidates are ranked globally before the cap. Per-source quotas and exploration slots prevent one feed from crowding out every other retailer.
+- Active eBay enrichment paginates and distinguishes raw listings inspected from exact matched active supply, search completeness, match confidence, and evidence capture time. OAuth/Browse requests and the enrichment subprocess are bounded by timeouts.
+- eBay Fulfillment and Finances history now refreshes automatically from the existing user token, with bounded date slices and a 14-day overlap. It persists sanitized order-line evidence, artist aggregates, fee/refund attribution, and account-level shipping-label calibration without buyer data or raw API payloads. CSV import remains an optional fallback.
+- Walmart has a dedicated structured adapter with `$10`/`$15`/`$20` absolute-price lanes, multiple sorts, pagination, first-party filtering, and product-page availability rechecks. Live testing showed anonymous search results falsely marked shippable low-price records such as Jimi Hendrix as out of stock; the detail recheck recovered candidates correctly.
+- One canonical evaluator is shared by the scan, curator, and UI. `BUY` requires dated sold velocity, exact supply, fresh and confident matches, a qualifying estimated turn, full-ledger economics, and sufficient priority. Fast Turn, Balanced, and Higher Margin profiles allow smaller margins only for faster inventory. A complete exact search above the active-listing ceiling is an immediate supply reject even if sold research is still pending.
+- Sam & Dave is now a regression case: two aggregate sold observations over three years against roughly twenty active listings cannot become recent velocity or a buy recommendation.
+- The cost ledger includes tax, inbound shipping, FX/duty, marketplace fees, promoted-listing fees, outbound shipping, packaging, returns reserve, and other configured costs. It reserves `$5` inbound by default unless free shipping is explicit; unknown currency or stale/missing foreign conversion withholds USD economics.
+- Aggregate Seller Hub Product Research rows can support sold-price research but cannot prove recent velocity or create `BUY` by themselves.
+- Product Research planning/curation is generic and keyed by stable find ID. The daily workflow must not patch title-specific allowlists into the curator.
+- Raw scan and enrichment outputs remain drafts. Only a curated schema-version-2 final payload can publish; publication writes an immutable run and advances the latest pointer atomically. Explicit legacy drafts cannot masquerade as finals, and pointerless fallback uses observation time rather than file/upload time.
+- Sale offers are tracked as campaigns with `new`, `changed`, `ongoing`, `evergreen`, `unknown`, and `ended` states. Duplicate page fragments collapse into one campaign observation, distinct simultaneous offers remain separate, failures become Unknown, and Ended requires repeated healthy misses.
+- `/api/arbitrage/history` exposes campaign history in addition to `/api/arbitrage/latest`.
+- Retail Arbitrage opens on the priority-sorted active queue so runs without an automatic BUY do not look empty. It separates Buy now, Needs validation, Watch, Reject, tracked outcomes, and user-rejected records. Details show priority breakdown, estimated turn, profit per 30 days, long-term demand/supply, and all three adaptive buy options. Site-wide Sales leads with New/Changed and collapses quieter lifecycle states.
+- Record outcomes (bought, listed, sold, returned, not for me, too slow, margin too thin, false positive) and campaign feedback (confirmed, false positive, expired, wrong scope) are browser-local and scoped to the observed offer/campaign version and lifecycle health so changed prices, reopened sales, and recovered unknown campaigns return to review.
+
+The remaining user input is a short narrated screen capture; 5–10 dense minutes is enough. A new eBay CSV and a single hard minimum-profit rule are no longer required.
+
+See `RETAIL_ARBITRAGE.md` for operating details and `TEST_PLAN.md` for the verification flow.
 
 ## Product Semantics
 
@@ -85,14 +111,15 @@ Current key can mint tokens and use Browse API, but Marketplace Insights remains
 403 Access denied / Insufficient permissions
 ```
 
-Sold comps, sold count, and 90-day sell-through are not available yet through the current eBay API access.
+Marketplace-wide sold comps, sold count, and 90-day sell-through are not available through the current application-token API access. Retail Arbitrage can use dated local order history as evidence for this account's own sales and can ingest reviewed Seller Hub Product Research rows.
 
-Recommended future UI:
+Important evidence boundary:
 
-- Show active listing count now.
-- Show returned/analyzed listing count now.
-- Show sold comps status as unavailable until Marketplace Insights access is granted.
-- If access is granted later, add 90-day sold count, median sold price, and sell-through ratio.
+- Active asking prices are supply/research data, not sales proof.
+- A broad Browse total is not exact active supply until title/edition matching is complete.
+- Product Research aggregate quantities plus one latest-sale date do not show dated 30/90/365-day unit distribution.
+- Only dated, condition-matched transactions can satisfy the automatic velocity gate.
+- Missing, stale, or aggregate-only evidence routes the candidate to REVIEW instead of manufacturing a BUY or false REJECT.
 
 Phrase for eBay access request:
 
@@ -104,22 +131,53 @@ Request production access to the Buy Marketplace Insights API, specifically item
 
 - Active asking prices are not sold comps. UI/docs should keep that distinction visible.
 - eBay Browse results can include irrelevant listings; scoring is conservative but still early.
+- Exact active supply depends on a complete paginated search and a confident title/edition match; incomplete or rate-limited searches stay validation work.
+- Many retailers block automation, expose incomplete HTML, or change page structure. Coverage metrics must remain honest and Unknown must not be interpreted as no sale.
+- Local order history reflects this seller's transactions, not marketplace-wide demand.
+- Seller Hub Product Research aggregate rows do not prove recent velocity.
 - Identifier expansion is heuristic. It works for the tested `BXL1 0209` example but needs more real-world cases.
 - Browser automation had clipboard issues in Codex, so some UI checks were verified through direct local API calls instead.
 - Discogs may block server-side page pulls with a browser challenge. The Chrome helper and pasted pressing URL are the practical fallback paths.
 - Seller Price Analyzer can hit eBay rate limits; it intentionally pauses on 429 and processes rows in batches.
 - Hosted deployments require secrets to stay in Vercel environment variables, never committed files.
 
+## Coverage Findings From the Full Diagnostic
+
+The full local diagnostic artifact is `exports/arbitrage-finds/full-diagnostics/retail-arbitrage-2026-07-16T07-16-46-067Z.json`.
+
+- 126 configured sources were attempted.
+- 8 completed without partial/error status, 48 were partial/degraded, and 70 were blocked/failed.
+- 31 sources had usable sale-page coverage; 95 had sale-page failures.
+- The scan extracted 2,172 raw candidates, selected 60 product candidates, and tracked 11 sale campaigns before sold-research curation.
+- Among 42 priority-1 sources, 2 completed cleanly, 6 were degraded, and 34 were blocked.
+
+The static-looking sale list was primarily a coverage and lifecycle problem, not proof that retailers never changed their offers. The UI now exposes these limits instead of hiding them.
+
+The current local final API response contains 73 visible entries after server-side safety filtering: 58 product candidates and 15 sale campaigns. Re-evaluated with evaluator v3, the product queue is 45 `REVIEW`, 13 `REJECT`, and 0 automatic `BUY`/`WATCH`. This is expected because the current run lacks dated sold-velocity proof for the remaining candidates; two records are already hard-rejected for excessive exact active supply.
+
+A final Walmart/Barnes & Noble/Cheap Vinyl smoke run found 12 raw Walmart record candidates but only one credible sale-radar markdown after per-unit-price cleanup. Active eBay enrichment inspected 256 listings, found 99 exact matches with a complete high-confidence search, and correctly classified that candidate as a supply hard-fail rather than a buy lead.
+
 ## Verification Commands
 
 ```powershell
 npm test
 npm run build
+npx vitest run src/tests/candidatePipeline.test.ts src/tests/shopifyCatalog.test.ts
+npx vitest run src/tests/arbitrageEvaluation.test.ts src/tests/productResearchCuration.test.ts
+npx vitest run src/tests/saleCampaignLifecycle.test.ts src/tests/arbitrageFindsApi.test.ts
+node scripts/uploadLatestArbitrageFinds.mjs --file=exports\arbitrage-finds\retail-arbitrage-YYYY-MM-DD.json --dryRun
 ```
 
-Both passed during the 2026-06-22 doc cleanup: 10 test files / 41 tests, and production build succeeded.
+Final local verification on 2026-07-16:
 
-Local API smoke test passed on port 5190:
+- `npm test`: 34 test files, 204 tests passed. The only console noise was jsdom's existing `Window.focus()` notice.
+- `npm run build`: passed; Vite produced the production bundle.
+- Runtime syntax checks passed for the scanner, enrichment, curator, uploader, evaluator, lifecycle, candidate, Shopify, retail-listing, and active-matching modules.
+- Curated final upload dry-run passed for run `scan-2026-07-16T12-31-23-227Z`.
+- A raw enriched scan was rejected by the uploader as a draft, as intended.
+- Local `/api/arbitrage/latest` and `/api/arbitrage/history` smoke tests passed on port 5191 with matching run IDs.
+
+General scanner API smoke test previously passed on port 5190:
 
 ```text
 manual "fleetwood mac rumours vinyl record" total=781 returned=781 pages=4
@@ -141,6 +199,24 @@ Useful inputs:
 
 ## Files Most Relevant For Next Session
 
+- `scripts/runRetailArbitrageScan.mjs`: broad source scan, page health, candidate selection, sale observations, draft artifact, and active-enrichment handoff.
+- `scripts/lib/candidatePipeline.mjs`: early record filtering, global ranking, source quotas, and exploration slots.
+- `scripts/lib/retailListingParsing.mjs`: general-retailer price, entity, artist, title, and URL normalization.
+- `scripts/lib/shopifyCatalog.mjs`: Shopify pagination targets and available-variant normalization.
+- `scripts/lib/politeHttp.mjs`: request concurrency, host pacing, timeout, retry, and backoff.
+- `scripts/enrichArbitrageActiveEbay.mjs`: paginated active search and exact title/edition supply matching.
+- `scripts/buildSoldHistoryFromEbayCsv.mjs`: quantity-aware dated local sold evidence.
+- `scripts/prepareArbitrageResearchPlan.mjs`: generic find-ID Product Research queue.
+- `scripts/lib/productResearchCuration.mjs`: generic Product Research row matching and rejection rules.
+- `scripts/curateRetailArbitrageRun.mjs`: final evidence merge and canonical evaluation.
+- `scripts/uploadLatestArbitrageFinds.mjs`: final-only upload validation.
+- `src/lib/arbitrage/evaluateOpportunity.mjs`: canonical BUY gates and full cost ledger.
+- `src/lib/arbitrage/activeEbayMatching.mjs`: normalized active-search profiles and exact title/edition matching.
+- `src/lib/arbitrage/reviewFeedback.ts`: observation-scoped local record and campaign outcomes.
+- `scripts/lib/saleCampaignLifecycle.mjs`: campaign identity and lifecycle reconciliation.
+- `src/server/arbitrageFindsApi.ts`: immutable final runs, atomic latest pointer, and history reads.
+- `src/components/RetailArbitrage.tsx`: buyer queue, evidence/ledger detail, and local record outcomes.
+- `src/components/SiteWideSales.tsx`: campaign lifecycle UI, coverage, history, and local campaign feedback.
 - `src/server/marketplaceApi.ts`: shared server-side eBay token minting, Browse API query, identifier expansion, Discogs lookup, and Product Research URL generation.
 - `vite.config.ts`: local Vite `/api/ebay/search` middleware that calls the shared server module.
 - `api/ebay/search.ts`: hosted Vercel serverless function for `/api/ebay/search`.
@@ -155,19 +231,22 @@ Useful inputs:
 
 ## Suggested Next Steps
 
-1. Add more catalog/barcode real-world fixtures and tune identifier expansion from actual scanning sessions.
-2. Request eBay Marketplace Insights API access for sold comps if sold-through data becomes important.
-3. Consider moving saved Bulk Buy batches from localStorage into durable cloud storage if multi-device batch recall becomes important.
-4. Keep the hosted Chrome extension zip updated any time files in `browser-extension/discogs-stats-helper` change.
+1. Review source coverage weekly, prioritizing high-value retailers with repeated blocked/degraded checks and maintaining official feeds/adapters where available.
+2. Calibrate candidate filters and decision thresholds from browser-local false-positive, bought, listed, sold, and returned outcomes.
+3. Request eBay Marketplace Insights access if marketplace-wide dated sold transactions become available; do not weaken the velocity gate to substitute aggregate Product Research.
+4. Verify and deploy separately when ready. After deployment, smoke-test `/api/arbitrage/latest`, `/api/arbitrage/history`, `#/retail-arbitrage`, and `#/site-wide-sales`.
+5. Continue adding catalog/barcode fixtures, consider durable storage for Bulk Buy batches if needed, and rebuild the hosted Chrome extension zip whenever its source changes.
 
 ## Discogs Status
 
 DISCOGS_USER_TOKEN is configured locally. Discogs release search + marketplace stats are wired into the local API and Price Cluster panel. Verified with catalog BXL1 0209: Discogs returned a high-confidence Quah match, lowest marketplace price, number for sale, have/want counts, and a warning that median/sold-history price is unavailable from current API responses.
 
 
-## Product Research Link
+## General Scanner Product Research Link
 
 The local API now returns marketSnapshot.ebayResearchUrl and ebayResearchKeywords. The UI renders an Open eBay sold research button in PriceClusterSummary. The URL targets Seller Hub Product Research SOLD tab for 90 days, vinyl category 176985, limit 50, and prefers expanded artist/title keywords for catalog/barcode lookups. Verified BXL1 0209 generated keywords quah jorma kaukonen tom hobson.
+
+That general-scanner link is separate from the Retail Arbitrage evidence gate. Retail Arbitrage builds find-ID research plans with multiple normalized variants and treats Product Research rows as aggregate sold-price/repeat-row evidence only. They cannot establish dated velocity without transaction-level dates.
 
 ## Boz Scaggs / Low-End Pricing Update
 

@@ -77,3 +77,132 @@ Production confirmed that the configured Discogs token can read public release/c
 
 The first helper window is focused so David can complete Discogs' normal browser verification. Challenge detection brings the window forward again when attention is required, allows up to five minutes for a human response, and never attempts to bypass the verification. Successful reads return focus to the scanner. The persistent request map is also stored in session storage so a Manifest V3 service-worker suspension does not lose the response route.
 
+## 2026-07-16: Honest Retail Source Coverage
+
+Retail source coverage is measured from the pages actually attempted, not inferred from the configured source count. Catalog and sale-page health are preserved separately with requested/resolved URLs, fallback behavior, partial coverage, blocks, failures, timeouts, retries, and page errors. A failed check means unknown coverage; it does not mean no products or no sale.
+
+Source metadata such as priority, retailer type, sale likelihood, noise level, crawl strategy, discount threshold, and source-specific economics remains attached throughout the scan so later ranking and diagnostics do not lose the reason a source was configured.
+
+## 2026-07-16: Paginated Shopify Discovery and Global Candidate Selection
+
+Shopify catalogs are paginated beyond the first 250 products, with collection context queried when available. Only available variants can become candidates. Price, compare-at price, currency, SKU, barcode, inventory, variant identity, and collection context are retained.
+
+Obvious navigation, promotion-only, general-retail, merch, accessories, and non-vinyl formats are rejected before eBay enrichment. Credible soundtracks and unknown-artist vinyl remain eligible when product and format evidence is strong.
+
+High-noise marketplaces require explicit product-level vinyl/LP evidence. ISBN/book identifiers, digital-only products, turntables/record players, apparel, merch, and conflicting physical formats are hard exclusions even when surrounding copy includes the word vinyl. Broad volume/BOGO collections remain campaign evidence unless a true per-item record price can be normalized.
+
+General-retailer unit prices (`/ea`, `/lb`, and similar), shipping amounts, savings, and coupons are not product prices. HTML entities and escaped query separators are decoded before parsing. Retail taxonomy is removed from artist/title and active-search queries. Credible, high-confidence compare-at markdowns can receive an exploratory validation slot without lowering the source's main sale threshold.
+
+Mixed-format Shopify products are evaluated per available variant. Variant title, price, identifiers, inventory, and exact variant URL travel together, preventing a cheap CD from pricing an LP. Explicit vinyl variant identity also overrides contradictory parent-product CD taxonomy during active eBay enrichment and downstream filtering.
+
+Candidate limits are applied after a global quality ranking. Per-source quotas and exploration slots prevent a high-volume feed from filling the queue before other retailers are evaluated.
+
+## 2026-07-16: One Canonical Retail Arbitrage Evaluator
+
+The scan, curator, and Retail Arbitrage UI use the same evaluator and reason codes. This replaces the prior situation where the raw scan, manual curator, and UI could disagree.
+
+`BUY` requires every gate:
+
+- Dated, condition-matched recent sold velocity.
+- A complete active search with exact matched active supply.
+- Sufficient artist/title/edition match confidence for sold and active evidence.
+- Evidence freshness.
+- A dated retail offer inside the two-day default freshness window.
+- Demand, sell-through, listing-count, and months-of-supply thresholds.
+- A conservative resale value.
+- Minimum expected net profit and ROI after the full cost ledger.
+
+Missing, stale, undated, aggregate-only, or inexact evidence produces REVIEW rather than an automatic buy. An explicit weak match can produce REJECT. WATCH is reserved for otherwise credible opportunities that miss the current economics gate.
+
+Retail offer freshness is evaluated separately from sold and active-market evidence. A missing, materially future, or older-than-configured `capturedAt` adds `OFFER_STALE_OR_UNDATED` and prevents `BUY` while preserving the demand, supply, match, and economics calculations for review.
+
+Active asking prices are supply and research evidence, not proof of what buyers pay.
+
+A complete exact active search above the configured listing-count ceiling is nevertheless conclusive supply evidence. It produces `SUPPLY_HARD_FAIL` immediately, even when sold research is incomplete, so obviously crowded records do not occupy the validation queue.
+
+## 2026-07-16: Full Cost Ledger
+
+Retail profit is calculated after purchase price, sales tax, inbound shipping, FX fees, duty, other acquisition costs, marketplace percentage and fixed fees, promoted-listing fees, outbound shipping, packaging, returns reserve, and other selling costs.
+
+The evaluator exposes landed cost, total selling costs, expected net profit, margin, ROI, and a maximum purchase price that would clear the configured profit and ROI gates. Purchase price plus tax is no longer treated as the complete arbitrage cost.
+
+Unknown inbound shipping is not assumed free; the default reserve is `$5`, while a verified free-shipping offer can explicitly provide zero. Unknown source currency withholds USD economics. Foreign prices require a positive conversion rate with a capture date inside the evidence-freshness window before profit or ROI can authorize a buy.
+
+## 2026-07-16: Dated Velocity Is Required
+
+Recent sales velocity must come from dated transactions with quantity and condition evidence. Local eBay order exports can supply 30/90/365-day metrics for this account's own sales.
+
+Seller Hub Product Research rows are aggregate rows. Total sold plus a latest-sale date does not reveal the distribution of units across 30, 90, and 365 days. Product Research can support sold-price and repeat-row research but cannot prove velocity or create BUY by itself.
+
+Artist identity is a separate evidence requirement. A title and edition resemblance cannot validate local sold history when the sold record is by a different artist.
+
+## 2026-07-16: Velocity-Sensitive Economics and Priority
+
+Retail arbitrage no longer applies one minimum-profit rule to every record. It evaluates Fast Turn, Balanced, and Slower / Higher Margin profiles. A quick seller may qualify with a smaller dollar margin, while a slower seller must compensate with materially stronger net profit and ROI. Exact evidence, matching, freshness, and supply constraints are not relaxed by the cheaper profile.
+
+Priority is a separate 100-point model covering demand durability, economics, competition/supply, evergreen prior, and evidence quality. The evergreen component can use this account's artist-level sales, retailer best-seller/customer-pick signals, review depth, identifiers, and explicit user preference, but it remains a weak prior. It cannot convert sparse aggregate Product Research or crowded active supply into real velocity.
+
+The buyer UI presents all three options with their thresholds and reasons, defaults to the priority-sorted active queue, and accepts explicit negative feedback such as Not for me, Too slow, and Margin too thin.
+
+## 2026-07-16: Automatic eBay Sold-History Refresh
+
+Fresh order history is collected from the configured eBay user token; a new CSV is not required for normal operation. The sync reads Fulfillment orders and Finances transactions in bounded slices, refreshes a 14-day overlap, and persists only sanitized seller-side records and aggregates.
+
+Final-value/fixed fees, promoted-listing charges, refunds, and directly attributable shipping labels are joined to order lines. Shipping-label transactions that cannot be safely tied to one order remain account-level median/percentile calibration instead of being invented as line-item costs. Buyer identities, addresses, usernames, tokens, raw API responses, and financial transaction IDs are prohibited from persisted outputs.
+
+## 2026-07-16: Walmart Absolute-Price and Availability Adapter
+
+Walmart discovery uses structured page state instead of visible anchor/card text. The adapter scans first-party vinyl at `$10`, `$15`, and `$20` ceilings across configured, price-low, best-match, and best-seller lanes, paginates each lane, and deduplicates by item identity/UPC.
+
+A Walmart record at or below `$15` is an unconditional market-validation candidate; `$15` to `$20` is a conditional candidate. Neither lane requires a strike-through markdown. Search-result availability is treated cautiously because Walmart's anonymous default location can falsely report in-stock shippable records as unavailable. A bounded product-page verification pass rechecks the strongest low-price records before they are discarded.
+
+## 2026-07-16: Generic Find-ID Product Research
+
+Product Research planning and curation are keyed by stable find ID and normalized query variants. The curator applies generic title, format, condition, damage, bundle, merch, and edition matching rules. Daily operation must not add title-specific allowlists or patch the curator for the records found that day.
+
+Pending, failed, and no-row research statuses remain explicit so unvalidated records are not mislabeled as final rejects.
+
+## 2026-07-16: Draft-to-Final Atomic Publication
+
+Retail runs have explicit phases:
+
+1. Scan output is a draft.
+2. Active eBay enrichment updates the draft.
+3. Product Research is gathered and curated.
+4. The canonical evaluator produces a final schema-versioned artifact.
+5. Only that final artifact can publish.
+
+Each run has a safe `runId`. Publication stores an immutable final run and advances the latest pointer atomically. Identical retries are idempotent; conflicting content for one run or an older observed run cannot silently replace the current latest payload. An explicit draft phase/status always wins over legacy filename conventions, and pointerless legacy fallback is ordered by lifecycle observation time rather than filesystem modification or upload time.
+
+## 2026-07-16: Sale Campaign Lifecycle and History
+
+Site-wide sales are persistent campaigns, not one phrase-match snapshot per source. Multiple simultaneous campaigns from one retailer remain distinct.
+
+Duplicate page fragments with the same normalized campaign identity, URL, scope, discount, offer type, and promo code collapse into one observation. Truly different offers from the same retailer remain separate.
+
+Campaigns move through New, Changed, Ongoing, Evergreen, Unknown, and Ended. Failed or untrustworthy source checks produce Unknown. Ended requires repeated successful checks that do not find the offer. First/last seen times, evidence/content hashes, observation counts, misses, failures, reopening, and transitions are retained and exposed through `/api/arbitrage/history`.
+
+The Site-wide Sales page leads with New and Changed, keeps Ongoing and Evergreen quieter, and separates Unknown from Ended.
+
+## 2026-07-16: Buyer Queue and Local Outcome Feedback
+
+Retail Arbitrage opens on Buy now. Rejects are not mixed into the default list. Needs validation, Watch, Reject, purchased/tracked, false-positive/dismissed, and All views are separate.
+
+The detail panel prioritizes the full profit ledger, dated demand, exact supply, sell-through, months of supply, match confidence, evidence freshness, gate failures, and a conservative test quantity.
+
+Record outcomes (bought, listed, sold, returned, false positive) and campaign reviews (confirmed, false positive, expired, wrong scope) are stored locally in the browser. Feedback changes the user's queues without mutating retailer or marketplace data.
+
+Feedback is scoped to the material observation, not just the stable record/campaign ID. Changed prices, URLs, discounts, inventory, content, or reopened campaigns invalidate older dismissals and review outcomes.
+
+Both arbitrage pages poll for a new final publication every five minutes and refresh immediately after focus or visibility restoration. Retail scoring advances on a one-minute clock. Initial cached BUYs remain hidden until the latest publication is verified; after that, transient refresh failures retain the last verified data. Optional campaign history loads separately with a five-second deadline and cannot replace current embedded campaigns unless run IDs match.
+
+## 2026-07-16: Bounded Enrichment
+
+eBay OAuth and Browse requests have abort deadlines, and the parent source scan gives the enrichment subprocess a configurable overall timeout. Network stalls therefore fail into explicit validation state instead of blocking scan publication indefinitely.
+
+## 2026-07-16: Deterministic Daily Automation
+
+The daily automation runs the source scan, optional active enrichment, find-ID research plan, generic curation, final validation, and one final-only publication. It reports honest coverage and evidence status.
+
+The automation must not modify scanner source code for individual titles, publish drafts, purchase products, submit retailer forms, mutate eBay listings, or overwrite browser feedback.
+

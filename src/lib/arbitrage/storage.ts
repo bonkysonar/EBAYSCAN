@@ -24,7 +24,20 @@ export function saveArbitrageFinds(finds: ArbitrageFind[]) {
 export function loadArbitrageSettings(): ArbitrageSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    return raw ? { ...defaultArbitrageSettings, ...(JSON.parse(raw) as Partial<ArbitrageSettings>) } : defaultArbitrageSettings;
+    if (!raw) return defaultArbitrageSettings;
+    const parsed = JSON.parse(raw) as Partial<ArbitrageSettings>;
+    const migrated = {
+      ...parsed,
+      balancedMinNetProfitDollars:
+        parsed.balancedMinNetProfitDollars ??
+        parsed.minNetProfitDollars ??
+        defaultArbitrageSettings.balancedMinNetProfitDollars,
+      balancedMinRoiRatio:
+        parsed.balancedMinRoiRatio ??
+        parsed.minRoiRatio ??
+        defaultArbitrageSettings.balancedMinRoiRatio,
+    };
+    return { ...defaultArbitrageSettings, ...migrated };
   } catch {
     return defaultArbitrageSettings;
   }
