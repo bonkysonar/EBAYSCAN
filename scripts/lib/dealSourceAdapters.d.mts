@@ -23,3 +23,5 @@ export function parseOldRedditDealPage(html: string, pageUrl?: string): RawDeal[
 export function extractVinylPriceDropCards(html: string, pageUrl?: string): VinylPriceDropCard[];
 export function parseVinylPriceDropDetail(html: string, detailUrl: string, fallbackTitle?: string): VinylPriceDropDetail;
 export function splitDealArtistTitle(rawTitle: string): { artist: string; title: string };
+export function canonicalizeRetailDealUrl(value: string): string;
+export function extractAmazonAsin(value: string | URL): string | null;

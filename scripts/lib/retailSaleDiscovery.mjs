@@ -4,16 +4,43 @@ const SALE_PATH_TERMS =
   /(?:^|[-_/])(?:sale|sales|on-sale|clearance|outlet|deals?|specials?|last-chance|closeout|warehouse(?:-sale)?|overstock|discounted|promotions?|offers?|bogo|buy-more-save-more)(?:$|[-_/])/i;
 const NON_DISCOVERY_PATH = /\/(?:account|cart|checkout|login|pages\/contact|policies|products?)\b/i;
 
-export function sourceEntryUrls(sourceUrl) {
-  const configured = normalizeHttpUrl(sourceUrl);
+export function sourceEntryUrls(sourceOrUrl, options = {}) {
+  return sourceEntryTargets(sourceOrUrl, options).map((target) => target.url);
+}
+
+export function sourceEntryTargets(sourceOrUrl, options = {}) {
+  const source = typeof sourceOrUrl === "string" ? { url: sourceOrUrl } : sourceOrUrl ?? {};
+  const configured = normalizeHttpUrl(source.url ?? source.baseUrl);
   if (!configured) return [];
 
   const parsed = new URL(configured);
   const homepage = `${parsed.origin}/`;
-  return uniqueUrls([configured, homepage]);
+  const maxHintUrls = Number.isFinite(options.maxHintUrls) ? Math.max(0, Math.floor(options.maxHintUrls)) : 4;
+  const configuredIsSaleSpecific = isSaleSpecificUrl(configured, source);
+  const targets = [
+    { purpose: "configured", url: configured },
+    { purpose: "homepage", url: homepage },
+    ...(configuredIsSaleSpecific ? [] : source.salePathHints ?? [])
+      .slice(0, maxHintUrls)
+      .map((hint) => normalizeHttpUrl(hint, homepage))
+      .filter(
+        (url) =>
+          url &&
+          new URL(url).hostname.replace(/^www\./i, "") === parsed.hostname.replace(/^www\./i, ""),
+      )
+      .map((url) => ({ purpose: "configured-sale-hint", url })),
+  ];
+  return uniqueTargets(targets);
 }
 
-export function discoverSaleLinks(html, pageUrl, maxLinks = 5) {
+export function isSaleSpecificUrl(value, source = {}) {
+  const url = normalizeHttpUrl(value, source.url ?? source.baseUrl);
+  if (!url) return false;
+  const parsed = new URL(url);
+  return SALE_PATH_TERMS.test(`${parsed.pathname}${parsed.search}`) || matchesConfiguredSaleRule(parsed, source);
+}
+
+export function discoverSaleLinks(html, pageUrl, maxLinks = 5, source = {}) {
   const page = normalizeHttpUrl(pageUrl);
   if (!page || !html || maxLinks <= 0) return [];
 
@@ -40,10 +67,11 @@ export function discoverSaleLinks(html, pageUrl, maxLinks = 5) {
     url.hash = "";
     const label = cleanText(stripTags(match[2]));
     const searchable = `${label} ${url.pathname.replace(/[-_/]+/g, " ")}`;
-    if (!SALE_LINK_TERMS.test(searchable) && !SALE_PATH_TERMS.test(url.pathname)) continue;
+    const configuredRule = matchesConfiguredSaleRule(url, source);
+    if (!SALE_LINK_TERMS.test(searchable) && !SALE_PATH_TERMS.test(url.pathname) && !configuredRule) continue;
 
     candidates.push({
-      score: saleLinkScore(label, url),
+      score: saleLinkScore(label, url) + (configuredRule ? 90 : 0),
       url: url.toString(),
     });
   }
@@ -93,9 +121,49 @@ function saleLinkScore(label, url) {
   return score;
 }
 
-function normalizeHttpUrl(value) {
+function matchesConfiguredSaleRule(url, source) {
+  const path = `${url.pathname}${url.search}`;
+  if ((source.salePathHints ?? []).some((hint) => {
+    const normalized = normalizeHttpUrl(hint, url.origin);
+    return normalized && path.startsWith(new URL(normalized).pathname);
+  })) {
+    return true;
+  }
+  return (source.saleUrlPatterns ?? []).some((pattern) => {
+    try {
+      return new RegExp(pattern, "i").test(url.toString());
+    } catch {
+      return url.toString().toLowerCase().includes(String(pattern).toLowerCase());
+    }
+  });
+}
+
+export function hasBogoOfferSignal(text) {
+  const value = String(text ?? "");
+  if (/\b(?:buy\s+one\s+get\s+one|buy\s+1\s+get\s+1|2\s+for\s+1|two\s+for\s+one)\b/i.test(value)) return true;
+  if (/\bBOGO\b/.test(value)) return true;
+  return (
+    /\bbogo\b.{0,30}\b(?:deal|free|off|offer|promotion|sale)\b/i.test(value) ||
+    /\b(?:deal|offer|promotion|sale)\b.{0,30}\bbogo\b/i.test(value)
+  );
+}
+
+export function dedupeSaleCampaigns(events, priorityFor = () => 0, identityFor = null) {
+  const byCampaign = new Map();
+  for (const event of events ?? []) {
+    const key =
+      identityFor?.(event) ??
+      event.fingerprint ??
+      `${event.sourceId ?? "unknown"}|${event.sourceUrl ?? ""}|${event.title ?? ""}`;
+    const current = byCampaign.get(key);
+    if (!current || priorityFor(event) > priorityFor(current)) byCampaign.set(key, event);
+  }
+  return [...byCampaign.values()];
+}
+
+function normalizeHttpUrl(value, baseUrl) {
   try {
-    const parsed = new URL(String(value));
+    const parsed = new URL(String(value), baseUrl);
     if (!/^https?:$/.test(parsed.protocol)) return null;
     parsed.hash = "";
     return parsed.toString();
@@ -104,11 +172,11 @@ function normalizeHttpUrl(value) {
   }
 }
 
-function uniqueUrls(urls) {
+function uniqueTargets(targets) {
   const seen = new Set();
-  return urls.filter((url) => {
-    if (!url || seen.has(url)) return false;
-    seen.add(url);
+  return targets.filter((target) => {
+    if (!target.url || seen.has(target.url)) return false;
+    seen.add(target.url);
     return true;
   });
 }

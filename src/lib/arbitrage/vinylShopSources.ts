@@ -487,8 +487,8 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
     salePathHints: commonSalePathHints,
   }),
   ...[
-    ["bull-moose", "Bull Moose", "bullmoose.com", "https://www.bullmoose.com/c/2/music"],
-    ["zia-records", "Zia Records", "ziarecords.com", "https://www.ziarecords.com/c/2/music"],
+    ["bull-moose", "Bull Moose", "bullmoose.com", "https://www.bullmoose.com/c/695/vinyl-clearance"],
+    ["zia-records", "Zia Records", "ziarecords.com", "https://www.ziarecords.com/c/44/featured-vinyl"],
     ["newbury-comics", "Newbury Comics", "newburycomics.com", "https://www.newburycomics.com/collections/special-price-vinyl"],
     ["amoeba", "Amoeba", "amoeba.com", "https://www.amoeba.com/music/vinyl/"],
     ["turntable-lab", "Turntable Lab", "turntablelab.com", "https://www.turntablelab.com/collections/clearance-sale-alpha"],
@@ -540,7 +540,7 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
   ...[
     ["walmart", "Walmart", "walmart.com", "https://www.walmart.com/search?q=vinyl+records&catId=4104_1205481&max_price=20"],
     ["target", "Target", "target.com", "https://www.target.com/c/vinyl-records-music-movies-books/-/N-yz7ntZakkos?moveTo=product-list-grid"],
-    ["barnes-noble", "Barnes & Noble", "barnesandnoble.com", "https://www.barnesandnoble.com/shop/vinyl-special-offer?Ns=P_Sales_Rank%7C0"],
+    ["barnes-noble", "Barnes & Noble", "barnesandnoble.com", "https://www.barnesandnoble.com/b/vinyl-special-offer/_/N-308r?Nrpp=40&page=1"],
     ["urban-outfitters", "Urban Outfitters", "urbanoutfitters.com", "https://www.urbanoutfitters.com/sale?department=Music&attributionProductType=Music"],
   ].map(([id, displayName, domain, baseUrl]) =>
     source({
@@ -735,18 +735,21 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
       domain,
       baseUrl,
       country,
-      sourceType: "distributor_discovery",
-      crawlType: "retailer",
-      priority: 4,
-      saleLikelihood: "low",
-      defaultDiscountThreshold: 0.5,
-      minNetProfit: 12,
-      minROI: 0.5,
-      noiseLevel: "high",
-      group: "Discovery sources",
-      isDiscoveryOnly: true,
-      notes,
-      salePathHints: [],
+      sourceType: id === "mvd-shop" ? "us_retailer" : "distributor_discovery",
+      crawlType: id === "mvd-shop" ? "shopify-store" : "retailer",
+      priority: id === "mvd-shop" ? 2 : 4,
+      saleLikelihood: id === "mvd-shop" ? "high" : "low",
+      defaultDiscountThreshold: id === "mvd-shop" ? 0.3 : 0.5,
+      minNetProfit: id === "mvd-shop" ? 8 : 12,
+      minROI: id === "mvd-shop" ? 0.3 : 0.5,
+      noiseLevel: id === "mvd-shop" ? "medium" : "high",
+      group: id === "mvd-shop" ? "US retailers" : "Discovery sources",
+      isDiscoveryOnly: id !== "mvd-shop",
+      notes:
+        id === "mvd-shop"
+          ? "Active retail outlet for MVD warehouse overstock; prioritize real markdowns and record-level inventory."
+          : notes,
+      salePathHints: id === "mvd-shop" ? commonSalePathHints : [],
     }),
   ),
   source({
