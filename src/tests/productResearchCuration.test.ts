@@ -30,6 +30,17 @@ describe("generic Product Research curation", () => {
     ]);
   });
 
+  it("removes numeric LP format text from research queries", () => {
+    expect(
+      researchVariants({
+        artist: "The Beach Boys",
+        purchasePrice: 11.99,
+        sourceListingTitle: "Surf's Up 1LP",
+        title: "Surf's Up 1LP",
+      }),
+    ).toContain("The Beach Boys Surf's Up");
+  });
+
   it("matches legacy raw research keys and keeps aggregate-row velocity unknown", () => {
     const raw = {
       "mother-love-bone-shine": [

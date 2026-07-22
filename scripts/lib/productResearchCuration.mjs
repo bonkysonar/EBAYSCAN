@@ -367,7 +367,7 @@ function normalizeResearchTitle(value) {
     .replace(/\bat\s+(?:amazon|target|walmart|urban\s+outfitters|barnes\s*&\s*noble|deep\s+discount)\b.*$/gi, " ")
     .replace(/\b(?:music\s+(?:on|and|from|by|performance)|was\s*\/\s*ea)\b.*$/gi, " ")
     .replace(/\b(?:pre[-\s]?order|sale|clearance|new|sealed|brand\s+new|staff\s+pick)\b/gi, " ")
-    .replace(/\b(?:vinyl|record|records|album|[2-4]?\s*[-x]?\s*lps?|ep|single)\b/gi, " ")
+    .replace(/\b(?:vinyl|record|records|album|[1-9]?\s*[-x]?\s*lps?|ep|single)\b/gi, " ")
     .replace(/\b(?:180g|180\s*grams?|180grams|heavyweight)\b/gi, " ")
     .replace(/\[[^\]]*\]/g, " ")
     .replace(/[()]/g, " ");

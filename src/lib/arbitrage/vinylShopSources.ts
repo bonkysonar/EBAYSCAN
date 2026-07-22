@@ -229,7 +229,7 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
     id: "sound-of-vinyl",
     displayName: "The Sound of Vinyl",
     domain: "thesoundofvinyl.us",
-    baseUrl: "https://thesoundofvinyl.us/collections/deep-cuts-q2",
+    baseUrl: "https://thesoundofvinyl.us/collections/deep-cuts-40-off-select-items",
     country: "US",
     sourceType: "major_label_store",
     crawlType: "shopify-store",
@@ -238,7 +238,7 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
     ...strictPublicSourceRules,
     group: "Major label stores",
     notes: "UMG direct store; Deep Cuts is the current high-signal sale path.",
-    salePathHints: ["/collections/deep-cuts-q2", "/collections/sale", "/collections/50-off-select-vinyl", ...commonSalePathHints],
+    salePathHints: ["/collections/deep-cuts-40-off-select-items", "/collections/sale", "/collections/50-off-select-vinyl", ...commonSalePathHints],
   }),
   source({
     id: "blue-note-store",
