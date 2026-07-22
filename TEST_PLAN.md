@@ -38,6 +38,61 @@
 34. Click Download CSV and verify the export includes `sku`, `custom_label`, `item_id`, proposed price, change note, pricing recommendation, delta, active comp count, and item URL.
 35. Click Import Snapshot CSV with a saved browser snapshot export. Verify analyzed rows restore without running eBay Browse calls, and SKU/custom label values are preserved when matching active listings were already loaded.
 
+## Retail Arbitrage Manual Flow
+
+1. Run a small diagnostic source scan:
+
+   ```powershell
+   node scripts/runRetailArbitrageScan.mjs --sources=<source-id-1>,<source-id-2> --skipUpload
+   ```
+
+   Verify the timestamped artifact is `phase: "scan"` and `publicationStatus: "draft"`, has a safe `runId`, and contains a `sourceReports` entry for every requested source. Catalog and sale-page health must be reported separately, including requested/resolved URLs and page errors.
+
+2. Run a default sale-radar scan. Verify candidates are ranked globally before the cap, more than one source can survive the queue limit, obvious navigation/merch/non-vinyl rows are absent, and sale alerts remain separate from record-level opportunities. Include high-noise fixtures for Walmart, Barnes & Noble, and Cheap Vinyl: ISBN books, category/filter links, record players, and `Vinyl` apparel must be rejected, while an explicitly identified vinyl LP remains eligible. Verify `/ea`, `/lb`, shipping, savings, and coupon amounts cannot become the purchase price; retailer taxonomy and escaped HTML entities must not pollute the artist/title or eBay query. For Walmart, verify the structured `$10`/`$15`/`$20` lanes retain first-party records at or below `$20` even without a markdown, paginate, deduplicate, and recover stale search-result inventory through bounded product-page availability checks.
+
+3. On a Shopify source, verify the scan follows multiple JSON pages when available, ignores unavailable variants, and retains compare-at price, currency, SKU, barcode, variant identity, inventory, and collection context. On a mixed CD/LP product, only the LP variant may become a vinyl candidate and it must retain the LP's price and exact variant URL. Include `2LP`, `2xLP`, and `2-LP` variant spellings under contradictory CD/Vinyl product taxonomy.
+
+4. With eBay credentials configured, verify active enrichment paginates, inspects all returned pages within its cap, and reports exact matched supply separately from raw listings inspected. A broad eBay result total must not be labeled exact supply.
+
+5. Build a Product Research plan:
+
+   ```powershell
+   node scripts/prepareArbitrageResearchPlan.mjs exports\arbitrage-finds\<scan-file>.json --max=40
+   ```
+
+   Verify every entry is keyed by stable find ID and carries normalized query variants, source identity, research URL, and edition terms. The plan must not require title-specific source-code edits.
+
+6. Curate the scan with a raw Product Research result:
+
+   ```powershell
+   node scripts/curateRetailArbitrageRun.mjs exports\arbitrage-finds\<scan-file>.json exports\arbitrage-finds\<raw-research-file>.json YYYY-MM-DD
+   ```
+
+   Verify bundles, merch, damaged, used, and conflicting-edition rows are excluded. Pending/failed/no-row research must remain a validation state instead of becoming a false reject.
+
+7. Verify aggregate Product Research rows can populate price and aggregate sold fields but cannot, by themselves, satisfy the dated 30/90/365-day velocity gate or produce `BUY`.
+
+8. Inspect known fully evidenced records. Verify a fast mover can qualify at the smaller-margin profile, a balanced record uses the middle thresholds, and a slower record requires the higher-margin profile. Every `BUY` must still require condition-matched dated velocity, fresh sold and active evidence, confident artist/title/edition matches, complete exact active supply, an acceptable estimated turn, full-ledger economics, and sufficient priority. A same-title/different-artist local sale must remain unvalidated. A complete exact search above the active-listing ceiling must hard-reject even when sold research is pending. Two aggregate sales over three years against roughly twenty active listings must not become recent velocity or a buy.
+
+9. Inspect the cost ledger. Verify it includes purchase, tax, inbound shipping, FX/duty when supplied, marketplace and promoted-listing fees, outbound shipping, packaging, returns reserve, and other configured costs. Missing inbound shipping must use the `$5` default reserve; an explicit zero must preserve known free shipping. Unknown currency and stale/missing foreign conversion must withhold USD profit/ROI and stay `REVIEW`; a fresh dated rate is required before economics can pass.
+
+10. Open `#/retail-arbitrage`. Verify the default queue shows active records sorted by priority rather than appearing empty when no automatic BUY exists. Verify the table exposes priority band/score, strategy, cost, profit per 30 days, estimated turn, recent/long-term velocity, supply, evidence status, and source. Verify the detail panel shows all three adaptive profiles, score breakdown, gates, 30/90/365-day and long-window evidence, sell-through, supply horizon, evidence freshness/confidence, and test quantity.
+
+11. Record bought, listed, sold, returned, not-for-me, too-slow, margin-too-thin, and false-positive outcomes. Reload the page and verify local outcome feedback persists and routes rows into the corresponding local queue. Change the offer price and verify the older dismissal/outcome no longer hides it. Verify the page polls every five minutes, refreshes immediately after focus or visibility restoration, re-scores freshness every minute, and retains the last verified publication when a later refresh fails.
+
+12. Open `#/site-wide-sales`. Verify New and Changed lead the page, Ongoing/Evergreen/Unknown/Ended are separate, simultaneous campaigns from one retailer are retained, and failed source checks produce Unknown rather than Ended. Duplicate title/body fragments for the same campaign must collapse, while distinct discounts or promo codes remain separate.
+
+13. Record confirmed, false-positive, expired, and wrong-scope campaign feedback. Reload and verify the feedback persists locally. Reopen, materially change, or recover an unknown campaign and verify the old outcome is released. Verify current embedded campaigns render before optional history, stalled history times out, and mismatched history run IDs cannot replace the current run.
+
+14. Verify publication safety:
+
+   ```powershell
+   node scripts/uploadLatestArbitrageFinds.mjs --file=exports\arbitrage-finds\<scan-file>.json --dryRun
+   node scripts/uploadLatestArbitrageFinds.mjs --file=exports\arbitrage-finds\retail-arbitrage-YYYY-MM-DD.json --dryRun
+   ```
+
+   The raw scan must be rejected as non-final. The curated schema-version-2 payload must pass the dry run with its `runId`. A legacy payload with explicit draft phase/status must also be rejected even if its filename looks final. When no latest pointer exists, legacy fallback must choose by lifecycle observation time rather than file modification/upload time.
+
 ## Automated Tests
 
 Run `npm test`.
@@ -71,6 +126,24 @@ Coverage should include:
 - Seller listing XML parser maps GetMyeBaySelling ActiveList XML to normalized seller listings.
 - Seller listing parser captures SKU and CustomLabel for export workflows.
 - Seller browser snapshot CSV import restores analyzed rows and preserves matching SKU/custom label metadata.
+- Retail source scanning preserves source metadata and reports honest per-page catalog/sale health.
+- Polite HTTP scheduling enforces concurrency, per-host pacing, timeout, retry, and backoff behavior.
+- Candidate filtering rejects high-noise marketplace/category rows, ISBN books, digital products, turntables, apparel/merch, and conflicting formats while retaining credible soundtracks, unknown-artist vinyl, and explicit record products.
+- General-retailer parsing rejects unit/shipping/promo prices, decodes HTML entities and URLs, produces usable artist/title text, and admits only credible exploratory compare-at markdowns.
+- Candidate selection ranks globally and applies source diversity/exploration quotas before the final limit.
+- Shopify catalog discovery paginates and evaluates available variants individually while preserving compare-at price, currency, identifiers, inventory, collection context, and exact variant URL.
+- Active eBay enrichment paginates, removes retailer taxonomy from queries, distinguishes exact matched supply from raw inspected listings, reports match confidence/search completeness, and times out stalled requests.
+- Local sold-history building preserves quantity-weighted dated 30/90/365-day velocity and condition evidence and does not validate same-title rows from another artist.
+- eBay sold-history synchronization paginates bounded Fulfillment/Finances slices, sanitizes persisted output, joins fees/refunds/labels without buyer data, refreshes an overlap idempotently, and builds artist aggregates.
+- The canonical arbitrage evaluator applies fast-turn, balanced, and high-margin profiles, returns `BUY` only when one profile plus evidence/priority gates pass, and hard-rejects known excessive exact supply.
+- Aggregate Product Research rows cannot masquerade as dated recent velocity.
+- Product Research planning and curation are find-ID based, reject incompatible rows generically, and keep pending research in review.
+- The full arbitrage ledger includes acquisition costs, marketplace/advertising costs, fulfillment, packaging, and returns reserve; unknown inbound shipping uses the default reserve and foreign economics require fresh conversion evidence.
+- Scan and enrichment payloads cannot be published as latest; explicit legacy drafts remain drafts, final publication is immutable and idempotent by `runId`, and latest/fallback selection uses lifecycle observation time.
+- Sale campaign lifecycle covers duplicate-fragment collapse, distinct simultaneous offers, New, Changed, Ongoing, Evergreen, Unknown, reopening, and Ended after repeated healthy misses.
+- `/api/arbitrage/history` filters campaign history by source/status and returns a bounded event list.
+- Retail-record and sale-campaign outcome feedback persists locally without mutating marketplace data, but expires when the material offer/campaign observation changes.
+- Retail and sale pages poll for current publications, retain the last verified data on transient refresh failure, and reject mismatched/late optional history.
 - Barcode, catalog-number, manual, and image inputs share the marketplace interface.
 - Price normalization.
 - Title normalization.
@@ -88,6 +161,15 @@ Use official eBay APIs only. Keep unit tests independent from credentials. Add i
 
 Before deploying, run `npm test` and `npm run build`.
 
+For the arbitrage pipeline, also run:
+
+```powershell
+npx vitest run src/tests/candidatePipeline.test.ts src/tests/shopifyCatalog.test.ts
+npx vitest run src/tests/arbitrageEvaluation.test.ts src/tests/productResearchCuration.test.ts
+npx vitest run src/tests/saleCampaignLifecycle.test.ts src/tests/arbitrageFindsApi.test.ts
+node scripts/uploadLatestArbitrageFinds.mjs --file=exports\arbitrage-finds\retail-arbitrage-YYYY-MM-DD.json --dryRun
+```
+
 After a Vercel deployment, verify:
 
 - Manual search returns real eBay results from `/api/ebay/search`.
@@ -98,6 +180,10 @@ After a Vercel deployment, verify:
 - Discogs VG price guide appears automatically when the authenticated price-suggestions endpoint returns data.
 - Helper v0.3 opens one visible Discogs window, allows normal browser verification, and reuses that window across scans.
 - The Download Chrome Extension link returns `record-scanner-discogs-helper.zip`.
+- `/api/arbitrage/latest` returns only a final published run and never a raw scan/enrichment artifact.
+- `/api/arbitrage/history` returns campaign states and transitions, including Unknown on source failure and Ended only after healthy misses.
+- `#/retail-arbitrage` opens on the priority-sorted active queue and uses the same evaluator/reason codes as the scan output.
+- `#/site-wide-sales` leads with New/Changed and shows honest source coverage.
 - No secrets appear in browser source, network payloads, or committed files.
 
 

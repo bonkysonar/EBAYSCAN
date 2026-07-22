@@ -1,17 +1,80 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
+  extractAmazonAsin,
   extractVinylPriceDropCards,
   parseOldRedditDealPage,
   parseRedditAtomFeed,
   parseVinylPriceDropDetail,
   splitDealArtistTitle,
 } from "./lib/dealSourceAdapters.mjs";
-import { discoverSaleLinks, extractPromoCode, hasCouponSignal, httpFailureKind, sourceEntryUrls } from "./lib/retailSaleDiscovery.mjs";
+import {
+  applyVerifiedSaleCampaigns,
+  assessRecordCandidate,
+  candidateQualityScore,
+  isHighSignalProductFind,
+  purchaseOfferVerificationForSource,
+  rankAndSelectCandidatesWithDiagnostics,
+} from "./lib/candidatePipeline.mjs";
+import { createPoliteFetcher } from "./lib/politeHttp.mjs";
+import {
+  discoverEbayPurchases,
+  ebayPurchaseOfferVerification,
+  getEbayApplicationToken,
+} from "./lib/ebayPurchaseDiscovery.mjs";
+import {
+  fieldstackResultsUrl,
+  parseFieldstackResultTotal,
+  parseFieldstackResultsPayload,
+  parseFieldstackSearchConfig,
+} from "./lib/fieldstackCatalog.mjs";
+import { buildLocalSoldEvidence } from "./lib/localSoldEvidence.mjs";
+import { assessRunQuality } from "./lib/runQuality.mjs";
+import { normalizeSoldText } from "./lib/soldHistoryAggregation.mjs";
+import {
+  dedupeSaleCampaigns,
+  discoverSaleLinks,
+  extractPromoCode,
+  hasBogoOfferSignal,
+  hasCoherentSaleClaim,
+  hasCouponSignal,
+  httpFailureKind,
+  isSaleSpecificUrl,
+  sourceEntryTargetsWithPriorRechecks,
+  verifiedSalePathOffer,
+} from "./lib/retailSaleDiscovery.mjs";
+import {
+  priorSaleRecheckUrlsForSource,
+  reconcileSaleCampaigns,
+  saleCampaignIdFor,
+  saleCampaignLedgerFromPayload,
+} from "./lib/saleCampaignLifecycle.mjs";
+import {
+  decodeHtmlEntities,
+  inferRetailArtist,
+  inferRetailTitle,
+  parseRetailProductPrices,
+} from "./lib/retailListingParsing.mjs";
+import { discoverRetailCatalogLinks } from "./lib/retailCatalogDiscovery.mjs";
+import { discoverRetailPaginationLinks } from "./lib/retailPagination.mjs";
+import { extractRetailProductCards } from "./lib/retailProductCards.mjs";
+import {
+  extractShopifyCurrency,
+  normalizeShopifyProducts,
+  selectShopifyCollectionLanes,
+  shopifyCatalogUrls,
+} from "./lib/shopifyCatalog.mjs";
+import { parseStructuredRetailCatalog } from "./lib/structuredRetailCatalog.mjs";
+import {
+  assessWalmartAbsolutePrice,
+  isFirstPartyWalmartOffer,
+  parseWalmartCatalogPage,
+} from "./lib/walmartCatalog.mjs";
+import { evaluateOpportunity } from "../src/lib/arbitrage/evaluateOpportunity.mjs";
 
 const WORKSPACE = process.cwd();
-const OUTPUT_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
+const DEFAULT_OUTPUT_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
 const SOLD_INDEX_PATH = join(WORKSPACE, "exports", "sold-history", "sold-comps-index.json");
 const SOURCE_FILE = join(WORKSPACE, "src", "lib", "arbitrage", "vinylShopSources.ts");
 const LOCAL_ENV_PATH = join(WORKSPACE, ".env.local");
@@ -20,10 +83,31 @@ const EBAY_RESEARCH_NEW_CONDITION_ID = "1000";
 const EBAY_RESEARCH_VINYL_CATEGORY_ID = "176985";
 const DEFAULT_MAX_PRODUCT_FINDS = 80;
 const DEFAULT_MAX_SALE_EVENTS = 40;
+const DEFAULT_MAX_DISCOVERED_CATALOG_PAGES = 2;
 const DEFAULT_MAX_DISCOVERED_SALE_PAGES = 5;
 const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 const DEFAULT_DISCOVERY_DETAIL_LIMIT = 30;
 const DEFAULT_DISCOVERY_CONCURRENCY = 5;
+const DEFAULT_SOURCE_CONCURRENCY = 4;
+const DEFAULT_FETCH_RETRIES = 2;
+const DEFAULT_FETCH_RETRY_DELAY_MS = 1_000;
+const DEFAULT_HOST_DELAY_MS = 650;
+const DEFAULT_GENERIC_MAX_PAGES = 5;
+const DEFAULT_MAX_RESEARCH_POOL_SIZE = 240;
+const DEFAULT_RESEARCH_POOL_MULTIPLIER = 3;
+const DEFAULT_SHOPIFY_COLLECTION_LANES = 6;
+const DEFAULT_SHOPIFY_MAX_PAGES = 10;
+const DEFAULT_SHOPIFY_ROOT_MAX_PAGES = 2;
+const DEFAULT_WALMART_MAX_PAGES = 10;
+const DEFAULT_WALMART_AVAILABILITY_DETAIL_LIMIT = 40;
+const DEFAULT_EBAY_PURCHASE_MAX_CANDIDATES = 5_000;
+const DEFAULT_EBAY_PURCHASE_MAX_DETAIL_REQUESTS = 150;
+const DEFAULT_EBAY_PURCHASE_MAX_LANES = 9;
+const DEFAULT_EBAY_PURCHASE_MAX_PAGES_PER_LANE = 4;
+const DEFAULT_EBAY_PURCHASE_PAGE_SIZE = 100;
+const DEFAULT_ACTIVE_ENRICHMENT_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_SOLD_HISTORY_SYNC_TIMEOUT_MS = 30 * 60 * 1000;
+const SCANNER_VERSION = "retail-arbitrage-scanner/3";
 
 loadLocalEnv(LOCAL_ENV_PATH);
 
@@ -36,15 +120,93 @@ const args = new Map(
     }),
 );
 const scanMode = args.get("mode") ?? "sale-radar";
+const OUTPUT_DIR = args.get("outputDir") ? resolve(WORKSPACE, args.get("outputDir")) : DEFAULT_OUTPUT_DIR;
 const maxProductFinds = parseLimit(args.get("maxProductFinds"), scanMode === "comprehensive" ? Number.POSITIVE_INFINITY : DEFAULT_MAX_PRODUCT_FINDS);
 const maxSaleEvents = parseLimit(args.get("maxSaleEvents"), scanMode === "comprehensive" ? 0 : DEFAULT_MAX_SALE_EVENTS);
+const maxDiscoveredCatalogPages = parseLimit(
+  args.get("maxDiscoveredCatalogPages"),
+  DEFAULT_MAX_DISCOVERED_CATALOG_PAGES,
+);
 const maxDiscoveredSalePages = parseLimit(args.get("maxDiscoveredSalePages"), DEFAULT_MAX_DISCOVERED_SALE_PAGES);
 const fetchTimeoutMs = parseLimit(args.get("fetchTimeoutMs"), DEFAULT_FETCH_TIMEOUT_MS);
 const discoveryDetailLimit = parseLimit(args.get("discoveryDetailLimit"), DEFAULT_DISCOVERY_DETAIL_LIMIT);
 const discoveryConcurrency = parseLimit(args.get("discoveryConcurrency"), DEFAULT_DISCOVERY_CONCURRENCY);
+const sourceConcurrency = parseLimit(args.get("sourceConcurrency"), DEFAULT_SOURCE_CONCURRENCY);
+const fetchRetries = parseLimit(args.get("fetchRetries"), DEFAULT_FETCH_RETRIES);
+const fetchRetryDelayMs = parseLimit(
+  args.get("fetchRetryDelayMs"),
+  DEFAULT_FETCH_RETRY_DELAY_MS,
+);
+const hostDelayMs = parseLimit(args.get("hostDelayMs"), DEFAULT_HOST_DELAY_MS);
+const genericMaxPages = parseLimit(args.get("genericMaxPages"), DEFAULT_GENERIC_MAX_PAGES);
+const shopifyCollectionLanes = parseLimit(
+  args.get("shopifyCollectionLanes"),
+  DEFAULT_SHOPIFY_COLLECTION_LANES,
+);
+const shopifyMaxPages = parseLimit(args.get("shopifyMaxPages"), DEFAULT_SHOPIFY_MAX_PAGES);
+const shopifyRootMaxPages = parseLimit(args.get("shopifyRootMaxPages"), DEFAULT_SHOPIFY_ROOT_MAX_PAGES);
+const includeShopifyRootCatalog = args.get("shopifyRootCatalog") === "true";
+const walmartMaxPages = parseLimit(args.get("walmartMaxPages"), DEFAULT_WALMART_MAX_PAGES);
+const walmartAvailabilityDetailLimit = parseLimit(
+  args.get("walmartAvailabilityDetailLimit"),
+  DEFAULT_WALMART_AVAILABILITY_DETAIL_LIMIT,
+);
+const ebayPurchaseMaxCandidates = parseLimit(
+  args.get("ebayPurchaseMaxCandidates"),
+  DEFAULT_EBAY_PURCHASE_MAX_CANDIDATES,
+);
+const ebayPurchaseMaxDetailRequests = parseLimit(
+  args.get("ebayPurchaseMaxDetailRequests"),
+  DEFAULT_EBAY_PURCHASE_MAX_DETAIL_REQUESTS,
+);
+const ebayPurchaseMaxLanes = parseLimit(
+  args.get("ebayPurchaseMaxLanes"),
+  DEFAULT_EBAY_PURCHASE_MAX_LANES,
+);
+const ebayPurchaseMaxPagesPerLane = parseLimit(
+  args.get("ebayPurchaseMaxPagesPerLane"),
+  DEFAULT_EBAY_PURCHASE_MAX_PAGES_PER_LANE,
+);
+const ebayPurchasePageSize = parseLimit(
+  args.get("ebayPurchasePageSize"),
+  DEFAULT_EBAY_PURCHASE_PAGE_SIZE,
+);
+const researchPoolMultiplier = parsePositiveNumber(
+  args.get("researchPoolMultiplier"),
+  DEFAULT_RESEARCH_POOL_MULTIPLIER,
+);
+const maxResearchPoolSize = parseLimit(
+  args.get("maxResearchPoolSize"),
+  DEFAULT_MAX_RESEARCH_POOL_SIZE,
+);
+const researchPoolProductLimit =
+  scanMode === "comprehensive" || !Number.isFinite(maxProductFinds)
+    ? Number.POSITIVE_INFINITY
+    : Math.min(
+        maxResearchPoolSize,
+        Math.max(maxProductFinds, Math.ceil(maxProductFinds * researchPoolMultiplier)),
+      );
+const activeEnrichmentTimeoutMs = parsePositiveNumber(
+  args.get("activeEnrichmentTimeoutMs"),
+  DEFAULT_ACTIVE_ENRICHMENT_TIMEOUT_MS,
+);
+const soldHistorySyncTimeoutMs = parsePositiveNumber(
+  args.get("soldHistorySyncTimeoutMs") ?? args.get("sold-history-sync-timeout-ms"),
+  DEFAULT_SOLD_HISTORY_SYNC_TIMEOUT_MS,
+);
+const skipEbaySync =
+  args.has("skipEbaySync") ||
+  args.has("skip-ebay-sync") ||
+  args.get("ebaySync") === "false" ||
+  args.get("ebay-sync") === "false";
 const skipActiveEnrichment = args.has("skipActiveEnrichment") || args.get("enrichActive") === "false";
 const skipUpload = args.has("skipUpload") || args.get("upload") === "false";
-const maxActiveQueries = parseLimit(args.get("maxActiveQueries"), Number.isFinite(maxProductFinds) ? maxProductFinds : DEFAULT_MAX_PRODUCT_FINDS);
+const maxActiveQueries = parseLimit(
+  args.get("maxActiveQueries"),
+  Number.isFinite(researchPoolProductLimit)
+    ? researchPoolProductLimit
+    : DEFAULT_MAX_PRODUCT_FINDS,
+);
 
 const requestedSourceIds = new Set(
   String(args.get("sources") ?? args.get("source") ?? "")
@@ -59,18 +221,35 @@ if (requestedSourceIds.size && sources.length !== requestedSourceIds.size) {
   const missing = [...requestedSourceIds].filter((id) => !matched.has(id));
   throw new Error(`Unknown source id${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`);
 }
+const sourceMetadataById = new Map(sources.map((source) => [source.id, source]));
+const soldHistorySync = runSoldHistorySyncIfConfigured();
 const soldIndex = existsSync(SOLD_INDEX_PATH) ? JSON.parse(readFileSync(SOLD_INDEX_PATH, "utf8")) : null;
 const capturedAt = new Date().toISOString();
+const runId = `scan-${timestampForFile(capturedAt)}`;
 const previousScanState = loadPreviousScanState(OUTPUT_DIR);
 const sourceReports = [];
 const allCandidates = [];
 const allSaleEvents = [];
+const scheduledFetch = createPoliteFetcher({
+  baseRetryDelayMs: fetchRetryDelayMs,
+  maxConcurrency: sourceConcurrency,
+  maxRetries: fetchRetries,
+  minHostDelayMs: hostDelayMs,
+  requestTimeoutMs: fetchTimeoutMs,
+});
 
-for (const source of sources) {
+const sourceScanResults = await mapWithConcurrency(sources, sourceConcurrency, async (source) => {
   const startedAt = Date.now();
   const catalogUrl = source.url;
-  const preferredUrl = previousScanState.preferredUrls.get(source.id) ?? catalogUrl;
-  const scanTarget = preferredUrl === catalogUrl ? source : { ...source, url: preferredUrl };
+  const storedPreferredUrl = previousScanState.preferredUrls.get(source.id) ?? null;
+  const preferredUrl = compatiblePreferredSourceUrl(catalogUrl, storedPreferredUrl)
+    ? storedPreferredUrl
+    : catalogUrl;
+  const scanTarget = {
+    ...source,
+    priorSaleUrls: priorSaleRecheckUrlsForSource(previousScanState.saleCampaignLedger, source),
+    url: preferredUrl,
+  };
   try {
     const scanResult = await scanSource(scanTarget);
     const candidates = scanResult.candidates ?? [];
@@ -78,49 +257,114 @@ for (const source of sources) {
     const pageReports = scanResult.pageReports ?? [];
     const failedPages = pageReports.filter((report) => report.status === "error");
     const successfulPages = pageReports.filter((report) => report.status === "available");
-    sourceReports.push({
+    const successfulSalePages = successfulPages.filter(
+      (report) => (report.role ?? inferredPageRole(report.purpose)) === "sale",
+    );
+    const coverage = pageCoverage(pageReports, source);
+    const report = {
       candidateCount: candidates.length,
       adapterStats: scanResult.adapterStats,
       catalogUrl,
+      ...coverage,
+      ...sourceMetadataForReport(source),
+      ...(scanResult.reportFields ?? {}),
       elapsedMs: Date.now() - startedAt,
       id: source.id,
       name: source.name,
       pageErrors: failedPages,
-      preferredUrl: preferredSourceUrl(scanTarget.url, pageReports),
+      preferredUrl:
+        scanResult.preferredUrl ?? preferredSourceUrl(scanTarget.url, pageReports),
       resolvedUrls: [...new Set(successfulPages.map((report) => report.resolvedUrl))],
+      salePageCheckedUrls: [
+        ...new Set(
+          successfulSalePages.flatMap((page) => [page.requestedUrl, page.resolvedUrl]),
+        ),
+      ].filter(Boolean),
       saleEventCount: saleEvents.length,
-      status: failedPages.length ? "partial" : candidates.length ? "candidates" : saleEvents.length ? "sale_signals" : "empty",
+      status:
+        scanResult.sourceStatus ?? sourceReportStatus(coverage, candidates, saleEvents),
       url: preferredUrl,
-    });
-    allCandidates.push(...candidates);
-    allSaleEvents.push(...saleEvents);
+    };
     console.log(`${source.name}: ${candidates.length} candidates, ${saleEvents.length} sale signals`);
+    return { candidates, report, saleEvents };
   } catch (error) {
-    sourceReports.push({
+    const pageReports = error?.pageReports ?? [];
+    const successfulPages = pageReports.filter((report) => report.status === "available");
+    const successfulSalePages = successfulPages.filter(
+      (report) => (report.role ?? inferredPageRole(report.purpose)) === "sale",
+    );
+    const coverage = pageCoverage(pageReports, source);
+    const report = {
       candidateCount: 0,
       catalogUrl,
+      ...coverage,
+      ...sourceMetadataForReport(source),
       elapsedMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
       id: source.id,
       name: source.name,
+      pageErrors: pageReports.filter((page) => page.status === "error"),
       saleEventCount: 0,
       status: "error",
       preferredUrl,
+      resolvedUrls: [...new Set(successfulPages.map((report) => report.resolvedUrl))],
+      salePageCheckedUrls: [
+        ...new Set(
+          successfulSalePages.flatMap((page) => [page.requestedUrl, page.resolvedUrl]),
+        ),
+      ].filter(Boolean),
       url: preferredUrl,
-    });
+    };
     console.log(`${source.name}: ${error instanceof Error ? error.message : String(error)}`);
+    return { candidates: [], report, saleEvents: [] };
   }
+});
+
+for (const result of sourceScanResults) {
+  sourceReports.push(result.report);
+  allCandidates.push(...result.candidates);
+  allSaleEvents.push(...result.saleEvents);
 }
 
-const enrichedProducts = allCandidates
+const dedupedSaleEvents = dedupeSaleEvents(allSaleEvents);
+const verifiedSaleCampaigns = dedupedSaleEvents.map((event) => ({
+  ...event,
+  saleCampaignId: saleCampaignIdFor(saleEventToFind(event)),
+}));
+const saleAdjustedCandidates = applyVerifiedSaleCampaigns(
+  allCandidates,
+  verifiedSaleCampaigns,
+);
+const enrichedProducts = saleAdjustedCandidates
   .map((candidate) => enrichCandidate(candidate, soldIndex))
   .filter((find) => find.purchasePrice > 0);
-const includedProductFinds =
+const researchSelection =
   scanMode === "comprehensive"
-    ? enrichedProducts
-    : enrichedProducts.filter(isHighSignalProductFind).slice(0, maxProductFinds);
-const saleEventFinds = allSaleEvents.slice(0, maxSaleEvents).map(saleEventToFind).map((find) => addSaleFreshness(find, previousScanState.salesBySource));
-const scored = [...saleEventFinds, ...includedProductFinds.map((find) => prepareSaleRadarProductFind(find)).map((find) => addDecisionEvidence(find))]
+    ? rankAndSelectCandidatesWithDiagnostics(enrichedProducts, {
+        limit: Number.POSITIVE_INFINITY,
+      })
+    : rankAndSelectCandidatesWithDiagnostics(enrichedProducts.filter(isHighSignalProductFind), {
+        limit: researchPoolProductLimit,
+      });
+const researchProductFinds = researchSelection.selected;
+const researchSourceReports = annotateSourceYield(
+  sourceReports,
+  enrichedProducts,
+  researchProductFinds,
+  { researchSelectionDiagnostics: researchSelection.diagnostics },
+);
+const saleObservations = dedupedSaleEvents.map(saleEventToFind);
+const saleLifecycle = reconcileSaleCampaigns({
+  observedAt: capturedAt,
+  previousLedger: previousScanState.saleCampaignLedger,
+  runId,
+  saleEvents: saleObservations,
+  sourceReports: researchSourceReports,
+});
+const saleEventFinds = [...saleLifecycle.activeSaleEvents]
+  .sort((left, right) => saleEventPriority(right) - saleEventPriority(left))
+  .slice(0, maxSaleEvents);
+const scored = [...saleEventFinds, ...researchProductFinds]
   .sort((left, right) => {
     const leftPriority = opportunitySortPriority(left);
     const rightPriority = opportunitySortPriority(right);
@@ -133,11 +377,36 @@ const scored = [...saleEventFinds, ...includedProductFinds.map((find) => prepare
 let payload = {
   createdAt: capturedAt,
   finds: scored,
+  phase: "scan",
+  publicationStatus: "draft",
+  researchPool: {
+    maxActiveQueries,
+    maxVisibleProductFinds: maxProductFinds,
+    productCandidateCount: researchProductFinds.length,
+    selectionDiagnostics: researchSelection.diagnostics,
+  },
+  runId,
+  runManifest: {
+    scannerVersion: SCANNER_VERSION,
+    requestedSourceIds: [...requestedSourceIds].sort(),
+    scannedSourceCount: sources.length,
+    sourceCatalogCount: sourceCatalog.length,
+    startedAt: capturedAt,
+  },
   runMode: scanMode,
-  saleEvents: saleEventFinds,
+  runQuality: assessRunQuality(researchSourceReports),
+  saleCampaignLedger: saleLifecycle.ledger,
+  saleEvents: saleLifecycle.activeSaleEvents,
+  saleLifecycleSummary: saleLifecycle.summary,
+  saleObservations,
+  schemaVersion: 2,
+  soldHistorySync,
   source: scanMode === "comprehensive" ? "comprehensive-retail-arbitrage-scan" : "sale-radar-retail-arbitrage-scan",
-  sourceReports,
-  summary: summarize(scored, sourceReports),
+  sourceReports: researchSourceReports,
+  summary: {
+    ...summarize(scored, researchSourceReports, researchSelection.diagnostics),
+    researchPoolProductFindCount: researchProductFinds.length,
+  },
 };
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -147,15 +416,68 @@ const activeEnrichment = runActiveEnrichmentIfConfigured(outputPath);
 if (activeEnrichment.status === "enriched") {
   payload = JSON.parse(readFileSync(outputPath, "utf8"));
 }
-payload.summary = {
-  ...summarize(payload.finds, sourceReports),
-  activeEnrichment,
+const evaluatedAt = new Date().toISOString();
+const evaluatedFinds = (payload.finds ?? [])
+  .map((find) =>
+    evaluateOpportunity(find, {}, evaluatedAt),
+  )
+  .sort(compareEvaluatedFinds);
+const evaluatedSaleFinds = evaluatedFinds.filter(
+  (find) => find.opportunityType === "sitewide_sale",
+);
+const evaluatedProductFinds = evaluatedFinds.filter(
+  (find) => find.opportunityType !== "sitewide_sale",
+);
+const finalSelection = rankAndSelectCandidatesWithDiagnostics(evaluatedProductFinds, {
+  compareCandidates: compareEvaluatedFinds,
+  dedupePressings: false,
+  limit: maxProductFinds,
+  scoreCandidate: evaluatedCandidateScore,
+});
+const finalProductFinds = finalSelection.selected;
+payload.finds = [...evaluatedSaleFinds, ...finalProductFinds].sort(
+  (left, right) =>
+    opportunitySortPriority(right) - opportunitySortPriority(left) ||
+    (Number(right.priorityScore) || 0) - (Number(left.priorityScore) || 0) ||
+    candidateQualityScore(right) - candidateQualityScore(left),
+);
+const finalSourceReports = annotateSourceYield(
+  sourceReports,
+  enrichedProducts,
+  finalProductFinds,
+  {
+    researchSelectionDiagnostics: researchSelection.diagnostics,
+    visibleSelectionDiagnostics: finalSelection.diagnostics,
+  },
+);
+payload.sourceReports = finalSourceReports;
+payload.selectionDiagnostics = finalSelection.diagnostics;
+payload.runManifest = {
+  ...payload.runManifest,
+  completedAt: evaluatedAt,
 };
+payload.runQuality = assessRunQuality(finalSourceReports);
+payload.summary = {
+  ...summarize(payload.finds, finalSourceReports, finalSelection.diagnostics),
+  activeEnrichment,
+  researchPoolProductFindCount: researchProductFinds.length,
+  researchPoolRepresentedSourceCount: researchSelection.diagnostics.representedSourceCount,
+  soldHistorySync,
+};
+payload.evaluatedAt = evaluatedAt;
 writeFileSync(outputPath, JSON.stringify(payload, null, 2));
-const uploadResult = skipUpload ? { reason: "Disabled by --skipUpload or --upload=false.", status: "skipped" } : await uploadPayloadIfConfigured(payload);
+const uploadResult = {
+  reason: skipUpload
+    ? "Disabled by --skipUpload or --upload=false."
+    : "Raw scan payloads are drafts; only the curated final payload may publish as latest.",
+  status: "skipped",
+};
 
-const summary = summarize(payload.finds, sourceReports);
-console.log(JSON.stringify({ activeEnrichment, outputPath, uploadResult, ...summary }, null, 2));
+const summary = {
+  ...summarize(payload.finds, finalSourceReports, finalSelection.diagnostics),
+  researchPoolProductFindCount: researchProductFinds.length,
+};
+console.log(JSON.stringify({ activeEnrichment, outputPath, soldHistorySync, uploadResult, ...summary }, null, 2));
 
 async function readVinylSources(path) {
   const text = readFileSync(path, "utf8");
@@ -186,10 +508,27 @@ async function importVinylShopSources(text) {
     }).outputText;
     const moduleUrl = `data:text/javascript;base64,${Buffer.from(output).toString("base64")}`;
     const module = await import(moduleUrl);
-    return Array.isArray(module.vinylShopSources) ? module.vinylShopSources : [];
+    const fullSources =
+      typeof module.getActiveRetailSources === "function"
+        ? module.getActiveRetailSources()
+        : Array.isArray(module.retailArbitrageSourceCatalog)
+          ? module.retailArbitrageSourceCatalog.filter((source) => !source.isDiscoveryOnly)
+          : [];
+    if (fullSources.length) return fullSources.map(normalizeOperationalSource);
+    return Array.isArray(module.vinylShopSources) ? module.vinylShopSources.map(normalizeOperationalSource) : [];
   } catch {
     return [];
   }
+}
+
+function normalizeOperationalSource(source) {
+  return {
+    ...source,
+    name: source.name ?? source.displayName,
+    retailSourceType: source.retailSourceType ?? source.sourceType,
+    sourceType: source.crawlType ?? source.sourceType,
+    url: source.url ?? source.baseUrl,
+  };
 }
 
 function readStructuredSourceCatalog(text) {
@@ -211,7 +550,19 @@ function readStructuredSourceCatalog(text) {
     if (seenDomains.has(domain)) continue;
     seenDomains.add(domain);
 
-    sources.push({ domain, id, name, priority, sourceType, url });
+    sources.push({
+      defaultDiscountThreshold: readNumberField(block, "defaultDiscountThreshold"),
+      domain,
+      id,
+      minNetProfit: readNumberField(block, "minNetProfit"),
+      minROI: readNumberField(block, "minROI"),
+      name,
+      noiseLevel: readStringField(block, "noiseLevel"),
+      priority,
+      saleLikelihood: readStringField(block, "saleLikelihood"),
+      sourceType,
+      url,
+    });
   }
 
   return sources.sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
@@ -223,7 +574,7 @@ function readStringField(block, fieldName) {
 }
 
 function readNumberField(block, fieldName) {
-  const match = block.match(new RegExp(`${fieldName}:\\s*([0-9]+)`));
+  const match = block.match(new RegExp(`${fieldName}:\\s*([0-9]+(?:\\.[0-9]+)?)`));
   return match ? Number(match[1]) : null;
 }
 
@@ -232,81 +583,1044 @@ function readBooleanField(block, fieldName) {
 }
 
 async function scanSource(source) {
-  if (source.id === "vinyl-price-drop") {
-    return scanVinylPriceDrop(source);
-  }
-
-  if (source.sourceType === "shopify-store") {
-    return scanShopifySource(source);
-  }
-
-  if (source.id.startsWith("reddit-")) {
-    return scanReddit(source);
-  }
-
-  if (source.id.includes("craigslist")) {
-    return scanCraigslist(source);
-  }
-
-  const pageScan = await fetchSourcePages(source);
+  const adapter = sourceAdapterFor(source);
+  const result = await adapter.scan(source);
   return {
-    candidates: dedupeCandidates(pageScan.pages.flatMap((page) => extractCandidatesFromHtml(source, page.html, page.url))),
+    ...result,
+    adapterStats: {
+      adapterFamily: adapter.id,
+      ...(result.adapterStats ?? {}),
+    },
+  };
+}
+
+function sourceAdapterFor(source) {
+  return [
+    {
+      id: "vinyl-price-drop",
+      matches: (candidate) => candidate.id === "vinyl-price-drop",
+      scan: scanVinylPriceDrop,
+    },
+    {
+      id: "ebay-browse-purchase",
+      matches: (candidate) => candidate.id === "ebay-purchase",
+      scan: scanEbayPurchaseSource,
+    },
+    {
+      id: "walmart-structured-catalog",
+      matches: (candidate) => candidate.id === "walmart",
+      scan: scanWalmartSource,
+    },
+    {
+      id: "shopify-structured-catalog",
+      matches: (candidate) => candidate.sourceType === "shopify-store",
+      scan: scanShopifySource,
+    },
+    {
+      id: "reddit-deal-feed",
+      matches: (candidate) => candidate.id.startsWith("reddit-"),
+      scan: scanReddit,
+    },
+    {
+      id: "craigslist-classifieds",
+      matches: (candidate) => candidate.id.includes("craigslist"),
+      scan: scanCraigslist,
+    },
+    {
+      id: "fieldstack-catalog",
+      matches: (candidate) =>
+        /(?:^|\.)(?:bullmoose|ziarecords)\.com$/i.test(candidate.domain ?? new URL(candidate.url).hostname),
+      scan: scanFieldstackSource,
+    },
+    {
+      id: "generic-retailer",
+      matches: () => true,
+      scan: scanGenericRetailerSource,
+    },
+  ].find((adapter) => adapter.matches(source));
+}
+
+async function scanEbayPurchaseSource(source) {
+  const endpointRoot =
+    String(process.env.EBAY_ENV ?? "production").toLowerCase() === "sandbox"
+      ? "https://api.sandbox.ebay.com"
+      : "https://api.ebay.com";
+  const tokenResult = await getEbayApplicationToken({
+    endpointRoot,
+    env: process.env,
+    fetchImpl: fetch,
+    requestTimeoutMs: fetchTimeoutMs,
+  });
+  const authorization = {
+    credentialSource: tokenResult.credentialSource,
+    expiresInSeconds: tokenResult.expiresInSeconds,
+    httpStatus: tokenResult.httpStatus ?? null,
+    status: tokenResult.status,
+  };
+
+  if (!tokenResult.available) {
+    const tokenError = Object.assign(new Error(tokenResult.reason), {
+      failureKind:
+        tokenResult.status === "unavailable"
+          ? "configuration_error"
+          : "authentication_error",
+    });
+    return {
+      adapterStats: {
+        authorization,
+        complete: false,
+        evidenceScope: "active_purchase_listings_only",
+        soldDataIncluded: false,
+        stopReason: tokenError.failureKind,
+      },
+      candidates: [],
+      pageReports: [
+        failedPageReport(
+          "ebay-browse-authorization",
+          `${endpointRoot}/identity/v1/oauth2/token`,
+          tokenError,
+          "catalog",
+        ),
+      ],
+      preferredUrl: source.url,
+      reportFields: {
+        coverageStopReason: tokenError.failureKind,
+        evidenceScope: "active_purchase_listings_only",
+        scanComplete: false,
+        soldDataIncluded: false,
+      },
+      saleEvents: [],
+      sourceStatus: "error",
+    };
+  }
+
+  const discovery = await discoverEbayPurchases({
+    deliveryPostalCode: process.env.EBAY_DELIVERY_POSTAL_CODE,
+    endpointRoot,
+    fetchImpl: fetch,
+    marketplaceId: process.env.EBAY_MARKETPLACE_ID ?? "EBAY_US",
+    maxCandidates: ebayPurchaseMaxCandidates,
+    maxDetailRequests: ebayPurchaseMaxDetailRequests,
+    maxLanes: ebayPurchaseMaxLanes,
+    maxPagesPerLane: ebayPurchaseMaxPagesPerLane,
+    pageSize: ebayPurchasePageSize,
+    requestTimeoutMs: fetchTimeoutMs,
+    token: tokenResult.token,
+  });
+  const genericAssessmentRejectedByReason = {};
+  const candidates = discovery.candidates.flatMap((candidate) => {
+    const assessment = assessRecordCandidate({
+      context: "official eBay Browse API new fixed-price vinyl listing",
+      source,
+      title: candidate.sourceListingTitle,
+      url: candidate.sourceUrl,
+    });
+    if (!assessment.accepted) {
+      for (const reason of assessment.reasons) {
+        genericAssessmentRejectedByReason[reason] =
+          (genericAssessmentRejectedByReason[reason] ?? 0) + 1;
+      }
+      return [];
+    }
+    return [{
+      ...candidate,
+      candidateQualityReasons: [
+        "official_ebay_browse_api",
+        "exact_ebay_vinyl_category_176985",
+        "new_fixed_price_listing",
+        ...assessment.reasons,
+      ],
+      candidateQualityScore: Math.max(80, assessment.score),
+      costs: {
+        ...(candidate.costs ?? {}),
+        inboundShipping: 0,
+      },
+      ebayPurchaseEvidenceScope: discovery.evidenceScope,
+      ebayPurchaseSoldDataIncluded: false,
+      purchaseOfferVerification: ebayPurchaseOfferVerification(candidate),
+      purchaseRetailerDomain: "ebay.com",
+      purchaseRetailerName: "eBay",
+      sourceId: source.id,
+      sourceName: source.name,
+      stockStatus: "in_stock",
+    }];
+  });
+  const pageReports = discovery.diagnostics.pageReports.map((page) => ({
+    error: page.error ?? undefined,
+    failureKind: page.failureKind ?? undefined,
+    httpStatus: page.httpStatus,
+    laneId: page.laneId,
+    offset: page.offset,
+    pageNumber: page.pageNumber,
+    purpose: `ebay-browse-${page.laneId}-page-${page.pageNumber}`,
+    rawItemCount: page.rawItemCount,
+    requestedUrl: page.requestedUrl,
+    resolvedUrl: page.resolvedUrl ?? page.requestedUrl,
+    role: "catalog",
+    status: page.status,
+    totalReported: page.totalReported,
+  }));
+  const successfulPageCount = pageReports.filter((page) => page.status === "available").length;
+  const sourceStatus = discovery.complete
+    ? candidates.length > 0
+      ? "candidates"
+      : "empty"
+    : successfulPageCount > 0
+      ? "partial"
+      : "error";
+
+  return {
+    adapterStats: {
+      authorization,
+      browseApi: discovery.diagnostics,
+      adapterValidatedCandidateCount: candidates.length,
+      candidateMappingRejectedCount: Object.values(genericAssessmentRejectedByReason)
+        .reduce((total, count) => total + count, 0),
+      complete: discovery.complete,
+      evidenceScope: discovery.evidenceScope,
+      genericAssessmentRejectedByReason,
+      rateLimited: discovery.rateLimited,
+      retryAfterMs: discovery.retryAfterMs,
+      soldDataIncluded: discovery.soldDataIncluded,
+    },
+    candidates,
+    pageReports,
+    preferredUrl: source.url,
+    reportFields: {
+      coverageStopReason: discovery.diagnostics.stopReason,
+      evidenceScope: discovery.evidenceScope,
+      rateLimited: discovery.rateLimited,
+      scanComplete: discovery.complete,
+      soldDataIncluded: discovery.soldDataIncluded,
+    },
+    saleEvents: [],
+    sourceStatus,
+  };
+}
+
+async function scanFieldstackSource(source) {
+  const pageScan = await fetchSourcePages(source, {
+    allowEmpty: true,
+    followPagination: false,
+  });
+  return scanFieldstackPageScan(source, pageScan);
+}
+
+async function scanFieldstackPageScan(source, pageScan) {
+  const configuredPage = pageScan.pages.find(
+    (page) =>
+      page.scanRootPurpose === "configured" &&
+      !isSuspiciousHomepageRedirect(page.requestedUrl, page.url),
+  );
+  const config = configuredPage
+    ? parseFieldstackSearchConfig(configuredPage.html, configuredPage.url)
+    : null;
+  if (!configuredPage || !config) {
+    if (pageScan.pages.length === 0) {
+      const error = new Error(sourceFailureMessage(source, pageScan.pageReports));
+      error.pageReports = pageScan.pageReports;
+      throw error;
+    }
+    return genericRetailerResult(source, pageScan);
+  }
+
+  const resultPages = [];
+  const cookie = cookieHeaderFromPages([configuredPage]);
+  let totalPages = 1;
+  let resultErrorCount = 0;
+  let resultHtmlLength = 0;
+  const resultItemCounts = [];
+  for (let pageNumber = 1; pageNumber <= Math.min(genericMaxPages, totalPages); pageNumber += 1) {
+    const resultUrl = fieldstackResultsUrl(configuredPage.url, config, pageNumber);
+    try {
+      const response = await fetchPage(resultUrl, {
+        headers: {
+          ...(cookie ? { cookie } : {}),
+          accept: "application/json",
+          referer: configuredPage.url,
+          "x-requested-with": "XMLHttpRequest",
+          "x-search-guid": config.searchId,
+        },
+      });
+      const parsed = parseFieldstackResultsPayload(response.html);
+      if (!parsed) throw new Error(`Invalid FieldStack results payload for ${resultUrl}`);
+      totalPages = Math.max(1, parsed.totalPages);
+      resultHtmlLength += parsed.html.length;
+      if (parsed.itemCountHtml) {
+        resultItemCounts.push(cleanText(stripTags(parsed.itemCountHtml)));
+      }
+      const virtualUrl = new URL(configuredPage.url);
+      virtualUrl.searchParams.set("page", String(pageNumber));
+      resultPages.push({
+        html: parsed.html,
+        requestedUrl: resultUrl,
+        scanPurpose: "fieldstack-results",
+        scanRole: "catalog",
+        scanRootPurpose: "configured",
+        status: response.status,
+        url: virtualUrl.toString(),
+      });
+      pageScan.pageReports.push(
+        availablePageReport("fieldstack-results", resultUrl, virtualUrl.toString(), "catalog"),
+      );
+      if (!parsed.html.trim()) break;
+    } catch (error) {
+      resultErrorCount += 1;
+      pageScan.pageReports.push(
+        failedPageReport("fieldstack-results", resultUrl, error, "catalog"),
+      );
+      break;
+    }
+  }
+
+  const productCards = resultPages.flatMap((page) =>
+    extractRetailProductCards(page.html, page.url),
+  );
+  const resultTotals = resultItemCounts
+    .map(parseFieldstackResultTotal)
+    .filter((value) => value !== null);
+  const explicitlyEmptyCategory =
+    resultTotals.length > 0 &&
+    resultTotals.every((value) => value === 0) &&
+    productCards.length === 0;
+  const candidates = dedupeCandidates(
+    productCards
+      .map((item) => structuredRetailItemToCandidate(source, item, configuredPage.url))
+      .filter(Boolean),
+  );
+  return {
+    adapterStats: {
+      adapter: "fieldstack-search-results",
+      candidateCount: candidates.length,
+      categoryId: config.categoryId,
+      resultErrorCount,
+      resultHtmlLength,
+      resultItemCounts,
+      resultTotals,
+      resultPageCount: resultPages.length,
+      resultProductCardCount: productCards.length,
+      totalPages,
+    },
+    candidates,
+    pageReports: pageScan.pageReports,
+    saleEvents: explicitlyEmptyCategory
+      ? []
+      : dedupeSaleEvents(
+          [...pageScan.pages, ...resultPages].flatMap((page) =>
+            detectSaleEvents(source, page.html, page.url),
+          ),
+        ),
+  };
+}
+
+async function scanGenericRetailerSource(source) {
+  const pageScan = await fetchSourcePages(source);
+  const configuredPage = pageScan.pages.find(
+    (page) =>
+      page.scanRootPurpose === "configured" &&
+      !isSuspiciousHomepageRedirect(page.requestedUrl, page.url),
+  );
+  if (configuredPage && parseFieldstackSearchConfig(configuredPage.html, configuredPage.url)) {
+    return scanFieldstackPageScan(source, pageScan);
+  }
+  return genericRetailerResult(source, pageScan);
+}
+
+function genericRetailerResult(source, pageScan) {
+  const candidatePages = genericCandidatePages(pageScan.pages, source);
+  const structuredResults = candidatePages.map((page) => ({
+    page,
+    parsed: parseStructuredRetailCatalog({
+      html: page.html,
+      pageUrl: page.url,
+    }),
+  }));
+  const structuredCandidates = structuredResults.flatMap(({ page, parsed }) =>
+    parsed.items.map((item) => structuredRetailItemToCandidate(source, item, page.url)).filter(Boolean),
+  );
+  const productCardResults = candidatePages.map((page) => ({
+    items: extractRetailProductCards(page.html, page.url),
+    page,
+  }));
+  const productCardCandidates = productCardResults.flatMap(({ items, page }) =>
+    items.map((item) => structuredRetailItemToCandidate(source, item, page.url)).filter(Boolean),
+  );
+  const htmlCandidates = candidatePages.flatMap((page) =>
+    extractCandidatesFromHtml(source, page.html, page.url),
+  );
+  const candidates = dedupeCandidates([
+    ...structuredCandidates,
+    ...productCardCandidates,
+    ...htmlCandidates,
+  ]);
+  return {
+    adapterStats: {
+      adapter: "generic-structured-and-html",
+      candidateCount: candidates.length,
+      candidatePageCount: candidatePages.length,
+      fetchedPageCount: pageScan.pages.length,
+      htmlProductCardCount: productCardResults.reduce(
+        (total, result) => total + result.items.length,
+        0,
+      ),
+      structuredPayloadCount: structuredResults.reduce(
+        (total, result) => total + result.parsed.payloadCount,
+        0,
+      ),
+      structuredProductCount: structuredResults.reduce(
+        (total, result) => total + result.parsed.items.length,
+        0,
+      ),
+    },
+    candidates,
     pageReports: pageScan.pageReports,
     saleEvents: dedupeSaleEvents(pageScan.pages.flatMap((page) => detectSaleEvents(source, page.html, page.url))),
   };
 }
 
-async function scanShopifySource(source) {
-  const pageScan = await fetchSourcePages(source, { allowEmpty: true });
-  const origin = pageScan.pages.length ? new URL(pageScan.pages[0].url).origin : new URL(source.url).origin;
-  const collectionMatch = new URL(source.url).pathname.match(/\/collections\/([^/?#]+)/);
-  const productUrls = collectionMatch
-    ? [`${origin}/collections/${collectionMatch[1]}/products.json?limit=250`, `${origin}/products.json?limit=250`]
-    : [`${origin}/products.json?limit=250`];
+function cookieHeaderFromPages(pages) {
+  const cookies = new Map();
+  for (const setCookie of pages.flatMap((page) => page.setCookies ?? [])) {
+    const pair = String(setCookie).split(";", 1)[0];
+    const separator = pair.indexOf("=");
+    if (separator <= 0) continue;
+    cookies.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim());
+  }
+  return [...cookies.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
+}
 
+function genericCandidatePages(pages, source) {
+  const configuredPages = pages.filter(
+    (page) =>
+      page.scanRootPurpose === "configured" &&
+      !isSuspiciousHomepageRedirect(page.requestedUrl, page.url),
+  );
+  const discoveredVinylSalePages = pages.filter(
+    (page) =>
+      page.scanRootPurpose === "discovered-sale-link" &&
+      /\b(?:vinyl|records?|music|lps?)\b/i.test(new URL(page.url).pathname.replace(/[-_/]+/g, " ")),
+  );
+  const recoveredCatalogPages = pages.filter(
+    (page) => page.scanRootPurpose === "discovered-catalog-link",
+  );
+  if (configuredPages.length > 0) return dedupePages([...configuredPages, ...discoveredVinylSalePages]);
+  if (recoveredCatalogPages.length > 0) {
+    return dedupePages([...recoveredCatalogPages, ...discoveredVinylSalePages]);
+  }
+
+  try {
+    if (new URL(source.url).pathname.replace(/\/+$/, "") === "") {
+      return pages.filter((page) => page.scanRootPurpose === "homepage");
+    }
+  } catch {
+    // A malformed configured URL is already represented in source diagnostics.
+  }
+  return [];
+}
+
+function isSuspiciousHomepageRedirect(requestedUrl, resolvedUrl) {
+  try {
+    const requested = new URL(requestedUrl);
+    const resolved = new URL(resolvedUrl);
+    return requested.pathname.replace(/\/+$/, "") !== "" && resolved.pathname.replace(/\/+$/, "") === "";
+  } catch {
+    return false;
+  }
+}
+
+function dedupePages(pages) {
   const byUrl = new Map();
+  for (const page of pages) byUrl.set(page.url, page);
+  return [...byUrl.values()];
+}
 
-  for (const url of productUrls) {
-    try {
-      const payload = JSON.parse(await fetchText(url));
-      for (const product of payload.products ?? []) {
-        if (!isVinylProductCandidate(source, product.title, product.product_type, (product.tags ?? []).join(" "), product.handle)) continue;
-        const variants = product.variants ?? [];
-        const prices = variants.map((variant) => Number(variant.price)).filter(Number.isFinite);
-        const availableVariants = variants.filter((variant) => variant.available !== false);
-        const purchasePrice = Math.min(...prices);
-        if (!Number.isFinite(purchasePrice)) continue;
-        const productUrl = `${origin}/products/${product.handle}`;
-        const titleArtist = inferArtist(product.title);
-        const artist = titleArtist !== "Unknown Artist" || isStoreVendor(product.vendor) ? titleArtist : cleanText(product.vendor);
-        byUrl.set(productUrl, {
-          artist,
-          condition: "new/sealed",
-          id: stableId(source.id, productUrl, product.title),
-          purchasePrice,
-          quantityAvailable: availableVariants.length || null,
-          sourceId: source.id,
-          sourceName: source.name,
-          sourceListingTitle: cleanText(product.title),
-          sourceUrl: productUrl,
-          title: inferTitle(product.title),
+function structuredRetailItemToCandidate(source, item, pageUrl) {
+  if (!Number.isFinite(item.currentPrice) || item.currentPrice < 2 || item.currentPrice > 250) return null;
+  if (item.available === false || item.availability === "out_of_stock") return null;
+  const sourceUrl = item.canonicalUrl ?? pageUrl;
+  const assessment = assessRecordCandidate({
+    context: `${item.availability ?? ""} ${item.sourceKinds?.join(" ") ?? ""}`,
+    source,
+    title: item.title,
+    url: sourceUrl,
+  });
+  if (!assessment.accepted) return null;
+
+  return {
+    artist: inferArtist(item.title),
+    available: item.available,
+    barcode: item.gtin ?? item.upc ?? null,
+    candidateQualityReasons: assessment.reasons,
+    candidateQualityScore: assessment.score,
+    condition: "new/sealed",
+    discoveryUrl: pageUrl !== sourceUrl ? pageUrl : null,
+    id: stableId(source.id, item.stableId, item.title),
+    purchasePrice: item.currentPrice,
+    sku: item.sku ?? item.productId ?? item.tcin ?? null,
+    sourceCurrency: item.currency,
+    sourceDiscountPercent:
+      item.regularPrice && item.regularPrice > item.currentPrice
+        ? Math.round(((item.regularPrice - item.currentPrice) / item.regularPrice) * 100)
+        : null,
+    sourceId: source.id,
+    sourceListingTitle: cleanText(item.title),
+    sourceName: source.name,
+    sourceOriginalPrice:
+      item.regularPrice && item.regularPrice > item.currentPrice ? item.regularPrice : null,
+    sourceUrl,
+    stockStatus: item.availability,
+    title: inferTitle(item.title),
+  };
+}
+
+async function scanWalmartSource(source) {
+  const pageReports = [];
+  const fetchedPages = [];
+  const byStableId = new Map();
+  const rejectionCounts = new Map();
+  let availablePageCount = 0;
+  let payloadCount = 0;
+  let structuredProductCount = 0;
+  let uniqueStructuredProductCount = 0;
+  let vinylQualifiedProductCount = 0;
+  let lowPriceEligibleProductCount = 0;
+  let availableLowPriceProductCount = 0;
+  let firstPartyLowPriceProductCount = 0;
+  let thirdPartyLowPriceProductCount = 0;
+  let unknownSellerLowPriceProductCount = 0;
+  const unavailableLowPriceSamples = [];
+  let availabilityDetailAttemptCount = 0;
+  let availabilityDetailErrorCount = 0;
+  let availabilityDetailVerifiedCount = 0;
+  const lanes = walmartSearchLanes(source.url);
+
+  for (const lane of lanes) {
+    let nextUrl = lane.url;
+    let consecutiveNoNewPages = 0;
+    const attemptedUrls = new Set();
+
+    for (let pageNumber = 1; pageNumber <= walmartMaxPages && nextUrl; pageNumber += 1) {
+      if (attemptedUrls.has(nextUrl)) break;
+      attemptedUrls.add(nextUrl);
+      const requestedUrl = nextUrl;
+      try {
+        const page = await fetchPage(requestedUrl);
+        availablePageCount += 1;
+        fetchedPages.push(page);
+        const parsed = parseWalmartCatalogPage({
+          html: page.html,
+          pageUrl: page.url,
+        });
+        payloadCount += parsed.payloadCount;
+        structuredProductCount += parsed.items.length;
+        let newItemCount = 0;
+        for (const item of parsed.items) {
+          if (!byStableId.has(item.stableId)) {
+            uniqueStructuredProductCount += 1;
+            newItemCount += 1;
+          }
+          const existing = byStableId.get(item.stableId);
+          byStableId.set(item.stableId, existing ? mergeWalmartLaneItem(existing, item, lane) : { ...item, lanes: [lane.id] });
+        }
+        consecutiveNoNewPages = newItemCount === 0 ? consecutiveNoNewPages + 1 : 0;
+        pageReports.push({
+          ...availablePageReport(`${lane.id}-page-${pageNumber}`, requestedUrl, page.url, "catalog"),
+          payloadCount: parsed.payloadCount,
+          structuredProductCount: parsed.items.length,
+        });
+        if (consecutiveNoNewPages >= 2 || parsed.items.length === 0) break;
+        nextUrl =
+          parsed.pagination.nextPageUrl ??
+          walmartPageUrl(page.url, (parsed.pagination.currentPage ?? pageNumber) + 1);
+      } catch (error) {
+        pageReports.push(failedPageReport(`${lane.id}-page-${pageNumber}`, requestedUrl, error, "catalog"));
+        break;
+      }
+    }
+  }
+
+  if (availablePageCount === 0) {
+    const error = new Error(sourceFailureMessage(source, pageReports));
+    error.pageReports = pageReports;
+    throw error;
+  }
+
+  const availabilityTargets = [...byStableId.values()]
+    .filter((item) => {
+      if (item.available !== false && item.stockStatus !== "out_of_stock") return false;
+      if (!isFirstPartyWalmartOffer(item) || !item.canonicalUrl) return false;
+      if (!assessWalmartAbsolutePrice(item.currentPrice).eligible) return false;
+      return walmartRecordAssessment(item, source).accepted;
+    })
+    .sort((left, right) => walmartAvailabilityPriority(right) - walmartAvailabilityPriority(left))
+    .slice(0, walmartAvailabilityDetailLimit);
+  availabilityDetailAttemptCount = availabilityTargets.length;
+  await mapWithConcurrency(
+    availabilityTargets,
+    Math.max(1, Math.min(discoveryConcurrency, 5)),
+    async (item) => {
+      try {
+        const page = await fetchPage(item.canonicalUrl);
+        const parsed = parseWalmartCatalogPage({ html: page.html, pageUrl: page.url });
+        const verified = parsed.items.find((candidate) => walmartItemsMatch(item, candidate));
+        pageReports.push({
+          ...availablePageReport("walmart-product-availability", item.canonicalUrl, page.url, "catalog"),
+          payloadCount: parsed.payloadCount,
+          structuredProductCount: parsed.items.length,
+        });
+        if (!verified) return;
+        byStableId.set(
+          item.stableId,
+          {
+            ...mergeWalmartLaneItem(item, verified, { id: "walmart-product-page" }),
+            availabilityVerifiedAt: capturedAt,
+            availabilityVerificationSource: "product_page",
+          },
+        );
+        if (verified.available === true || verified.stockStatus === "in_stock" || verified.stockStatus === "limited_stock") {
+          availabilityDetailVerifiedCount += 1;
+        }
+      } catch (error) {
+        availabilityDetailErrorCount += 1;
+        pageReports.push(failedPageReport("walmart-product-availability", item.canonicalUrl, error, "catalog"));
+      }
+    },
+  );
+
+  const candidates = [];
+  for (const item of byStableId.values()) {
+    const priceAssessment = assessWalmartAbsolutePrice(item.currentPrice);
+    if (priceAssessment.eligible) {
+      lowPriceEligibleProductCount += 1;
+      if (item.available !== false && item.stockStatus !== "out_of_stock") {
+        availableLowPriceProductCount += 1;
+      } else if (unavailableLowPriceSamples.length < 8) {
+        unavailableLowPriceSamples.push({
+          price: item.currentPrice,
+          sellerName: item.sellerName,
+          stockStatus: item.stockStatus,
+          title: item.title,
+          url: item.canonicalUrl,
         });
       }
-    } catch {
-      // Fall through to the page HTML below.
+      if (item.soldByWalmart === true) firstPartyLowPriceProductCount += 1;
+      else if (item.soldByWalmart === false) thirdPartyLowPriceProductCount += 1;
+      else unknownSellerLowPriceProductCount += 1;
+    }
+    if (item.available === false || item.stockStatus === "out_of_stock") {
+      incrementCount(rejectionCounts, "unavailable");
+      continue;
+    }
+    if (!isFirstPartyWalmartOffer(item)) {
+      incrementCount(
+        rejectionCounts,
+        item.soldByWalmart === false ? "third_party_seller" : "seller_unverified",
+      );
+      continue;
+    }
+    if (!item.canonicalUrl) {
+      incrementCount(rejectionCounts, "missing_product_url");
+      continue;
+    }
+
+    if (!priceAssessment.eligible) {
+      incrementCount(rejectionCounts, item.currentPrice === null ? "missing_price" : "over_absolute_price_ceiling");
+      continue;
+    }
+
+    const assessment = walmartRecordAssessment(item, source);
+    if (!assessment.accepted) {
+      incrementCount(rejectionCounts, assessment.reasons[0] ?? "not_vinyl");
+      continue;
+    }
+    vinylQualifiedProductCount += 1;
+
+    const retailerBestSeller = item.badges.some((badge) => /\b(?:best\s*seller|best\s*selling|popular\s+pick)\b/i.test(badge));
+    const retailerCustomerPick = item.badges.some((badge) =>
+      /\b(?:customer(?:s')?\s+pick|overall\s+pick|top\s+rated)\b/i.test(badge),
+    );
+    const candidateQualityReasons = [
+      ...assessment.reasons,
+      `walmart_${priceAssessment.tier}_price`,
+      ...(item.soldByWalmart === true ? ["sold_by_walmart"] : []),
+      ...(retailerBestSeller ? ["retailer_best_seller"] : []),
+      ...(retailerCustomerPick ? ["retailer_customer_pick"] : []),
+      ...(item.upc ? ["upc_available"] : []),
+    ];
+    const sourceDiscountPercent =
+      item.wasPrice !== null && item.currentPrice !== null && item.wasPrice > item.currentPrice
+        ? Math.round(((item.wasPrice - item.currentPrice) / item.wasPrice) * 100)
+        : null;
+    const pickupEligible = item.fulfillment.includes("pickup");
+    candidates.push({
+      artist: inferArtist(item.title),
+      barcode: item.upc,
+      candidateQualityReasons,
+      // Keep the embedded score focused on product identity. Price, first-party
+      // status, badges, identifiers, and reviews are added once by the global
+      // candidate ranker, which preserves useful separation between Walmart finds.
+      candidateQualityScore: assessment.score,
+      condition: "new/sealed",
+      costs: pickupEligible ? { inboundShipping: 0 } : undefined,
+      discoveryUrl: walmartLaneDiscoveryUrl(source.url, item.lanes),
+      id: stableId(source.id, item.stableId),
+      pickupEligible,
+      purchasePrice: item.currentPrice,
+      quantityAvailable: item.inventoryQuantity,
+      retailerBadges: item.badges,
+      retailerBestSeller,
+      retailerCustomerPick,
+      retailerRating: item.rating,
+      retailerReviewCount: item.reviewCount,
+      retailerSellerName: item.sellerName,
+      retailerSoldBySource: item.soldByWalmart,
+      sku: item.sku ?? item.usItemId,
+      sourceCurrency: item.currency ?? "USD",
+      sourceDiscountPercent,
+      sourceId: source.id,
+      sourceListingTitle: cleanText(item.title),
+      sourceName: source.name,
+      sourceOriginalPrice: item.wasPrice,
+      sourceUrl: item.canonicalUrl,
+      title: inferTitle(item.title),
+      walmartAbsolutePriceTier: priceAssessment.tier,
+      walmartAvailabilityVerificationSource: item.availabilityVerificationSource ?? "search_result",
+      walmartAvailabilityVerifiedAt: item.availabilityVerifiedAt ?? null,
+      walmartFulfillment: item.fulfillment,
+      walmartRequiresDemandSupport: priceAssessment.requiresDemandSupport,
+      walmartStockStatus: item.stockStatus,
+      walmartUsItemId: item.usItemId,
+    });
+  }
+
+  return {
+    adapterStats: {
+      adapter: "walmart-next-data",
+      availabilityDetailAttemptCount,
+      availabilityDetailErrorCount,
+      availabilityDetailVerifiedCount,
+      availablePageCount,
+      availableLowPriceProductCount,
+      candidateCount: candidates.length,
+      firstPartyLowPriceProductCount,
+      laneCount: lanes.length,
+      lowPriceEligibleProductCount,
+      payloadCount,
+      rejectedProductCounts: Object.fromEntries([...rejectionCounts.entries()].sort()),
+      structuredProductCount,
+      thirdPartyLowPriceProductCount,
+      unavailableLowPriceSamples,
+      uniqueStructuredProductCount,
+      unknownSellerLowPriceProductCount,
+      vinylQualifiedProductCount,
+    },
+    candidates: dedupeCandidates(candidates),
+    pageReports,
+    saleEvents: dedupeSaleEvents(
+      fetchedPages.flatMap((page) => detectSaleEvents(source, page.html, page.url)),
+    ),
+  };
+}
+
+function walmartSearchLanes(configuredUrl) {
+  const definitions = [
+    { id: "walmart-configured", maxPrice: 20, sort: null },
+    { id: "walmart-under-10-price-low", maxPrice: 10, sort: "price_low" },
+    { id: "walmart-under-15-price-low", maxPrice: 15, sort: "price_low" },
+    { id: "walmart-under-20-price-low", maxPrice: 20, sort: "price_low" },
+    { id: "walmart-under-20-best-match", maxPrice: 20, sort: "best_match" },
+    { id: "walmart-under-20-best-seller", maxPrice: 20, sort: "best_seller" },
+  ];
+  const seenUrls = new Set();
+  return definitions
+    .map((definition) => {
+      const url = new URL(configuredUrl);
+      if (!url.searchParams.get("q")) url.searchParams.set("q", "vinyl records");
+      if (!url.searchParams.get("catId")) url.searchParams.set("catId", "4104_1205481");
+      url.searchParams.set("max_price", String(definition.maxPrice));
+      url.searchParams.set("facet", "retailer_type:Walmart");
+      if (definition.sort) url.searchParams.set("sort", definition.sort);
+      else url.searchParams.delete("sort");
+      url.searchParams.delete("page");
+      return { ...definition, url: url.toString() };
+    })
+    .filter((lane) => {
+      if (seenUrls.has(lane.url)) return false;
+      seenUrls.add(lane.url);
+      return true;
+    });
+}
+
+function walmartPageUrl(value, pageNumber) {
+  const url = new URL(value);
+  url.searchParams.set("page", String(pageNumber));
+  return url.toString();
+}
+
+function walmartRecordAssessment(item, source) {
+  return assessRecordCandidate({
+    context: `Walmart vinyl records ${(item.badges ?? []).join(" ")}`,
+    source,
+    title: item.title,
+    url: item.canonicalUrl,
+  });
+}
+
+function walmartAvailabilityPriority(item) {
+  const price = Number(item.currentPrice) || 999;
+  const reviewCount = Math.max(0, Number(item.reviewCount) || 0);
+  const badgeText = (item.badges ?? []).join(" ");
+  return (
+    (price <= 13 ? 35 : price <= 15 ? 25 : price <= 20 ? 10 : 0) +
+    Math.min(30, Math.log2(1 + reviewCount) * 4) +
+    (/\b(?:best\s*seller|best\s*selling|popular\s+pick|overall\s+pick)\b/i.test(badgeText) ? 15 : 0) +
+    (item.wasPrice && item.wasPrice > price ? Math.min(15, item.wasPrice - price) : 0)
+  );
+}
+
+function walmartItemsMatch(left, right) {
+  if (left.stableId && right.stableId && left.stableId === right.stableId) return true;
+  if (left.usItemId && right.usItemId && left.usItemId === right.usItemId) return true;
+  if (!left.canonicalUrl || !right.canonicalUrl) return false;
+  try {
+    return new URL(left.canonicalUrl).pathname.toLowerCase() === new URL(right.canonicalUrl).pathname.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+function walmartLaneDiscoveryUrl(configuredUrl, lanes) {
+  const matchingLane = walmartSearchLanes(configuredUrl).find((lane) => lanes.includes(lane.id));
+  return matchingLane?.url ?? configuredUrl;
+}
+
+function mergeWalmartLaneItem(existing, incoming, lane) {
+  const currentPrice =
+    existing.currentPrice === null
+      ? incoming.currentPrice
+      : incoming.currentPrice === null
+        ? existing.currentPrice
+        : Math.min(existing.currentPrice, incoming.currentPrice);
+  return {
+    ...existing,
+    available:
+      existing.available === true || incoming.available === true
+        ? true
+        : existing.available === false && incoming.available === false
+          ? false
+          : existing.available ?? incoming.available,
+    badges: [...new Set([...(existing.badges ?? []), ...(incoming.badges ?? [])])],
+    canonicalUrl: existing.canonicalUrl ?? incoming.canonicalUrl,
+    currency: existing.currency ?? incoming.currency,
+    currentPrice,
+    fulfillment: [...new Set([...(existing.fulfillment ?? []), ...(incoming.fulfillment ?? [])])],
+    inventoryQuantity: existing.inventoryQuantity ?? incoming.inventoryQuantity,
+    lanes: [...new Set([...(existing.lanes ?? []), lane.id])],
+    rating: existing.rating ?? incoming.rating,
+    reviewCount: existing.reviewCount ?? incoming.reviewCount,
+    sellerId: existing.sellerId ?? incoming.sellerId,
+    sellerName: existing.sellerName ?? incoming.sellerName,
+    sku: existing.sku ?? incoming.sku,
+    soldByWalmart: existing.soldByWalmart ?? incoming.soldByWalmart,
+    stockStatus:
+      existing.stockStatus === "in_stock" || incoming.stockStatus === "in_stock"
+        ? "in_stock"
+        : existing.stockStatus === "limited_stock" || incoming.stockStatus === "limited_stock"
+          ? "limited_stock"
+          : existing.stockStatus === "out_of_stock" && incoming.stockStatus === "out_of_stock"
+            ? "out_of_stock"
+            : "unknown",
+    upc: existing.upc ?? incoming.upc,
+    usItemId: existing.usItemId ?? incoming.usItemId,
+    wasPrice: Math.max(existing.wasPrice ?? 0, incoming.wasPrice ?? 0) || null,
+  };
+}
+
+function incrementCount(counts, key) {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+async function scanShopifySource(source) {
+  const pageScan = await fetchSourcePages(source, { allowEmpty: true, followPagination: false });
+  const origin = pageScan.pages.length ? new URL(pageScan.pages[0].url).origin : new URL(source.url).origin;
+  const byUrl = new Map();
+  let shopifyFeedErrorCount = 0;
+  let shopifyFeedPageCount = 0;
+  let shopifyCollectionFeedPageCount = 0;
+  let shopifyRootFeedPageCount = 0;
+  let shopifyProductCount = 0;
+  let shopifyRecordProductCount = 0;
+  const shopifyCurrency = extractShopifyCurrency(pageScan.pages.map((page) => page.html));
+  const collectionLaneSelection = selectShopifyCollectionLanes(
+    pageScan.pages.map((page) => page.url),
+    source.url,
+    shopifyCollectionLanes,
+  );
+  const collectionDescriptors = collectionLaneSelection.selected.flatMap(({ url }) =>
+    shopifyCatalogUrls({ url }, 1, 250, { includeRootCatalog: false }),
+  );
+  const shouldScanRootCatalog =
+    includeShopifyRootCatalog ||
+    (collectionDescriptors.length === 0 && !collectionLaneSelection.configuredExcluded);
+  const firstPageDescriptors = [
+    ...collectionDescriptors,
+    ...(shouldScanRootCatalog
+      ? [shopifyCatalogUrls({ url: origin }, 1).find((descriptor) => descriptor.collectionContext === null)]
+      : []),
+  ].filter(Boolean);
+
+  for (const firstDescriptor of firstPageDescriptors) {
+    const pageLimit = firstDescriptor.collectionContext ? shopifyMaxPages : shopifyRootMaxPages;
+    for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
+      const descriptor = {
+        ...firstDescriptor,
+        url: shopifyPageUrl(firstDescriptor.url, pageNumber),
+      };
+      const purpose = descriptor.collectionContext ? "shopify-collection-feed" : "shopify-catalog-feed";
+      try {
+        const page = await fetchPage(descriptor.url);
+        pageScan.pageReports.push(availablePageReport(purpose, descriptor.url, page.url, "catalog"));
+        const payload = JSON.parse(page.html);
+        const products = Array.isArray(payload.products) ? payload.products : [];
+        shopifyFeedPageCount += 1;
+        if (descriptor.collectionContext) shopifyCollectionFeedPageCount += 1;
+        else shopifyRootFeedPageCount += 1;
+        shopifyProductCount += products.length;
+        const normalized = normalizeShopifyProducts({
+          assessment: assessRecordCandidate,
+          collectionContext: descriptor.collectionContext,
+          currency: shopifyCurrency,
+          origin,
+          products,
+          source,
+        });
+        shopifyRecordProductCount += normalized.length;
+        for (const item of normalized) {
+          const titleArtist = inferArtist(item.product.title);
+          const artist =
+            titleArtist !== "Unknown Artist" || isStoreVendor(item.product.vendor) ? titleArtist : cleanText(item.product.vendor);
+          const candidate = {
+            artist,
+            availableVariantCount: item.availableVariantCount,
+            barcode: item.barcode,
+            candidateQualityReasons: item.candidateQualityReasons,
+            candidateQualityScore: item.candidateQualityScore,
+            collectionContext: item.collectionContext,
+            collectionContexts: item.collectionContext ? [item.collectionContext] : [],
+            condition: "new/sealed",
+            discoveryUrl: item.collectionContext ? `${origin}/collections/${item.collectionContext}` : null,
+            discoveryUrls: item.collectionContext
+              ? [`${origin}/collections/${item.collectionContext}`]
+              : [],
+            id: stableId(source.id, item.productUrl, item.variantId ?? item.product.title),
+            purchasePrice: item.price,
+            quantityAvailable: item.inventoryQuantity,
+            shopifyVariantId: item.variantId,
+            shopifyVariantTitle: item.variantTitle,
+            sku: item.sku,
+            sourceCurrency: item.currency,
+            sourceDiscountPercent:
+              item.compareAtPrice && item.compareAtPrice > item.price
+                ? Math.round(((item.compareAtPrice - item.price) / item.compareAtPrice) * 100)
+                : null,
+            sourceId: source.id,
+            sourceListingTitle: cleanText(item.listingTitle),
+            sourceName: source.name,
+            sourceOriginalPrice: item.compareAtPrice,
+            sourceUrl: item.productUrl,
+            title: inferTitle(item.product.title),
+          };
+          const current = byUrl.get(item.productUrl);
+          const preferCandidate =
+            !current ||
+            collectionContextPriority(candidate.collectionContext) > collectionContextPriority(current.collectionContext) ||
+            candidate.purchasePrice < current.purchasePrice;
+          const preferred = preferCandidate ? candidate : current;
+          byUrl.set(item.productUrl, {
+            ...preferred,
+            collectionContexts: [
+              ...new Set([
+                ...(current?.collectionContexts ?? [current?.collectionContext].filter(Boolean)),
+                ...candidate.collectionContexts,
+              ]),
+            ],
+            discoveryUrls: [
+              ...new Set([
+                ...(current?.discoveryUrls ?? [current?.discoveryUrl].filter(Boolean)),
+                ...candidate.discoveryUrls,
+              ]),
+            ],
+          });
+        }
+        if (products.length < 250) break;
+      } catch (error) {
+        shopifyFeedErrorCount += 1;
+        pageScan.pageReports.push(failedPageReport(purpose, descriptor.url, error, "catalog"));
+        break;
+      }
     }
   }
 
   if (byUrl.size === 0) {
-    if (pageScan.pages.length === 0) throw new Error(sourceFailureMessage(source, pageScan.pageReports));
+    if (pageScan.pages.length === 0) {
+      const error = new Error(sourceFailureMessage(source, pageScan.pageReports));
+      error.pageReports = pageScan.pageReports;
+      throw error;
+    }
+    const fallback = genericRetailerResult(source, pageScan);
     return {
-      candidates: dedupeCandidates(pageScan.pages.flatMap((page) => extractCandidatesFromHtml(source, page.html, page.url))),
-      pageReports: pageScan.pageReports,
-      saleEvents: dedupeSaleEvents(pageScan.pages.flatMap((page) => detectSaleEvents(source, page.html, page.url))),
+      adapterStats: {
+        ...fallback.adapterStats,
+        adapter: "shopify-generic-fallback",
+        adapterFamily: "shopify-with-retailer-neutral-fallback",
+        candidateCount: fallback.candidates.length,
+        collectionCandidateCount: collectionLaneSelection.candidateCount,
+        collectionFeedPageCount: shopifyCollectionFeedPageCount,
+        collectionConfiguredExcluded: collectionLaneSelection.configuredExcluded,
+        collectionExcludedCount: collectionLaneSelection.excludedCount,
+        collectionEligibleCount: collectionLaneSelection.eligibleCount,
+        collectionLaneLimit: shopifyCollectionLanes,
+        collectionLaneStopReason: collectionLaneSelection.stopReason,
+        collectionOmittedCount: collectionLaneSelection.omittedCount,
+        collectionOmittedLanes: collectionLaneSelection.omitted,
+        collectionSelectedCount: collectionLaneSelection.selected.length,
+        feedErrorCount: shopifyFeedErrorCount,
+        feedPageCount: shopifyFeedPageCount,
+        productCount: shopifyProductCount,
+        recordProductCount: shopifyRecordProductCount,
+        rejectedOrUnavailableProductCount: Math.max(0, shopifyProductCount - shopifyRecordProductCount),
+        rootCatalogAttempted: shouldScanRootCatalog,
+        rootFeedPageCount: shopifyRootFeedPageCount,
+      },
+      candidates: fallback.candidates,
+      pageReports: fallback.pageReports,
+      saleEvents: fallback.saleEvents,
     };
   }
 
   return {
+    adapterStats: {
+      adapter: "shopify-products-json",
+      candidateCount: byUrl.size,
+      collectionCandidateCount: collectionLaneSelection.candidateCount,
+      collectionConfiguredExcluded: collectionLaneSelection.configuredExcluded,
+      collectionCount: collectionLaneSelection.selected.length,
+      collectionExcludedCount: collectionLaneSelection.excludedCount,
+      collectionEligibleCount: collectionLaneSelection.eligibleCount,
+      collectionFeedPageCount: shopifyCollectionFeedPageCount,
+      collectionLaneLimit: shopifyCollectionLanes,
+      collectionLaneStopReason: collectionLaneSelection.stopReason,
+      collectionOmittedCount: collectionLaneSelection.omittedCount,
+      collectionOmittedLanes: collectionLaneSelection.omitted,
+      collectionSelectedCount: collectionLaneSelection.selected.length,
+      feedErrorCount: shopifyFeedErrorCount,
+      feedPageCount: shopifyFeedPageCount,
+      productCount: shopifyProductCount,
+      recordProductCount: shopifyRecordProductCount,
+      rejectedOrUnavailableProductCount: Math.max(0, shopifyProductCount - shopifyRecordProductCount),
+      rootCatalogAttempted: shouldScanRootCatalog,
+      rootFeedPageCount: shopifyRootFeedPageCount,
+    },
     candidates: [...byUrl.values()],
     pageReports: pageScan.pageReports,
     saleEvents: dedupeSaleEvents(pageScan.pages.flatMap((page) => detectSaleEvents(source, page.html, page.url))),
@@ -319,27 +1633,66 @@ async function fetchSourcePages(source, options = {}) {
   const attempted = new Set();
   const resolved = new Set();
 
-  for (const url of sourceEntryUrls(source.url)) {
-    await addPage(url, url === source.url ? "configured" : "homepage");
+  for (const target of sourceEntryTargetsWithPriorRechecks(source, { maxHintUrls: salePathHintLimit(source) })) {
+    await addPage(target.url, target.purpose, target.role ?? sourceEntryRole(source, target));
+  }
+
+  const hasUsableConfiguredCatalog = pages.some(
+    (page) =>
+      page.scanRootPurpose === "configured" &&
+      !isSuspiciousHomepageRedirect(page.requestedUrl, page.url),
+  );
+  if (!hasUsableConfiguredCatalog && maxDiscoveredCatalogPages > 0) {
+    const homepage = pages.find((page) => page.scanRootPurpose === "homepage");
+    const recoveryUrls = homepage
+      ? discoverRetailCatalogLinks(homepage.html, homepage.url, maxDiscoveredCatalogPages)
+      : [];
+    for (const url of recoveryUrls) {
+      await addPage(url, "discovered-catalog-link", "catalog");
+    }
   }
 
   const discoveredUrls = [];
   for (const page of pages) {
-    discoveredUrls.push(...discoverSaleLinks(page.html, page.url, maxDiscoveredSalePages));
+    discoveredUrls.push(...discoverSaleLinks(page.html, page.url, maxDiscoveredSalePages, source));
   }
 
   for (const url of [...new Set(discoveredUrls)].slice(0, maxDiscoveredSalePages)) {
-    await addPage(url, "discovered-sale-link");
+    await addPage(url, "discovered-sale-link", "sale");
+  }
+
+  if (options.followPagination !== false && genericMaxPages > 1) {
+    let paginationPageCount = 0;
+    for (let pageIndex = 0; pageIndex < pages.length && paginationPageCount < genericMaxPages - 1; pageIndex += 1) {
+      const page = pages[pageIndex];
+      const paginationUrls = discoverRetailPaginationLinks(
+        page.html,
+        page.url,
+        genericMaxPages - 1 - paginationPageCount,
+      );
+      for (const url of paginationUrls) {
+        const added = await addPage(
+          url,
+          "pagination",
+          page.scanRole ?? "catalog",
+          page.scanRootPurpose ?? page.scanPurpose,
+        );
+        if (added) paginationPageCount += 1;
+        if (paginationPageCount >= genericMaxPages - 1) break;
+      }
+    }
   }
 
   if (pages.length === 0 && !options.allowEmpty) {
-    throw new Error(sourceFailureMessage(source, pageReports));
+    const error = new Error(sourceFailureMessage(source, pageReports));
+    error.pageReports = pageReports;
+    throw error;
   }
 
   return { pageReports, pages };
 
-  async function addPage(url, purpose) {
-    if (attempted.has(url) || resolved.has(url)) return;
+  async function addPage(url, purpose, role, rootPurpose = purpose) {
+    if (attempted.has(url) || resolved.has(url)) return false;
     attempted.add(url);
 
     try {
@@ -348,11 +1701,19 @@ async function fetchSourcePages(source, options = {}) {
         purpose,
         requestedUrl: url,
         resolvedUrl: page.url,
+        role,
         status: "available",
       });
       if (!resolved.has(page.url)) {
         resolved.add(page.url);
-        pages.push(page);
+        pages.push({
+          ...page,
+          requestedUrl: url,
+          scanPurpose: purpose,
+          scanRole: role,
+          scanRootPurpose: rootPurpose,
+        });
+        return true;
       }
     } catch (error) {
       pageReports.push({
@@ -360,10 +1721,232 @@ async function fetchSourcePages(source, options = {}) {
         failureKind: error?.failureKind ?? "network_error",
         purpose,
         requestedUrl: url,
+        role,
         status: "error",
       });
     }
+    return false;
   }
+}
+
+function collectionContextPriority(value) {
+  if (!value) return 0;
+  if (/\b(?:sale|clearance|outlet|deal|discount|last-chance|warehouse|closeout|deep-cuts|50-off)\b/i.test(value)) return 2;
+  return 1;
+}
+
+function shopifyPageUrl(value, pageNumber) {
+  const url = new URL(value);
+  url.searchParams.set("page", String(pageNumber));
+  return url.toString();
+}
+
+function salePathHintLimit(source) {
+  if (source.saleLikelihood === "high" || source.priority === 1) return 4;
+  if (source.saleLikelihood === "medium" || source.priority === 2) return 2;
+  return 1;
+}
+
+function sourceEntryRole(source, target) {
+  if (source.sourceType === "deal-aggregator" || source.sourceType === "social-feed") return "sale";
+  if (target.purpose === "configured-sale-hint") return "sale";
+  if (target.purpose === "homepage") return "catalog";
+  const value = target.url;
+  if (isSaleSpecificUrl(value, source)) return "sale";
+  try {
+    const parsed = new URL(value);
+    if (
+      (source.salePathHints ?? []).some((hint) => {
+        try {
+          return parsed.pathname.startsWith(new URL(hint, parsed.origin).pathname);
+        } catch {
+          return false;
+        }
+      })
+    ) {
+      return "sale";
+    }
+    if (
+      (source.saleUrlPatterns ?? []).some((pattern) => {
+        try {
+          return new RegExp(pattern, "i").test(value);
+        } catch {
+          return value.toLowerCase().includes(String(pattern).toLowerCase());
+        }
+      })
+    ) {
+      return "sale";
+    }
+  } catch {
+    // Treat malformed configured URLs as catalog attempts so the failure is visible.
+  }
+  return "catalog";
+}
+
+function pageCoverage(pageReports, source) {
+  const catalog = pageReports.filter((report) => (report.role ?? inferredPageRole(report.purpose)) === "catalog");
+  const sale = pageReports.filter((report) => (report.role ?? inferredPageRole(report.purpose)) === "sale");
+  return {
+    catalogHealth: coverageHealth(catalog, "not_attempted"),
+    catalogPageAttemptCount: catalog.length,
+    catalogPageAvailableCount: catalog.filter((report) => report.status === "available").length,
+    configuredSalePathCount: (source.salePathHints ?? []).length,
+    salePageAttemptCount: sale.length,
+    salePageAvailableCount: sale.filter((report) => report.status === "available").length,
+    salePageHealth: coverageHealth(sale, "not_checked"),
+  };
+}
+
+function coverageHealth(reports, emptyStatus) {
+  if (reports.length === 0) return emptyStatus;
+  const available = reports.filter((report) => report.status === "available").length;
+  if (available === reports.length) return "healthy";
+  if (available > 0) return "partial";
+  return "failed";
+}
+
+function annotateSourceYield(reports, enrichedCandidates, selectedProductFinds, diagnostics = {}) {
+  const enrichedBySource = groupBySourceId(enrichedCandidates);
+  const selectedBySource = groupBySourceId(selectedProductFinds);
+  const researchDiagnosticsBySource = selectionDiagnosticsBySource(
+    diagnostics.researchSelectionDiagnostics,
+  );
+  const visibleDiagnosticsBySource = selectionDiagnosticsBySource(
+    diagnostics.visibleSelectionDiagnostics,
+  );
+
+  return reports.map((report) => {
+    const enriched = enrichedBySource.get(report.id) ?? [];
+    const selected = selectedBySource.get(report.id) ?? [];
+    const highSignalCandidateCount = enriched.filter(isHighSignalProductFind).length;
+    const ownHistoryMatchedCandidateCount = enriched.filter(
+      (candidate) => Number(candidate.artistSoldUnits365Days) > 0,
+    ).length;
+    const productParseHealth = sourceProductParseHealth(report);
+    const selectedProductFindCount = selected.length;
+    const researchPoolSelection = sourceSelectionDiagnostic(
+      researchDiagnosticsBySource.get(report.id),
+      highSignalCandidateCount > 0 ? "not_selected" : "not_eligible",
+    );
+    const visibleProductSelection = sourceSelectionDiagnostic(
+      visibleDiagnosticsBySource.get(report.id),
+      researchPoolSelection.selectedCandidateCount > 0
+        ? "not_selected"
+        : highSignalCandidateCount > 0
+          ? "not_in_research_pool"
+          : "not_eligible",
+    );
+    const activeSelection = diagnostics.visibleSelectionDiagnostics
+      ? visibleProductSelection
+      : researchPoolSelection;
+    const usableCoverage =
+      selectedProductFindCount > 0
+        ? "selected"
+        : highSignalCandidateCount > 0
+          ? "high_signal"
+          : Number(report.candidateCount) > 0
+            ? "raw_candidates"
+            : productParseHealth === "empty"
+              ? "parser_empty"
+              : productParseHealth === "failed"
+                ? "unavailable"
+                : "not_attempted";
+
+    return {
+      ...report,
+      highSignalCandidateCount,
+      ownHistoryMatchedCandidateCount,
+      productParseHealth,
+      researchPoolSelectedProductFindCount: researchPoolSelection.selectedCandidateCount,
+      researchPoolSelection,
+      selectionExclusionReason:
+        activeSelection.primaryExclusionReason ??
+        (activeSelection.selectionStatus === "selected" ? null : activeSelection.selectionStatus),
+      selectionStatus: activeSelection.selectionStatus,
+      selectedProductFindCount,
+      usableCoverage,
+      visibleProductSelection,
+    };
+  });
+}
+
+function selectionDiagnosticsBySource(diagnostics) {
+  return new Map(
+    (diagnostics?.sources ?? []).map((source) => [source.sourceId, source]),
+  );
+}
+
+function sourceSelectionDiagnostic(diagnostic, fallbackStatus) {
+  if (diagnostic) return diagnostic;
+  return {
+    bestCandidateRank: null,
+    bestCandidateScore: null,
+    bestSelectedRank: null,
+    eligibleCandidateCount: 0,
+    excludedByReason: {},
+    excludedCandidateCount: 0,
+    inputCandidateCount: 0,
+    primaryExclusionReason: null,
+    selectedByPhase: {},
+    selectedCandidateCount: 0,
+    selectedShare: 0,
+    selectionStatus: fallbackStatus,
+  };
+}
+
+function groupBySourceId(items) {
+  const grouped = new Map();
+  for (const item of items) {
+    if (!item?.sourceId) continue;
+    const sourceItems = grouped.get(item.sourceId);
+    if (sourceItems) sourceItems.push(item);
+    else grouped.set(item.sourceId, [item]);
+  }
+  return grouped;
+}
+
+function sourceProductParseHealth(report) {
+  if (Number(report.candidateCount) > 0) return "productive";
+  const attemptedPages =
+    Number(report.catalogPageAttemptCount ?? 0) + Number(report.salePageAttemptCount ?? 0);
+  const availablePages =
+    Number(report.catalogPageAvailableCount ?? 0) + Number(report.salePageAvailableCount ?? 0);
+  if (attemptedPages === 0) return "not_attempted";
+  if (availablePages > 0) return "empty";
+  return "failed";
+}
+
+function inferredPageRole(purpose) {
+  return /\b(?:deal|sale|sitewide)\b/i.test(String(purpose ?? "")) ? "sale" : "catalog";
+}
+
+function sourceReportStatus(coverage, candidates, saleEvents) {
+  const attemptedHealth = [coverage.catalogHealth, coverage.salePageHealth].filter(
+    (health) => health !== "not_attempted" && health !== "not_checked",
+  );
+  if (attemptedHealth.length && attemptedHealth.every((health) => health === "failed")) return "error";
+  if (attemptedHealth.some((health) => health === "failed" || health === "partial")) return "partial";
+  if (candidates.length) return "candidates";
+  if (saleEvents.length) return "sale_signals";
+  return "empty";
+}
+
+function sourceMetadataForReport(source) {
+  return {
+    country: source.country ?? null,
+    crawlType: source.crawlType ?? source.sourceType,
+    defaultDiscountThreshold: source.defaultDiscountThreshold ?? null,
+    domain: source.domain ?? null,
+    group: source.group ?? null,
+    minNetProfit: source.minNetProfit ?? null,
+    minROI: source.minROI ?? null,
+    noiseLevel: source.noiseLevel ?? null,
+    notes: source.notes ?? null,
+    priority: source.priority ?? null,
+    retailSourceType: source.retailSourceType ?? null,
+    saleLikelihood: source.saleLikelihood ?? null,
+    saleUrlPatternCount: (source.saleUrlPatterns ?? []).length,
+  };
 }
 
 function sourceFailureMessage(source, pageReports) {
@@ -377,7 +1960,20 @@ function sourceFailureMessage(source, pageReports) {
 function dedupeCandidates(candidates) {
   const byId = new Map();
   for (const candidate of candidates) {
-    if (!byId.has(candidate.id)) byId.set(candidate.id, candidate);
+    const current = byId.get(candidate.id);
+    if (
+      !current ||
+      candidateQualityScore(candidate) > candidateQualityScore(current) ||
+      (candidateQualityScore(candidate) === candidateQualityScore(current) && candidate.purchasePrice < current.purchasePrice)
+    ) {
+      byId.set(candidate.id, {
+        ...current,
+        ...candidate,
+        barcode: candidate.barcode ?? current?.barcode ?? null,
+        discoveryUrl: candidate.discoveryUrl ?? current?.discoveryUrl ?? null,
+        sku: candidate.sku ?? current?.sku ?? null,
+      });
+    }
   }
   return [...byId.values()];
 }
@@ -387,7 +1983,60 @@ function preferredSourceUrl(currentUrl, pageReports) {
     (report) => report.purpose === "configured" && report.status === "error" && report.failureKind === "not_found",
   );
   if (!configuredWasStale) return currentUrl;
+  const recoveredCatalog = pageReports
+    .filter(
+      (report) =>
+        report.purpose === "discovered-catalog-link" &&
+        report.status === "available" &&
+        report.resolvedUrl,
+    )
+    .map((report) => report.resolvedUrl)
+    .sort(
+      (left, right) =>
+        preferredRecoveryScore(right, currentUrl) - preferredRecoveryScore(left, currentUrl) ||
+        left.localeCompare(right),
+    )[0];
+  if (recoveredCatalog) return recoveredCatalog;
   return pageReports.find((report) => report.purpose === "homepage" && report.status === "available")?.resolvedUrl ?? currentUrl;
+}
+
+function compatiblePreferredSourceUrl(configuredUrl, preferredUrl) {
+  if (!preferredUrl) return false;
+  let configured;
+  let preferred;
+  try {
+    configured = new URL(configuredUrl);
+    preferred = new URL(preferredUrl);
+  } catch {
+    return false;
+  }
+  if (configured.origin !== preferred.origin) return false;
+  if (isSaleSpecificUrl(configuredUrl) && !isSaleSpecificUrl(preferredUrl)) return false;
+
+  const preferredCollection = preferred.pathname.match(/\/collections\/([^/?#]+)/i)?.[1] ?? null;
+  if (preferredCollection) {
+    const selection = selectShopifyCollectionLanes([preferredUrl], configuredUrl, 2);
+    const preferredCanonical = `${preferred.origin}/collections/${preferredCollection}`.toLowerCase();
+    if (!selection.selected.some((lane) => lane.url.toLowerCase() === preferredCanonical)) return false;
+  }
+  return true;
+}
+
+function preferredRecoveryScore(value, currentUrl) {
+  let pathText = "";
+  try {
+    pathText = decodeURIComponent(new URL(value).pathname).replace(/[-_/]+/g, " ");
+  } catch {
+    return 0;
+  }
+  return (
+    (isSaleSpecificUrl(currentUrl) && isSaleSpecificUrl(value) ? 1_000 : 0) +
+    (isSaleSpecificUrl(value) ? 500 : 0) +
+    (/\bvinyl\s*records?\b/i.test(pathText) ? 180 : 0) +
+    (/\bvinyl\b/i.test(pathText) ? 120 : 0) +
+    (/\blps?\b/i.test(pathText) ? 100 : 0) +
+    (/\brecords?\b/i.test(pathText) ? 80 : 0)
+  );
 }
 
 async function scanReddit(source) {
@@ -401,14 +2050,20 @@ async function scanReddit(source) {
 
   try {
     const page = await fetchPage(feedUrl);
-    pageReports.push(availablePageReport("feed", feedUrl, page.url));
+    pageReports.push(availablePageReport("feed", feedUrl, page.url, "sale"));
     deals = parseRedditAtomFeed(page.html);
   } catch (error) {
-    pageReports.push(failedPageReport("feed", feedUrl, error));
+    pageReports.push(failedPageReport("feed", feedUrl, error, "sale"));
     adapter = "reddit-old-html";
-    const page = await fetchPage(fallbackUrl);
-    pageReports.push(availablePageReport("fallback", fallbackUrl, page.url));
-    deals = parseOldRedditDealPage(page.html, page.url);
+    try {
+      const page = await fetchPage(fallbackUrl);
+      pageReports.push(availablePageReport("fallback", fallbackUrl, page.url, "sale"));
+      deals = parseOldRedditDealPage(page.html, page.url);
+    } catch (fallbackError) {
+      pageReports.push(failedPageReport("fallback", fallbackUrl, fallbackError, "sale"));
+      fallbackError.pageReports = pageReports;
+      throw fallbackError;
+    }
   }
 
   const activeDeals = deals.filter((deal) => !deal.expired);
@@ -436,8 +2091,15 @@ async function scanVinylPriceDrop(source) {
   const dealsUrl = `${origin}/deals`;
   const sitewideUrl = `${origin}/deals/type/sitewide`;
   const pageReports = [];
-  const dealsPage = await fetchPage(dealsUrl);
-  pageReports.push(availablePageReport("deal-index", dealsUrl, dealsPage.url));
+  let dealsPage;
+  try {
+    dealsPage = await fetchPage(dealsUrl);
+    pageReports.push(availablePageReport("deal-index", dealsUrl, dealsPage.url));
+  } catch (error) {
+    pageReports.push(failedPageReport("deal-index", dealsUrl, error));
+    error.pageReports = pageReports;
+    throw error;
+  }
 
   let sitewidePage = null;
   try {
@@ -515,13 +2177,27 @@ function discoveryDealToCandidate(source, deal) {
   if (!sourceUrl) return null;
   const parsedTitle = splitDealArtistTitle(deal.title);
   if (!parsedTitle.title || parsedTitle.title.length < 3) return null;
+  const assessment = assessRecordCandidate({
+    context: parsedTitle.artist,
+    source,
+    title: deal.title,
+    url: sourceUrl,
+  });
+  if (!assessment.accepted) return null;
+  const amazonAsin = extractAmazonAsin(sourceUrl);
+  const purchaseRetailer = inferPurchaseRetailer(deal.directUrl);
 
   return {
+    amazonAsin,
     artist: parsedTitle.artist,
+    candidateQualityReasons: assessment.reasons,
+    candidateQualityScore: assessment.score,
     condition: "new/sealed",
     discoveryUrl: deal.discussionUrl ?? null,
     id: stableId(source.id, sourceUrl, deal.title),
+    ...purchaseRetailer,
     purchasePrice,
+    purchaseOfferVerification: "discovery_lead",
     sourceDiscountPercent: deal.sourceDiscountPercent ?? null,
     sourceId: source.id,
     sourceListingTitle: cleanText(deal.title),
@@ -536,13 +2212,15 @@ function discoveryDealToCandidate(source, deal) {
 function vinylPriceDropSaleEvent(source, detail) {
   const rawSignal = cleanText(detail.title);
   const discountPercent = detail.discountPercent ?? extractMaxDiscountPercent(rawSignal);
+  const discountQualifier = discountQualifierFor(rawSignal, discountPercent);
   const scope = /\ball\s+(?:vinyl|records|lps|music)\b/i.test(rawSignal) ? "vinyl-wide" : "sitewide";
   const url = detail.directUrl ?? detail.detailUrl ?? source.url;
-  const signal = saleSignalSummary(source, rawSignal, discountPercent, scope);
+  const signal = saleSignalSummary(source, rawSignal, discountPercent, scope, discountQualifier);
   const fingerprint = saleFingerprint(source, rawSignal, url, discountPercent, scope);
   return {
     capturedAt,
     discountPercent,
+    discountQualifier,
     evidence: rawSignal.slice(0, 320),
     fingerprint,
     id: stableId("sale", source.id, fingerprint),
@@ -551,21 +2229,22 @@ function vinylPriceDropSaleEvent(source, detail) {
     sourceId: source.id,
     sourceName: source.name,
     sourceUrl: url,
-    title: `${discountPercent ? `${discountPercent}%+ sale` : "Broad sale"}: ${source.name}`,
+    title: `${discountPercent ? `${discountLabel(discountPercent, discountQualifier)} sale` : "Broad sale"}: ${source.name}`,
     verification: "discovery-lead",
   };
 }
 
-function availablePageReport(purpose, requestedUrl, resolvedUrl) {
-  return { purpose, requestedUrl, resolvedUrl, status: "available" };
+function availablePageReport(purpose, requestedUrl, resolvedUrl, role = inferredPageRole(purpose)) {
+  return { purpose, requestedUrl, resolvedUrl, role, status: "available" };
 }
 
-function failedPageReport(purpose, requestedUrl, error) {
+function failedPageReport(purpose, requestedUrl, error, role = inferredPageRole(purpose)) {
   return {
     error: error instanceof Error ? error.message : String(error),
     failureKind: error?.failureKind ?? "network_error",
     purpose,
     requestedUrl,
+    role,
     status: "error",
   };
 }
@@ -597,10 +2276,12 @@ function dedupeByKey(values, keyFor) {
 }
 
 async function scanCraigslist(source) {
-  const html = await fetchText(source.url.replace("#search=2~gallery~0", ""));
+  const requestedUrl = source.url.replace("#search=2~gallery~0", "");
+  const page = await fetchPage(requestedUrl);
   return {
-    candidates: extractCandidatesFromHtml(source, html),
-    saleEvents: detectSaleEvents(source, html),
+    candidates: extractCandidatesFromHtml(source, page.html, page.url),
+    pageReports: [availablePageReport("configured", requestedUrl, page.url, "catalog")],
+    saleEvents: detectSaleEvents(source, page.html, page.url),
   };
 }
 
@@ -610,13 +2291,30 @@ function extractCandidatesFromHtml(source, html, pageUrl = source.url) {
   const seen = new Set();
 
   for (const match of anchors) {
-    const href = absolutize(pageUrl, match[1]);
+    const href = absolutize(pageUrl, decodeHtmlEntities(match[1]));
+    if (!/^https?:\/\//i.test(href)) continue;
     const text = cleanText(stripTags(match[2]));
-    const nearby = html.slice(Math.max(0, match.index - 800), Math.min(html.length, match.index + 1800));
-    if (!isVinylProductCandidate(source, text, href, stripTags(nearby))) continue;
+    const nearby = html.slice(Math.max(0, match.index - 300), Math.min(html.length, match.index + 900));
+    const assessment = assessRecordCandidate({
+      context: stripTags(nearby),
+      source,
+      title: text,
+      url: href,
+    });
+    if (!assessment.accepted) continue;
 
-    const price = parsePrice(`${text} ${stripTags(nearby)}`);
+    const afterAnchor = stripTags(
+      html.slice(match.index + match[0].length, Math.min(html.length, match.index + match[0].length + 450)),
+    );
+    const beforeAnchor = stripTags(html.slice(Math.max(0, match.index - 250), match.index));
+    const primaryPrices = parseRetailProductPrices(cleanText(`${text} ${afterAnchor}`)).filter((price) => price >= 2 && price <= 250);
+    const prices =
+      primaryPrices.length > 0
+        ? primaryPrices
+        : parseRetailProductPrices(cleanText(`${beforeAnchor} ${text}`)).filter((price) => price >= 2 && price <= 250);
+    const price = prices.length ? Math.min(...prices) : null;
     if (!price || price < 2 || price > 250) continue;
+    const originalPrice = prices.length > 1 ? Math.max(...prices) : null;
 
     const title = inferTitle(text);
     if (!title || title.length < 3) continue;
@@ -626,11 +2324,17 @@ function extractCandidatesFromHtml(source, html, pageUrl = source.url) {
 
     candidates.push({
       artist: inferArtist(text),
+      candidateQualityReasons: assessment.reasons,
+      candidateQualityScore: assessment.score,
       condition: "new/sealed",
+      discoveryUrl: pageUrl !== href ? pageUrl : null,
       id: stableId(source.id, href, title),
       purchasePrice: price,
+      sourceDiscountPercent:
+        originalPrice && originalPrice > price ? Math.round(((originalPrice - price) / originalPrice) * 100) : null,
       sourceId: source.id,
       sourceName: source.name,
+      sourceOriginalPrice: originalPrice && originalPrice > price ? originalPrice : null,
       sourceListingTitle: text,
       sourceUrl: href,
       title,
@@ -658,15 +2362,31 @@ function extractJsonLdCandidates(source, html, pageUrl = source.url) {
       const items = Array.isArray(parsed) ? parsed : [parsed];
       for (const item of flattenJsonLd(items)) {
         const name = item.name ?? item.title;
-        const offer = Array.isArray(item.offers) ? item.offers[0] : item.offers;
+        const offers = item.offers ? (Array.isArray(item.offers) ? item.offers : [item.offers]) : [];
+        const offer = offers.find((candidate) => !/outofstock|soldout|discontinued/i.test(String(candidate?.availability ?? ""))) ?? null;
+        if (offers.length > 0 && !offer) continue;
         const price = parsePrice(offer?.price ?? offer?.lowPrice ?? item.price);
         const sourceUrl = absolutize(pageUrl, item.url ?? offer?.url ?? pageUrl);
-        if (!name || !price || !isVinylProductCandidate(source, name, item.category, sourceUrl, offer?.description)) continue;
+        if (!/^https?:\/\//i.test(sourceUrl)) continue;
+        const assessment = assessRecordCandidate({
+          context: offer?.description ?? item.description ?? "",
+          productType: item.category ?? "",
+          source,
+          title: name,
+          url: sourceUrl,
+        });
+        if (!name || !price || !assessment.accepted) continue;
         candidates.push({
           artist: inferArtist(name),
+          barcode: item.gtin13 ?? item.gtin12 ?? item.gtin ?? null,
+          candidateQualityReasons: assessment.reasons,
+          candidateQualityScore: assessment.score,
           condition: "new/sealed",
+          discoveryUrl: pageUrl !== sourceUrl ? pageUrl : null,
           id: stableId(source.id, sourceUrl, name),
           purchasePrice: price,
+          sku: item.sku ?? offer?.sku ?? null,
+          sourceCurrency: offer?.priceCurrency ?? item.priceCurrency ?? null,
           sourceId: source.id,
           sourceName: source.name,
           sourceListingTitle: cleanText(name),
@@ -708,7 +2428,47 @@ function detectSaleEvents(source, html, pageUrl = source.url) {
     if (snippets.length >= 8) break;
   }
 
-  return dedupeSaleEvents(snippets.flatMap((snippet) => detectSaleEventsFromText(source, snippet, pageUrl)));
+  const events = snippets.flatMap((snippet) =>
+    detectSaleEventsFromText(source, snippet, pageUrl),
+  );
+  const pathOffer = sourceIsVinylFocused(source)
+    ? verifiedSalePathOffer(pageUrl)
+    : null;
+  if (pathOffer) {
+    const discountQualifier = discountQualifierFor(pathOffer.evidence, pathOffer.discountPercent);
+    const fingerprint = saleFingerprint(
+      source,
+      pathOffer.evidence,
+      pageUrl,
+      pathOffer.discountPercent,
+      pathOffer.scope,
+    );
+    events.push({
+      capturedAt,
+      discountPercent: pathOffer.discountPercent,
+      discountQualifier,
+      evidence: pathOffer.evidence,
+      fingerprint,
+      id: stableId("sale", source.id, fingerprint),
+      promoCode: null,
+      purchaseOfferVerification: pathOffer.purchaseOfferVerification,
+      scope: pathOffer.scope,
+      signal: saleSignalSummary(
+        source,
+        pathOffer.evidence,
+        pathOffer.discountPercent,
+        pathOffer.scope,
+        discountQualifier,
+      ),
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceUrl: pageUrl,
+      title: `${discountLabel(pathOffer.discountPercent, discountQualifier)} sale: ${source.name}`,
+      verification: pathOffer.saleVerification,
+    });
+  }
+
+  return dedupeSaleEvents(events);
 }
 
 function detectDiscoverySaleEvents(source, html, pageUrl) {
@@ -727,18 +2487,21 @@ function detectSaleEventsFromText(source, text, url = source.url) {
   if (!rawSignal || !isLargeSaleSignal(rawSignal, source, url)) return [];
 
   const discountPercent = extractMaxDiscountPercent(rawSignal);
+  const discountQualifier = discountQualifierFor(rawSignal, discountPercent);
   const scope = saleScope(rawSignal, source);
-  const titlePrefix = discountPercent ? `${discountPercent}%+ sale` : hasBogoSignal(rawSignal) ? "BOGO sale" : "Broad sale";
-  const signal = saleSignalSummary(source, rawSignal, discountPercent, scope);
+  const titlePrefix = discountPercent ? `${discountLabel(discountPercent, discountQualifier)} sale` : hasBogoSignal(rawSignal) ? "BOGO sale" : "Broad sale";
+  const signal = saleSignalSummary(source, rawSignal, discountPercent, scope, discountQualifier);
   const fingerprint = saleFingerprint(source, rawSignal, url, discountPercent, scope);
 
   return [
     {
       capturedAt,
       discountPercent,
+      discountQualifier,
       evidence: rawSignal.slice(0, 320),
       fingerprint,
       id: stableId("sale", source.id, fingerprint),
+      promoCode: extractPromoCode(rawSignal),
       scope,
       signal,
       sourceId: source.id,
@@ -751,31 +2514,61 @@ function detectSaleEventsFromText(source, text, url = source.url) {
 }
 
 function dedupeSaleEvents(events) {
-  const bySource = new Map();
-  for (const event of events) {
-    const current = bySource.get(event.sourceId);
-    if (!current || saleEventPriority(event) > saleEventPriority(current)) {
-      bySource.set(event.sourceId, event);
-    }
-  }
-  return [...bySource.values()];
+  return dedupeSaleCampaigns(events, saleEventPriority, saleEventDedupeKey);
 }
 
 function saleEventPriority(event) {
-  const scopeScore = event.scope === "sitewide" ? 5 : event.scope === "vinyl-wide" ? 4 : event.scope === "clearance" ? 3 : 2;
-  const discountScore = event.discountPercent ?? (hasBogoSignal(event.signal) ? 45 : 0);
-  return discountScore * 10 + scopeScore;
+  const scope = event.scope ?? event.saleScope;
+  const scopeScore = scope === "sitewide" ? 5 : scope === "vinyl-wide" ? 4 : scope === "clearance" ? 3 : 2;
+  const discountScore = event.discountPercent ?? event.saleDiscountPercent ?? (hasBogoSignal(event.signal ?? event.saleSignal) ? 45 : 0);
+  const verificationScore = (event.verification ?? event.saleVerification) === "retailer-page" ? 100_000 : 0;
+  const salePageScore = /\b(?:sale|clearance|deal|garage|overstock|promo)\b/i.test(String(event.sourceUrl ?? "")) ? 1_000 : 0;
+  return verificationScore + salePageScore + discountScore * 10 + scopeScore;
+}
+
+function saleEventDedupeKey(event) {
+  const rawDiscount = event.discountPercent ?? event.saleDiscountPercent;
+  const discount = typeof rawDiscount === "number" && Number.isFinite(rawDiscount) && rawDiscount > 0
+    ? Math.round(rawDiscount * 100) / 100
+    : "none";
+  const qualifier = event.discountQualifier ?? event.saleDiscountQualifier ?? discountQualifierFor(
+    `${event.evidence ?? event.saleEvidence ?? ""} ${event.signal ?? event.saleSignal ?? ""}`,
+    discount === "none" ? null : discount,
+  );
+  return `${saleCampaignIdFor(saleEventToFind(event))}|discount:${discount}|qualifier:${qualifier}`;
 }
 
 function isLargeSaleSignal(text, source, evidenceUrl = source.url) {
   if (/\bexpired\b/i.test(text)) return false;
+  if (
+    (source.sourceType === "deal-aggregator" || source.sourceType === "social-feed") &&
+    /^(?:filter\s+amazon(?:\s+vinyl\s+records?)?\s+by\s+price|(?:vinyl\s+)?records?\s+under\s+\$?\d+|vinyl\s+under\s+\$?\d+)$/i.test(
+      cleanText(text),
+    )
+  ) {
+    return false;
+  }
   if (!hasVinylContext(text) && hasNonVinylSaleContext(text)) return false;
   if (!hasVinylContext(text) && !sourceIsVinylFocused({ ...source, url: evidenceUrl })) return false;
+  if (
+    hasVinylContext(text) &&
+    hasNonVinylSaleContext(text) &&
+    !hasCoherentSaleClaim(text)
+  ) {
+    return false;
+  }
   const percent = extractMaxDiscountPercent(text);
   const largeDiscount = percent !== null && percent >= 30;
   const bogo = hasBogoSignal(text);
   const sourceIsKnownSalePage = isBroadSaleSource(source.id, source.name, evidenceUrl);
-  const broad = hasBroadSaleScope(text) || sourceIsKnownSalePage;
+  const claimedScope = saleScope(text, source);
+  if (
+    (claimedScope === "sitewide" || claimedScope === "vinyl-wide") &&
+    !hasCoherentSaleClaim(text, claimedScope)
+  ) {
+    return false;
+  }
+  const broad = hasBroadSaleScope(text) || sourceIsKnownSalePage || bogo;
   const priceThreshold = hasPriceThresholdSignal(text) && hasVinylContext(text);
   const coupon = hasCouponSignal(text) && (hasVinylContext(text) || sourceIsKnownSalePage);
   const salePageSignal = sourceIsKnownSalePage && hasSalePageSignal(text);
@@ -783,7 +2576,7 @@ function isLargeSaleSignal(text, source, evidenceUrl = source.url) {
 }
 
 function hasBogoSignal(text) {
-  return /\b(?:bogo|buy\s+one\s+get\s+one|buy\s+1\s+get\s+1|2\s+for\s+1|two\s+for\s+one)\b/i.test(text);
+  return hasBogoOfferSignal(text);
 }
 
 function hasBroadSaleScope(text) {
@@ -806,7 +2599,10 @@ function hasPriceThresholdSignal(text) {
 }
 
 function hasVolumeDiscountSignal(text) {
-  return /\b(?:buy\s+more\s+save\s+more|buy\s+(?:one|1|2)\s+get\s+(?:one|1)|bogo|2\s+for\s+1|two\s+for\s+one|spend\s+\$?\d+\s+(?:get|save))\b/i.test(text);
+  return (
+    hasBogoSignal(text) ||
+    /\b(?:buy\s+more\s+save\s+more|buy\s+2\s+get\s+(?:one|1)|spend\s+\$?\d+\s+(?:get|save))\b/i.test(text)
+  );
 }
 
 function hasSalePageSignal(text) {
@@ -823,13 +2619,25 @@ function hasNonVinylSaleContext(text) {
   );
 }
 
-function saleSignalSummary(source, rawSignal, discountPercent, scope) {
+function saleSignalSummary(source, rawSignal, discountPercent, scope, discountQualifier = discountQualifierFor(rawSignal, discountPercent)) {
   const scopeLabel = scope === "unknown" ? "broad" : scope.replace(/-/g, " ");
   const verb = source.sourceType === "deal-aggregator" || source.sourceType === "social-feed" ? "surfaced" : "has";
-  if (discountPercent) return `${source.name} ${verb} a ${scopeLabel} vinyl sale signal at ${discountPercent}%+ off.`;
+  if (discountPercent) return `${source.name} ${verb} a ${scopeLabel} vinyl sale signal at ${discountLabel(discountPercent, discountQualifier)}.`;
   if (hasBogoSignal(rawSignal)) return `${source.name} ${verb} a ${scopeLabel} vinyl BOGO or volume-discount sale signal.`;
   if (hasCouponSignal(rawSignal)) return `${source.name} ${verb} a ${scopeLabel} vinyl coupon or promo-code sale signal.`;
   return `${source.name} ${verb} a ${scopeLabel} vinyl sale signal.`;
+}
+
+function discountQualifierFor(text, discountPercent) {
+  if (discountPercent === null || discountPercent === undefined) return "none";
+  const escapedDiscount = String(discountPercent).replace(".", "\\.");
+  return new RegExp(`\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`, "i").test(String(text ?? ""))
+    ? "up_to"
+    : "exact";
+}
+
+function discountLabel(discountPercent, qualifier) {
+  return qualifier === "up_to" ? `up to ${discountPercent}% off` : `${discountPercent}% off`;
 }
 
 function extractMaxDiscountPercent(text) {
@@ -860,6 +2668,8 @@ function saleEventToFind(event) {
     opportunityType: "sitewide_sale",
     purchasePrice: 0,
     saleDiscountPercent: event.discountPercent,
+    saleDiscountQualifier: event.discountQualifier,
+    saleCode: event.promoCode ?? extractPromoCode(event.evidence ?? event.signal),
     saleEvidence: event.evidence,
     saleFingerprint: event.fingerprint,
     saleScope: event.scope,
@@ -884,24 +2694,17 @@ function saleFingerprint(source, rawSignal, url, discountPercent, scope) {
   } catch {
     path = String(url ?? "");
   }
-  return stableId("sale-fingerprint", source.id, path, scope, discountPercent ?? "none", offerType, promoCode);
-}
-
-function addSaleFreshness(find, previousBySource) {
-  const previous = previousBySource.get(find.sourceId);
-  const sameCampaign = previous && previous.saleFingerprint === find.saleFingerprint;
-  return {
-    ...find,
-    firstSeenAt: sameCampaign ? previous.firstSeenAt ?? previous.capturedAt : capturedAt,
-    saleScanCount: sameCampaign ? (previous.saleScanCount ?? 1) + 1 : 1,
-    saleStatus: !previous ? "new" : sameCampaign ? "ongoing" : "changed",
-  };
+  const contentSignature = cleanText(rawSignal)
+    .toLowerCase()
+    .replace(/\b(?:today|now|currently|limited\s+time)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .slice(0, 240);
+  return stableId("sale-fingerprint", source.id, path, scope, discountPercent ?? "none", offerType, promoCode, contentSignature);
 }
 
 function loadPreviousScanState(outputDir) {
-  const salesBySource = new Map();
   const preferredUrls = new Map();
-  if (!existsSync(outputDir)) return { preferredUrls, salesBySource };
+  if (!existsSync(outputDir)) return { preferredUrls, saleCampaignLedger: null };
 
   let latest = null;
   for (const fileName of readdirSync(outputDir)) {
@@ -916,20 +2719,6 @@ function loadPreviousScanState(outputDir) {
     }
   }
 
-  for (const find of latest?.payload?.saleEvents ?? []) {
-    if (!find?.sourceId) continue;
-    const fingerprint =
-      find.saleFingerprint ??
-      saleFingerprint(
-        { id: find.sourceId },
-        find.saleEvidence ?? find.saleSignal ?? "",
-        find.sourceUrl,
-        find.saleDiscountPercent ?? null,
-        find.saleScope ?? "unknown",
-      );
-    salesBySource.set(find.sourceId, { ...find, saleFingerprint: fingerprint });
-  }
-
   for (const report of latest?.payload?.sourceReports ?? []) {
     if (!report?.id) continue;
     if (report.preferredUrl) {
@@ -942,42 +2731,88 @@ function loadPreviousScanState(outputDir) {
     if (configuredWasStale && report.resolvedUrls?.[0]) preferredUrls.set(report.id, report.resolvedUrls[0]);
   }
 
-  return { preferredUrls, salesBySource };
+  return {
+    preferredUrls,
+    saleCampaignLedger: latest?.payload ? saleCampaignLedgerFromPayload(latest.payload) : null,
+  };
 }
 
 function enrichCandidate(candidate, index) {
+  const sourceMetadata = sourceMetadataById.get(candidate.sourceId);
+  const purchaseOfferVerification = purchaseOfferVerificationForSource(candidate, sourceMetadata);
+  const sourceCurrency =
+    normalizeCurrency(candidate.sourceCurrency) ?? defaultCurrencyForCountry(sourceMetadata?.country);
   const compMatch = index ? bestCompMatch(candidate, index.comps) : null;
+  const artistAggregate = index ? bestArtistAggregateMatch(candidate, index.artistAggregates) : null;
   const notes = [];
-  const averageSoldPrice = compMatch?.comp.averageSoldFor ?? null;
-  const averageSoldShipping = compMatch?.comp.averageShipping ?? null;
-  const totalSoldCount = compMatch?.comp.count ?? null;
+  const { metrics: conditionMetrics, soldEvidence } = buildLocalSoldEvidence(compMatch, index, {
+    candidate,
+    condition: "new_sealed",
+    referenceAt: capturedAt,
+  });
+  const averageSoldPrice = conditionMetrics?.averageSoldFor ?? null;
+  const averageSoldShipping = conditionMetrics?.averageShipping ?? null;
+  const totalSoldCount = conditionMetrics?.unitsSold ?? null;
   const conditionCounts = compMatch?.comp.conditionCounts;
 
   if (compMatch) {
     notes.push(
-      `Local sold-history match ${(compMatch.matchScore * 100).toFixed(0)}%: ${compMatch.comp.count} sold, avg total $${compMatch.comp.averageTotal.toFixed(2)}, median $${compMatch.comp.medianTotal.toFixed(2)}.`,
+      conditionMetrics
+        ? `Local new/sealed sold-history match ${(compMatch.matchScore * 100).toFixed(0)}%: ${conditionMetrics.unitsSold} units, avg total $${conditionMetrics.averageTotal.toFixed(2)}, 25th percentile $${conditionMetrics.priceP25.toFixed(2)}.`
+        : `Local sold-history title match ${(compMatch.matchScore * 100).toFixed(0)}%, but no condition-matched new/sealed transactions were found.`,
     );
     notes.push(
-      `Condition evidence: ${conditionCounts.new_sealed} new/sealed, ${conditionCounts.used} used, ${conditionCounts.unknown} unknown; latest sale ${compMatch.comp.latestSaleDate ?? "n/a"}.`,
+      `Condition evidence: ${conditionCounts?.new_sealed ?? 0} new/sealed, ${conditionCounts?.used ?? 0} used, ${conditionCounts?.unknown ?? 0} unknown; latest condition-matched sale ${conditionMetrics?.latestSaleDate ?? "n/a"}.`,
     );
+    notes.push("Local CSV history is this account's own sales and does not prove repeat sales by one marketplace seller.");
+    if (soldEvidence?.artistMatchConfirmed === false) {
+      notes.push(`Local sold-history artist evidence was downgraded: ${soldEvidence.artistMismatchReasons.join(", ")}.`);
+    }
+    if (soldEvidence?.editionMatchConfirmed === false) {
+      notes.push(`Local sold-history edition evidence was downgraded: ${soldEvidence.editionMismatchReasons.join(", ")}.`);
+    }
   } else {
     notes.push("No strong local sold-history match; eBay Product Research needed.");
   }
-
-  if (candidate.sourceOriginalPrice && candidate.sourceOriginalPrice > candidate.purchasePrice) {
+  if (artistAggregate) {
     notes.push(
-      `Discovery source listed a previous price of $${candidate.sourceOriginalPrice.toFixed(2)}${candidate.sourceDiscountPercent ? ` (${candidate.sourceDiscountPercent}% drop)` : ""}.`,
+      `Own-account artist history: ${artistAggregate.unitsSold365Days ?? 0} units in the last year across ${artistAggregate.distinctReleaseCount ?? "unknown"} releases. This is a weak evergreen prior, not proof that this pressing will sell.`,
+    );
+  }
+
+  if (candidate.appliedSaleDiscountPercent) {
+    notes.push(
+      `Applied a retailer-page campaign discount of ${candidate.appliedSaleDiscountPercent}% to the verified ${candidate.appliedSaleScope === "sitewide" || candidate.appliedSaleScope === "vinyl-wide" ? candidate.appliedSaleScope : "matching sale collection"}${candidate.appliedSaleCode ? ` with code ${candidate.appliedSaleCode}` : ""}; list price ${formatSourcePrice(candidate.listPrice, sourceCurrency)}.`,
+    );
+    if (candidate.appliedSaleEvidence) {
+      notes.push(`Sale evidence: ${candidate.appliedSaleEvidence}`);
+    }
+  } else if (candidate.sourceOriginalPrice && candidate.sourceOriginalPrice > candidate.purchasePrice) {
+    notes.push(
+      `Discovery source listed a previous price of ${formatSourcePrice(candidate.sourceOriginalPrice, sourceCurrency)}${candidate.sourceDiscountPercent ? ` (${candidate.sourceDiscountPercent}% drop)` : ""}.`,
     );
   }
   if (candidate.discoveryUrl && candidate.discoveryUrl !== candidate.sourceUrl) {
     notes.push(`Discovery evidence: ${candidate.discoveryUrl}`);
   }
   if (candidate.sourcePublishedAt) notes.push(`Discovery source published this deal at ${candidate.sourcePublishedAt}.`);
-  notes.push(`Source scan captured this at $${candidate.purchasePrice.toFixed(2)} before tax/shipping adjustments.`);
+  if (candidate.walmartAvailabilityVerificationSource === "product_page") {
+    notes.push("Walmart availability was rechecked on the product page after the search catalog reported stale or location-default stock.");
+  } else if (candidate.sourceId === "walmart") {
+    notes.push("Walmart availability came from the structured search catalog; confirm the signed-in delivery or pickup location before purchasing.");
+  }
+  notes.push(
+    candidate.purchasePriceIncludesShipping
+      ? `Source scan captured this at ${formatSourcePrice(candidate.purchasePrice, sourceCurrency)} including the lowest listed shipping quote and before tax; inbound shipping is zeroed in the cost ledger to prevent double charging.`
+      : `Source scan captured this at ${formatSourcePrice(candidate.purchasePrice, sourceCurrency)} before tax/shipping adjustments.`,
+  );
 
   return {
     ...candidate,
+    ...sourceMetadataForCandidate(sourceMetadata),
     activeListingCount: null,
+    artistSoldUnits365Days: artistAggregate?.unitsSold365Days ?? null,
+    artistSoldUnits1095Days: null,
     averageSoldPrice,
     averageSoldShipping,
     capturedAt,
@@ -985,60 +2820,55 @@ function enrichCandidate(candidate, index) {
     ebayResearchKeywordVariants: researchKeywordVariants(candidate),
     lowestActivePrice: null,
     notes,
-    oneSellerSoldCount: compMatch?.comp.count ?? null,
+    oneSellerSoldCount: null,
+    purchaseOfferVerification,
+    soldEvidence,
+    sourceCurrency,
     totalSoldCount,
   };
 }
 
-function addDecisionEvidence(find) {
-  const status = find.status ?? decisionFor(find);
-  const notes = [...(find.notes ?? [])];
-  const sale = soldTotal(find);
-  const margin = estimatedMargin(find);
-  const marginRatio = sale ? margin / sale : null;
+function bestArtistAggregateMatch(candidate, aggregates) {
+  if (!Array.isArray(aggregates) || aggregates.length === 0) return null;
+  const artist = normalizeSoldText(candidate.artist ?? "");
+  if (!artist || artist === "unknown artist") return null;
+  return aggregates.find((aggregate) => aggregate.normalizedArtist === artist) ?? null;
+}
 
-  if (status === "REJECT") {
-    if (sale === null) {
-      notes.push("Rejected for now because no local sold-price evidence matched strongly enough; use the eBay research link for manual validation.");
-    } else if (margin < 5) {
-      notes.push(`Rejected by current rules: estimated margin is $${margin.toFixed(2)}, below the $5.00 review floor.`);
-    } else if ((find.totalSoldCount ?? 0) < 2) {
-      notes.push("Rejected by current rules: sold evidence is single-copy or thinner.");
-    }
-  } else if (status === "REVIEW") {
-    notes.push(
-      sale === null
-        ? "Review: sale-radar source and price are promising, but local sold-history evidence is missing."
-        : "Review: local sold history suggests possible margin, but sold volume is below the automatic buy/watch thresholds.",
-    );
-  } else if (status === "WATCH") {
-    notes.push("Watch: local sold history has enough volume and margin, but repeat-seller proof still needs eBay validation.");
-  } else {
-    notes.push("Buy: current evidence clears the local repeat-sales and margin thresholds.");
-  }
-
-  if (marginRatio !== null) {
-    notes.push(`Estimated local-comp margin ratio: ${(marginRatio * 100).toFixed(0)}%.`);
-  }
-
+function sourceMetadataForCandidate(source) {
+  if (!source) return {};
   return {
-    ...find,
-    notes,
-    status,
+    sourceCountry: source.country ?? null,
+    sourceDefaultDiscountThreshold: source.defaultDiscountThreshold ?? null,
+    sourceDomain: source.domain ?? null,
+    sourceGroup: source.group ?? null,
+    sourceMinNetProfit: source.minNetProfit ?? null,
+    sourceMinROI: source.minROI ?? null,
+    sourceNoiseLevel: source.noiseLevel ?? null,
+    sourcePriority: source.priority ?? null,
+    sourceRetailType: source.retailSourceType ?? null,
+    sourceSaleLikelihood: source.saleLikelihood ?? null,
   };
 }
 
-function prepareSaleRadarProductFind(find) {
-  if (scanMode !== "sale-radar" || soldTotal(find) !== null) return find;
+function normalizeCurrency(value) {
+  const currency = String(value ?? "").trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(currency) ? currency : null;
+}
 
-  return {
-    ...find,
-    notes: [
-      ...(find.notes ?? []),
-      "Sale-radar kept this low-priced final-deal item for manual review without running an eBay API check.",
-    ],
-    status: "REVIEW",
-  };
+function defaultCurrencyForCountry(value) {
+  const country = String(value ?? "").trim().toUpperCase();
+  if (["US", "USA", "UNITED STATES"].includes(country)) return "USD";
+  if (["UK", "GB", "UNITED KINGDOM"].includes(country)) return "GBP";
+  if (["CA", "CANADA"].includes(country)) return "CAD";
+  if (["AU", "AUSTRALIA"].includes(country)) return "AUD";
+  if (["JP", "JAPAN"].includes(country)) return "JPY";
+  if (["EU", "EUROPEAN UNION"].includes(country)) return "EUR";
+  return null;
+}
+
+function formatSourcePrice(value, currency) {
+  return `${currency ?? "currency unknown"} ${Number(value).toFixed(2)}`;
 }
 
 function bestCompMatch(candidate, comps) {
@@ -1054,33 +2884,30 @@ function bestCompMatch(candidate, comps) {
       if (compTokens.has(token)) overlap += 1;
     }
     const score = overlap / Math.max(queryTokens.size, compTokens.size);
-    const conditionBoost = comp.conditionCounts.new_sealed > 0 ? 0.05 : 0;
+    const conditionBoost = (comp.conditionCounts?.new_sealed ?? comp.conditionMetrics?.new_sealed?.unitsSold ?? 0) > 0 ? 0.05 : 0;
     const adjustedScore = score + conditionBoost;
     if (!best || adjustedScore > best.matchScore) {
       best = { comp, matchScore: adjustedScore };
     }
   }
 
-  if (!best || best.matchScore < 0.52) return null;
+  if (!best || best.matchScore < 0.65) return null;
   return best;
 }
 
-async function fetchText(url) {
-  const page = await fetchPage(url);
-  return page.html;
-}
-
-async function fetchPage(url) {
-  const response = await fetch(url, {
+async function fetchPage(url, options = {}) {
+  const { headers: additionalHeaders = {}, ...requestOptions } = options;
+  const response = await scheduledFetch(url, {
+    ...requestOptions,
     headers: {
       accept: "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
       "accept-language": "en-US,en;q=0.9",
       "cache-control": "no-cache",
       "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+      ...additionalHeaders,
     },
-    redirect: "follow",
-    signal: AbortSignal.timeout(Number.isFinite(fetchTimeoutMs) ? fetchTimeoutMs : DEFAULT_FETCH_TIMEOUT_MS),
+    redirect: requestOptions.redirect ?? "follow",
   });
 
   if (!response.ok) {
@@ -1093,54 +2920,207 @@ async function fetchPage(url) {
 
   return {
     html: await response.text(),
+    setCookies:
+      typeof response.headers.getSetCookie === "function"
+        ? response.headers.getSetCookie()
+        : response.headers.get("set-cookie")
+          ? [response.headers.get("set-cookie")]
+          : [],
     status: response.status,
     url: response.url || url,
   };
 }
 
-function summarize(finds, reports) {
+function summarize(finds, reports, selectionDiagnostics = null) {
   const byDecision = { BUY: 0, REVIEW: 0, REJECT: 0, WATCH: 0 };
   for (const find of finds) {
-    byDecision[find.status ?? decisionFor(find)] += 1;
+    const decision = find.status ?? (find.opportunityType === "sitewide_sale" ? "WATCH" : "REVIEW");
+    byDecision[decision] += 1;
   }
+  const productFinds = finds.filter((find) => find.opportunityType !== "sitewide_sale");
+  const productSourceCounts = new Map();
+  for (const find of productFinds) {
+    const sourceId = find.sourceId ?? find.sourceName ?? "unknown";
+    productSourceCounts.set(sourceId, (productSourceCounts.get(sourceId) ?? 0) + 1);
+  }
+  const largestProductSourceCount = Math.max(0, ...productSourceCounts.values());
+  const largestProductSourceShare = productFinds.length
+    ? roundMetric(largestProductSourceCount / productFinds.length)
+    : 0;
+  const productSourceConcentrationHhi = productFinds.length
+    ? roundMetric(
+        [...productSourceCounts.values()].reduce(
+          (total, count) => total + (count / productFinds.length) ** 2,
+          0,
+        ),
+      )
+    : 0;
 
   return {
     byDecision,
     candidateCount: allCandidates.length,
-    includedProductFindCount: finds.filter((find) => find.opportunityType !== "sitewide_sale").length,
+    eligibleProductSourceCount:
+      selectionDiagnostics?.eligibleSourceCount ?? productSourceCounts.size,
     findCount: finds.length,
-    saleEventCount: allSaleEvents.length,
+    includedProductFindCount: productFinds.length,
+    largestProductSourceCount,
+    largestProductSourceShare,
+    productSourceConcentrationHhi,
+    productSourceSelectionCap: selectionDiagnostics?.maxPerSource ?? null,
+    representedProductSourceCount: productSourceCounts.size,
+    saleEventCount: finds.length - productFinds.length,
+    saleObservationCount: allSaleEvents.length,
     scanMode,
     sourceCount: reports.length,
+    highSignalCandidateCount: reports.reduce(
+      (total, report) => total + Number(report.highSignalCandidateCount ?? 0),
+      0,
+    ),
+    ownHistoryMatchedCandidateCount: reports.reduce(
+      (total, report) => total + Number(report.ownHistoryMatchedCandidateCount ?? 0),
+      0,
+    ),
+    selectedProductFindCount: reports.reduce(
+      (total, report) => total + Number(report.selectedProductFindCount ?? 0),
+      0,
+    ),
+    unrepresentedEligibleProductSourceCount:
+      selectionDiagnostics?.unrepresentedEligibleSourceCount ?? 0,
+    sourcesWithCatalogCoverage: reports.filter((report) => ["healthy", "partial"].includes(report.catalogHealth)).length,
     sourcesWithCandidates: reports.filter((report) => report.candidateCount > 0).length,
     sourcesWithErrors: reports.filter((report) => report.status === "error").length,
+    sourcesWithHighSignalCandidates: reports.filter(
+      (report) => Number(report.highSignalCandidateCount) > 0,
+    ).length,
+    sourcesWithParserEmptyProductCoverage: reports.filter(
+      (report) => report.productParseHealth === "empty",
+    ).length,
+    sourcesWithProductParseFailures: reports.filter(
+      (report) => report.productParseHealth === "failed",
+    ).length,
+    sourcesWithProductiveParsing: reports.filter(
+      (report) => report.productParseHealth === "productive",
+    ).length,
+    sourcesWithSalePageCoverage: reports.filter((report) => ["healthy", "partial"].includes(report.salePageHealth)).length,
+    sourcesWithSalePageFailures: reports.filter((report) => report.salePageHealth === "failed").length,
     sourcesWithSaleEvents: reports.filter((report) => report.saleEventCount > 0).length,
+    sourcesWithSelectedProductFinds: reports.filter(
+      (report) => Number(report.selectedProductFindCount) > 0,
+    ).length,
+    sourcesWithUsableProductCoverage: reports.filter((report) =>
+      ["selected", "high_signal"].includes(report.usableCoverage),
+    ).length,
   };
 }
 
-async function uploadPayloadIfConfigured(payload) {
-  const uploadUrl = process.env.ARBITRAGE_UPLOAD_URL;
-  const uploadToken = process.env.ARBITRAGE_UPLOAD_TOKEN;
-  if (!uploadUrl || !uploadToken) return null;
-
-  const response = await fetch(uploadUrl, {
-    body: JSON.stringify(payload),
-    headers: {
-      Authorization: `Bearer ${uploadToken}`,
-      "Content-Type": "application/json",
-    },
-    method: "POST",
-  });
-  const responseBody = await response.text();
-  if (!response.ok) {
-    throw new Error(`Arbitrage upload failed: HTTP ${response.status} ${responseBody}`);
-  }
-
+function inferPurchaseRetailer(directUrl) {
+  if (!directUrl) return {};
+  let hostname;
   try {
-    return JSON.parse(responseBody);
+    hostname = new URL(directUrl).hostname.toLowerCase().replace(/^www\./, "");
   } catch {
-    return { status: "uploaded", responseBody };
+    return {};
   }
+  const knownRetailers = [
+    { domain: "amazon.com", name: "Amazon", pattern: /(?:^|\.)(?:amazon\.[a-z.]+|amzn\.to|a\.co)$/i },
+    { domain: "ebay.com", name: "eBay", pattern: /(?:^|\.)ebay\.[a-z.]+$/i },
+    { domain: "walmart.com", name: "Walmart", pattern: /(?:^|\.)walmart\.com$/i },
+    { domain: "target.com", name: "Target", pattern: /(?:^|\.)target\.com$/i },
+    { domain: "thesoundofvinyl.us", name: "The Sound of Vinyl", pattern: /(?:^|\.)thesoundofvinyl\.us$/i },
+    { domain: "urbanoutfitters.com", name: "Urban Outfitters", pattern: /(?:^|\.)urbanoutfitters\.com$/i },
+    { domain: "barnesandnoble.com", name: "Barnes & Noble", pattern: /(?:^|\.)barnesandnoble\.com$/i },
+    { domain: "roughtrade.com", name: "Rough Trade", pattern: /(?:^|\.)roughtrade\.com$/i },
+  ];
+  const retailer = knownRetailers.find(({ pattern }) => pattern.test(hostname));
+  return retailer
+    ? {
+        purchaseRetailerDomain: retailer.domain,
+        purchaseRetailerName: retailer.name,
+      }
+    : {};
+}
+
+function roundMetric(value) {
+  return Math.round(value * 10_000) / 10_000;
+}
+
+function runSoldHistorySyncIfConfigured() {
+  if (skipEbaySync) {
+    return {
+      reason: "Disabled by --skipEbaySync, --skip-ebay-sync, or --ebaySync=false.",
+      status: "skipped",
+    };
+  }
+
+  const hasStaticAccessToken = Boolean(process.env.EBAY_USER_ACCESS_TOKEN);
+  const hasRefreshCredentials = Boolean(
+    process.env.EBAY_CLIENT_ID &&
+      process.env.EBAY_CLIENT_SECRET &&
+      process.env.EBAY_USER_REFRESH_TOKEN,
+  );
+  if (!hasStaticAccessToken && !hasRefreshCredentials) {
+    return {
+      reason:
+        "Missing EBAY_USER_ACCESS_TOKEN or the EBAY_CLIENT_ID / EBAY_CLIENT_SECRET / EBAY_USER_REFRESH_TOKEN refresh credential set.",
+      status: "skipped",
+    };
+  }
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(WORKSPACE, "scripts", "syncEbaySoldHistory.mjs"),
+      "--lookback-days=730",
+      "--refresh-overlap-days=14",
+    ],
+    {
+      cwd: WORKSPACE,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024 * 5,
+      timeout: soldHistorySyncTimeoutMs,
+      windowsHide: true,
+    },
+  );
+
+  if (result.status === 0) {
+    const state = readJsonFileIfPresent(
+      join(WORKSPACE, "exports", "sold-history", "sync-state.json"),
+    );
+    const index = readJsonFileIfPresent(SOLD_INDEX_PATH);
+    return {
+      asOf: index?.asOf ?? state?.lastSuccessfulTo ?? null,
+      lastSuccessfulAt: state?.lastSuccessfulAt ?? null,
+      range: state
+        ? {
+            from: state.lastSuccessfulFrom ?? null,
+            to: state.lastSuccessfulTo ?? null,
+          }
+        : null,
+      recordCount: index?.recordCount ?? null,
+      status: "synced",
+      stdout: tailLines(result.stdout, 4),
+      unitCount: index?.unitCount ?? null,
+    };
+  }
+
+  const processError =
+    result.error instanceof Error
+      ? result.error.message
+      : result.error
+        ? String(result.error)
+        : "";
+  return {
+    error:
+      processError ||
+      tailLines(result.stderr || result.stdout, 8) ||
+      `eBay sold-history sync exited without completing${result.signal ? ` (${result.signal})` : ""}.`,
+    exitCode: result.status,
+    signal: result.signal ?? undefined,
+    status: "failed",
+    timedOut: result.error?.code === "ETIMEDOUT",
+    timeoutMs: soldHistorySyncTimeoutMs,
+    usedExistingIndex: existsSync(SOLD_INDEX_PATH),
+  };
 }
 
 function runActiveEnrichmentIfConfigured(outputPath) {
@@ -1148,8 +3128,20 @@ function runActiveEnrichmentIfConfigured(outputPath) {
     return { status: "skipped", reason: "Disabled by --skipActiveEnrichment or --enrichActive=false." };
   }
 
-  if (!process.env.EBAY_CLIENT_ID || !process.env.EBAY_CLIENT_SECRET) {
-    return { status: "skipped", reason: "Missing EBAY_CLIENT_ID or EBAY_CLIENT_SECRET." };
+  const hasStaticApplicationToken = Boolean(
+    process.env.EBAY_BROWSE_ACCESS_TOKEN ||
+      process.env.EBAY_APPLICATION_ACCESS_TOKEN ||
+      process.env.EBAY_APP_ACCESS_TOKEN,
+  );
+  const hasClientCredentials = Boolean(
+    process.env.EBAY_CLIENT_ID && process.env.EBAY_CLIENT_SECRET,
+  );
+  if (!hasStaticApplicationToken && !hasClientCredentials) {
+    return {
+      status: "skipped",
+      reason:
+        "Missing EBAY_BROWSE_ACCESS_TOKEN or the EBAY_CLIENT_ID / EBAY_CLIENT_SECRET application credential pair.",
+    };
   }
 
   const relativeOutputPath = outputPath.startsWith(WORKSPACE) ? outputPath.slice(WORKSPACE.length + 1) : outputPath;
@@ -1165,6 +3157,7 @@ function runActiveEnrichmentIfConfigured(outputPath) {
       cwd: WORKSPACE,
       encoding: "utf8",
       maxBuffer: 1024 * 1024 * 5,
+      timeout: activeEnrichmentTimeoutMs,
       windowsHide: true,
     },
   );
@@ -1177,11 +3170,22 @@ function runActiveEnrichmentIfConfigured(outputPath) {
     };
   }
 
+  const processError = result.error instanceof Error
+    ? result.error.message
+    : result.error
+      ? String(result.error)
+      : "";
   return {
-    error: tailLines(result.stderr || result.stdout, 8),
+    error:
+      processError ||
+      tailLines(result.stderr || result.stdout, 8) ||
+      `Active eBay enrichment exited without completing${result.signal ? ` (${result.signal})` : ""}.`,
     exitCode: result.status,
     maxQueries: maxActiveQueries,
+    signal: result.signal ?? undefined,
     status: "failed",
+    timedOut: result.error?.code === "ETIMEDOUT",
+    timeoutMs: activeEnrichmentTimeoutMs,
   };
 }
 
@@ -1193,28 +3197,13 @@ function tailLines(text, count) {
     .join("\n");
 }
 
-function isHighSignalProductFind(find) {
-  const fromFinalDealSource = isFinalDealSource(find.sourceId, find.sourceName, find.sourceUrl);
-  const productSaleSignal = hasProductSaleSignal(`${find.sourceListingTitle ?? ""} ${find.sourceUrl ?? ""}`);
-  if (!fromFinalDealSource && !productSaleSignal) return false;
-
-  const sale = soldTotal(find);
-  const margin = estimatedMargin(find);
-  if (sale !== null) {
-    return (
-      margin >= 5 && (find.totalSoldCount ?? 0) >= 2 ||
-      margin >= 10 ||
-      (sale >= 25 && find.purchasePrice <= 15)
-    );
+function readJsonFileIfPresent(path) {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
   }
-
-  return find.purchasePrice <= 15 && (fromFinalDealSource || productSaleSignal);
-}
-
-function hasProductSaleSignal(text) {
-  return /\b(?:final\s+sale|clearance|closeout|super\s+sale|warehouse\s+(?:sale|overstock)|overstock|garage\s+sale|special\s+price|daily\s+deal|deep\s+discount|price\s+drop|vinyl\s+discount|buy\s+more\s+save\s+more|under\s+\$?\s*(?:10|15|20)|bogo|buy\s+(?:one|1|2)\s+get\s+(?:one|1)|[3-9][0-9]\s*%\s*off)\b/i.test(
-    text,
-  );
 }
 
 function isFinalDealSource(sourceId, sourceName, sourceUrl) {
@@ -1224,24 +3213,36 @@ function isFinalDealSource(sourceId, sourceName, sourceUrl) {
 }
 
 function isBroadSaleSource(sourceId, sourceName, sourceUrl) {
-  return /\b(?:sitewide|storewide|50-off|30-80|buy-more-save-more|warehouse|overstock|clearance|super-sale|super\s+sale|special-price|garage-sale|garage\s+sale|under-?1?[0459]9?9?|4\+|bogo)\b/i.test(
+  return /\b(?:sitewide|storewide|50-off|30-80|buy-more-save-more|warehouse|overstock|clearance|super-sale|super\s+sale|special-price|garage-sale|garage\s+sale|under-?1?[0459]9?9?|4\+)\b/i.test(
     `${sourceId} ${sourceName} ${sourceUrl}`,
   );
 }
 
 function opportunitySortPriority(find) {
-  if (find.opportunityType === "sitewide_sale") return 2;
-  if (find.status === "BUY" || find.status === "WATCH") return 1;
+  if (find.status === "BUY") return 5;
+  if (find.opportunityType === "sitewide_sale") return 4;
+  if (find.status === "WATCH") return 3;
+  if (find.status === "REVIEW") return 2;
+  if (find.status === "REJECT") return 1;
   return 0;
 }
 
-function decisionFor(find) {
-  const margin = estimatedMargin(find);
-  const marginRatio = soldTotal(find) ? margin / soldTotal(find) : 0;
-  if (margin >= 7 && marginRatio >= 0.25 && (find.oneSellerSoldCount ?? 0) >= 10) return "BUY";
-  if (margin >= 7 && marginRatio >= 0.25 && (find.totalSoldCount ?? 0) >= 10) return "WATCH";
-  if (margin >= 5 && (find.totalSoldCount ?? 0) >= 2) return "REVIEW";
-  return "REJECT";
+function compareEvaluatedFinds(left, right) {
+  return (
+    opportunitySortPriority(right) - opportunitySortPriority(left) ||
+    (Number(right.priorityScore) || 0) - (Number(left.priorityScore) || 0) ||
+    (Number(right.expectedNetProfit) || Number.NEGATIVE_INFINITY) -
+      (Number(left.expectedNetProfit) || Number.NEGATIVE_INFINITY) ||
+    candidateQualityScore(right) - candidateQualityScore(left)
+  );
+}
+
+function evaluatedCandidateScore(candidate) {
+  return (
+    opportunitySortPriority(candidate) * 1_000 +
+    (Number(candidate.priorityScore) || 0) * 10 +
+    candidateQualityScore(candidate)
+  );
 }
 
 function estimatedMargin(find) {
@@ -1257,38 +3258,28 @@ function soldTotal(find) {
 
 function parsePrice(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const match = String(value).match(/\$\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]+(?:\.[0-9]{2})?)/);
-  if (!match) return null;
-  const parsed = Number(match[1].replace(/,/g, ""));
-  return Number.isFinite(parsed) ? parsed : null;
+  const raw = String(value).trim();
+  if (/^[0-9]+(?:\.[0-9]{1,2})?$/.test(raw)) {
+    const direct = Number(raw);
+    return Number.isFinite(direct) ? direct : null;
+  }
+  return parsePrices(raw)[0] ?? null;
+}
+
+function parsePrices(value) {
+  return [
+    ...String(value).matchAll(/(?:\$|USD\s*)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]+(?:\.[0-9]{2})?)/gi),
+  ]
+    .map((match) => Number(match[1].replace(/,/g, "")))
+    .filter(Number.isFinite);
 }
 
 function inferArtist(text) {
-  const original = cleanText(text);
-  const walmartBestSeller = original.match(/^best\s+seller\s+(.+?)\s+\(([^)]+)\)\s+was\b/i);
-  if (walmartBestSeller) return cleanText(walmartBestSeller[1]);
-  const clean = cleanProductTitle(text);
-  const colon = clean.match(/^(.{2,80}?):\s+.{2,}$/);
-  if (colon) return cleanText(colon[1]);
-  const dash = clean.match(/^(.{2,80}?)(?:\s+[-–—]\s+|\s*[-–—]\s+).{2,}$/);
-  if (dash) return cleanText(dash[1]);
-  return "Unknown Artist";
+  return inferRetailArtist(text);
 }
 
 function inferTitle(text) {
-  const original = cleanText(text);
-  const walmartBestSeller = original.match(/^best\s+seller\s+(.+?)\s+\(([^)]+)\)\s+was\b/i);
-  if (walmartBestSeller) return cleanText(walmartBestSeller[1]);
-  const clean = cleanProductTitle(text);
-  const colon = clean.match(/^.{2,80}?:\s+(.{2,})$/);
-  const dash = clean.match(/^.{2,80}?(?:\s+[-–—]\s+|\s*[-–—]\s+)(.{2,})$/);
-  const title = colon ? colon[1] : dash ? dash[1] : clean;
-  return cleanText(
-    title
-      .replace(/\[[^\]]*\]/g, " ")
-      .replace(/\([^)]*(?:vinyl|lp|record|sale|deal)[^)]*\)/gi, " ")
-      .replace(/\$\s*[0-9.,]+/g, " "),
-  );
+  return inferRetailTitle(text);
 }
 
 function cleanProductTitle(text) {
@@ -1300,24 +3291,8 @@ function cleanProductTitle(text) {
   );
 }
 
-function isVinylProductCandidate(source, ...parts) {
-  const text = cleanText(parts.filter(Boolean).join(" "));
-  if (!text) return false;
-  if (isNonVinylProduct(text)) return false;
-  return hasVinylProductSignal(text) || sourceIsVinylFocused(source);
-}
-
-function isNonVinylProduct(text) {
-  return /\b(?:cd|compact\s+disc|digital|download|mp3|flac|wav|aac|lossless|hi-?res|streaming|hoodie|shirt|t-shirt|tee\b|sweatshirt|trading\s+card|cassette|dvd|blu-ray|blu\s+ray|book|zine|magazine|poster|slipmat|koozie|pizza\s+cutter|turntable|speaker|stylus|cartridge|tote|hat|socks|pin|patch|sticker|gift\s+card|coupon)\b/i.test(
-    String(text ?? ""),
-  );
-}
-
 function cleanText(text) {
-  return String(text)
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  return decodeHtmlEntities(text)
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -1331,7 +3306,7 @@ function looksRecordRelated(text) {
 }
 
 function hasVinylProductSignal(text) {
-  return /\b(?:vinyl|record|records|lp|2lp|3lp|4lp|(?:7|10|12)\s*(?:inch|in\.|["”']))\b/i.test(String(text ?? ""));
+  return /\b(?:vinyl|record|records|(?:[1-9]\s*(?:[x\u00d7-]\s*)?)?lp|(?:7|10|12)\s*(?:inch|in\.|["”']))\b/i.test(String(text ?? ""));
 }
 
 function sourceIsVinylFocused(source) {
@@ -1406,6 +3381,12 @@ function parseLimit(value, fallback) {
   if (String(value).toLowerCase() === "all") return Number.POSITIVE_INFINITY;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function parsePositiveNumber(value, fallback) {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function loadLocalEnv(path) {

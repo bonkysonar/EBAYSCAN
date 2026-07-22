@@ -1,253 +1,273 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, relative, resolve } from "node:path";
+import { evaluateOpportunity } from "../src/lib/arbitrage/evaluateOpportunity.mjs";
+import { curateResearchForFind } from "./lib/productResearchCuration.mjs";
 
-const [sourcePath, rawResearchPath, dateStamp] = process.argv.slice(2);
-
-if (!sourcePath || !rawResearchPath || !dateStamp) {
-  throw new Error("Usage: node scripts/curateRetailArbitrageRun.mjs <scan-json> <raw-research-json> <YYYY-MM-DD>");
-}
-
-const raw = JSON.parse(readFileSync(rawResearchPath, "utf8"));
-const payload = JSON.parse(readFileSync(sourcePath, "utf8"));
-const createdAt = new Date().toISOString();
-
-function price(value) {
-  const match = String(value ?? "").match(/\$([0-9,]+(?:\.[0-9]{2})?)/);
-  return match ? Number(match[1].replace(/,/g, "")) : null;
-}
-
-function soldCount(value) {
-  const parsed = Number(String(value ?? "").trim());
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function dateIso(value) {
-  const parsed = new Date(`${value} 00:00:00 GMT-0700`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
-}
-
-function rowTitle(row) {
-  return (row.title || String(row.cells?.[0] || "").split("\n").filter(Boolean).pop() || "").trim();
-}
-
-function parseRow(row) {
-  return {
-    title: rowTitle(row),
-    avgSoldPrice: price(row.cells?.[2]),
-    avgShipping: price(row.cells?.[3]),
-    totalSold: soldCount(row.cells?.[4]),
-    itemSales: price(row.cells?.[5]),
-    dateLastSold: dateIso(row.cells?.[7]),
-  };
-}
-
-function normalized(value) {
-  return String(value ?? "")
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function excludesBundleMerch(title) {
-  return !/\b(?:poster|postcards|signed|three lps|bundle|lot of|shirt|cd|cassette|blu ray|dvd)\b/i.test(title);
-}
-
-const filters = {
-  "cave-in-final-transmission": (title) => /cave in.+final transmission/i.test(title),
-  "honeyglaze-real-deal": (title) => /honeyglaze.+real/i.test(title),
-  "chocobo-final-fantasy-adventure": (title) => /chocobo|final fantasy adventure|drew wise/i.test(title),
-  "anthony-ramos-love-and-lies": (title) => /anthony ramos.+love/i.test(title) && /lies/i.test(title),
-  "stranger-things-5-soundtrack": (title, row) =>
-    /stranger things/i.test(title) &&
-    /(season 5|soundtrack|wsqk|vinyl)/i.test(title) &&
-    excludesBundleMerch(title) &&
-    (row.avgSoldPrice ?? 0) < 80,
-  "mother-love-bone-shine": (title) => /mother love bone.+shine/i.test(title),
-  "deadpool-wolverine-soundtrack": (title) =>
-    /deadpool/i.test(title) && /wolverine/i.test(title) && /(ost|soundtrack|vinyl|2-?lp)/i.test(title) && excludesBundleMerch(title),
-  "lionel-richie-lionel-richie": (title) =>
-    /lionel richie/i.test(title) && /(self titled|self[- ]titled|6007)/i.test(title) && excludesBundleMerch(title),
-  "three-days-grace-three-days-grace": (title) =>
-    /three days grace/i.test(title) &&
-    /(self titled|self[- ]titled|s\/t|three days grace \[new vinyl lp\]|black vinyl, 2016)/i.test(title) &&
-    !/(one-x|one x|transit|outsider|explosions|life starts)/i.test(title) &&
-    excludesBundleMerch(title),
-};
-
-function bestEvidence(key) {
-  const runs = raw[key] || [];
-  let best = null;
-  const variants = runs.map((run) => run.query);
-
-  for (const run of runs) {
-    const rows = run.rows
-      .map(parseRow)
-      .filter((row) => row.totalSold > 0 && row.avgSoldPrice !== null)
-      .filter((row) => !filters[key] || filters[key](row.title, row));
-
-    const total = rows.reduce((sum, row) => sum + row.totalSold, 0);
-    const avg = total ? rows.reduce((sum, row) => sum + row.avgSoldPrice * row.totalSold, 0) / total : null;
-    const ship = total ? rows.reduce((sum, row) => sum + (row.avgShipping ?? 0) * row.totalSold, 0) / total : null;
-    const latest = rows.map((row) => row.dateLastSold).filter(Boolean).sort().pop() || null;
-    const top = rows.reduce((max, row) => Math.max(max, row.totalSold), 0);
-    const evidence = {
-      query: run.query,
-      url: run.url,
-      variants,
-      rows,
-      status: rows.length ? "validated" : "no_rows",
-      total,
-      top,
-      avg,
-      ship,
-      latest,
-    };
-
-    if (!best || evidence.total > best.total || (evidence.total === best.total && evidence.top > best.top)) {
-      best = evidence;
-    }
-  }
-
-  return (
-    best || {
-      query: variants[0] || "",
-      url: runs[0]?.url || "",
-      variants,
-      rows: [],
-      status: "no_rows",
-      total: 0,
-      top: 0,
-      avg: null,
-      ship: null,
-      latest: null,
-    }
+const [sourceArgument, rawResearchArgument, requestedDateStamp] = process.argv.slice(2);
+const pendingOnly = rawResearchArgument === "--pending";
+if (!sourceArgument || !rawResearchArgument) {
+  throw new Error(
+    "Usage: node scripts/curateRetailArbitrageRun.mjs <scan-json> <raw-research-json|--pending> [YYYY-MM-DD]",
   );
 }
 
-const evidence = Object.fromEntries(Object.keys(raw).map((key) => [key, bestEvidence(key)]));
-
-function keyForFind(find) {
-  const text = normalized(`${find.artist} ${find.title} ${find.sourceListingTitle || ""}`);
-  if (text.includes("cave in") && text.includes("final transmission")) return "cave-in-final-transmission";
-  if (text.includes("honeyglaze") && text.includes("real")) return "honeyglaze-real-deal";
-  if (text.includes("chocobo") || text.includes("final fantasy adventure")) return "chocobo-final-fantasy-adventure";
-  if (text.includes("anthony ramos") && text.includes("love")) return "anthony-ramos-love-and-lies";
-  if (text.includes("stranger things 5")) return "stranger-things-5-soundtrack";
-  if (text.includes("mother love bone") && text.includes("shine")) return "mother-love-bone-shine";
-  if (text.includes("deadpool") && text.includes("wolverine")) return "deadpool-wolverine-soundtrack";
-  if (text.includes("lionel richie")) return "lionel-richie-lionel-richie";
-  if (text.includes("three days grace")) return "three-days-grace-three-days-grace";
-  return null;
+const workspace = process.cwd();
+const sourcePath = resolve(workspace, sourceArgument);
+const rawResearchPath = pendingOnly ? null : resolve(workspace, rawResearchArgument);
+const payload = JSON.parse(readFileSync(sourcePath, "utf8"));
+const rawResearch = pendingOnly ? {} : JSON.parse(readFileSync(rawResearchPath, "utf8"));
+const scanCreatedAt = validIsoTimestamp(payload.createdAt)
+  ? payload.createdAt
+  : new Date().toISOString();
+const curatedAt = new Date().toISOString();
+const dateStamp = requestedDateStamp || scanCreatedAt.slice(0, 10);
+if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStamp)) {
+  throw new Error(`Invalid date stamp: ${dateStamp}`);
 }
 
-function decide(find, evidenceRow) {
-  if (find.opportunityType === "sitewide_sale") return "WATCH";
-  if (!evidenceRow || evidenceRow.status !== "validated") return "REJECT";
-
-  const sale = (evidenceRow.avg ?? 0) + (evidenceRow.ship ?? 0);
-  const allInCost = find.purchasePrice * 1.095;
-  const margin = sale - allInCost;
-  const active = find.activeListingCount ?? null;
-
-  if (evidenceRow.top >= 10 && margin >= 7) return "BUY";
-  if (evidenceRow.total >= 10 && margin >= 7 && !(active && active > 50)) return "WATCH";
-  if (evidenceRow.total < 3) return "REJECT";
-  if (margin >= 5 && (!active || active <= 50)) return "REVIEW";
-  return "REJECT";
-}
-
-const finds = payload.finds.map((find) => {
-  const key = keyForFind(find);
-  const research = key ? evidence[key] : null;
-  const notes = [...(find.notes || [])];
-  const output = { ...find, capturedAt: find.capturedAt || createdAt, ebayResearchUpdatedAt: createdAt };
-
-  if (find.opportunityType === "sitewide_sale") {
-    notes.push("Research status: sale alert only; no per-record Product Research rows required.");
-    output.ebayResearchStatus = "pending";
-  } else if (research) {
-    output.ebayResearchStatus = research.status;
-    output.ebayResearchQuery = research.query;
-    output.ebayResearchUrl = research.url;
-    output.ebayResearchKeywordVariants = research.variants;
-    output.productResearchRows = research.rows.slice(0, 8);
-    output.totalSoldCount = research.total;
-    output.oneSellerSoldCount = research.top;
-    output.averageSoldPrice = research.avg === null ? null : Number(research.avg.toFixed(2));
-    output.averageSoldShipping = research.ship === null ? null : Number(research.ship.toFixed(2));
-    output.latestSoldDate = research.latest;
-    notes.push(
-      research.status === "validated"
-        ? `Product Research validated ${research.total} same-title new-vinyl sold copies; top one-seller row ${research.top}; weighted avg $${(research.avg ?? 0).toFixed(2)} + $${(research.ship ?? 0).toFixed(2)} shipping; latest ${research.latest ?? "n/a"}.`
-        : `Product Research ${research.status}: checked ${research.variants.join(", ")} with no usable same-title new-vinyl sold rows.`,
-    );
-    if (research.status === "validated" && research.top < 10) {
-      notes.push("Repeat-seller BUY rule not met: no one seller sold 10+ copies in the usable rows.");
-    }
-  } else {
-    output.ebayResearchStatus = "pending";
-    notes.push("Research pending/no usable normalized Product Research query; likely page/navigation noise from source scan.");
-  }
-
-  output.status = decide(output, research);
-  if (output.status === "REJECT" && research?.status === "validated") {
-    const margin = (research.avg ?? 0) + (research.ship ?? 0) - output.purchasePrice * 1.095;
-    notes.push(`Rejected by current rules after Product Research: estimated margin $${margin.toFixed(2)} and/or repeat-sale evidence below threshold.`);
-  }
-  if (output.status === "REJECT" && (!research || research.status !== "validated")) {
-    notes.push("Rejected from buy/watch queue until Product Research produces usable sold evidence.");
-  }
-
-  output.notes = [...new Set(notes)];
-  return output;
-});
-
-const summary = { ...payload.summary, byDecision: { BUY: 0, WATCH: 0, REVIEW: 0, REJECT: 0 } };
-for (const find of finds) {
-  summary.byDecision[find.status] = (summary.byDecision[find.status] || 0) + 1;
-}
-summary.productResearch = {
-  validated: Object.values(evidence).filter((entry) => entry.status === "validated").length,
-  no_rows: Object.values(evidence).filter((entry) => entry.status === "no_rows").length,
-  failed: 0,
-  pending: finds.filter((find) => find.ebayResearchStatus === "pending").length,
-};
-
+const runId =
+  cleanText(payload.runId) ||
+  `daily-${dateStamp}-${basename(sourcePath, ".json").replace(/[^a-z0-9_-]+/gi, "-")}`;
+const evidenceByFindId = {};
+const finds = (payload.finds ?? []).map((find) => curateFind(find));
+const summary = buildSummary(finds);
+const finalPath = resolve(workspace, "exports", "arbitrage-finds", `retail-arbitrage-${dateStamp}.json`);
+const sidecarPath = resolve(
+  workspace,
+  "exports",
+  "arbitrage-finds",
+  `product-research-${dateStamp}.json`,
+);
 const finalPayload = {
   ...payload,
-  createdAt,
-  source: "daily-vinyl-retail-arbitrage-scan",
+  createdAt: scanCreatedAt,
+  curatedAt,
+  evaluatedAt: curatedAt,
   finds,
-  summary,
+  phase: "final",
+  publicationStatus: "final",
+  runId,
+  saleObservations: Array.isArray(payload.saleObservations)
+    ? payload.saleObservations
+    : payload.saleEvents ?? [],
+  schemaVersion: 2,
+  source: "daily-vinyl-retail-arbitrage-scan",
+  summary: {
+    ...(payload.summary ?? {}),
+    ...summary,
+  },
 };
 
-const finalPath = `exports/arbitrage-finds/retail-arbitrage-${dateStamp}.json`;
-const sidecarPath = `exports/arbitrage-finds/product-research-${dateStamp}.json`;
-
-writeFileSync(
-  sidecarPath,
-  JSON.stringify(
-    {
-      createdAt,
-      sourcePayload: finalPath,
-      productResearchValidatedAt: createdAt,
-      evidence,
-    },
-    null,
-    2,
-  ),
-);
-writeFileSync(finalPath, JSON.stringify(finalPayload, null, 2));
+writeJsonAtomically(sidecarPath, {
+  createdAt: curatedAt,
+  evidenceByFindId,
+  pendingOnly,
+  runId,
+  sourcePayload: relative(workspace, finalPath),
+  sourceResearch: rawResearchPath ? relative(workspace, rawResearchPath) : null,
+});
+writeJsonAtomically(finalPath, finalPayload);
 
 console.log(
   JSON.stringify(
     {
-      finalPath,
-      sidecarPath,
       byDecision: summary.byDecision,
+      finalPath,
       productResearch: summary.productResearch,
+      runId,
+      sidecarPath,
     },
     null,
     2,
   ),
 );
+
+function curateFind(find) {
+  if (find.opportunityType === "sitewide_sale") {
+    return evaluateOpportunity(
+      {
+        ...find,
+        capturedAt: find.capturedAt || scanCreatedAt,
+        notes: unique([
+          ...(find.notes ?? []),
+          "Sale campaign only; evaluate individual records before purchasing.",
+        ]),
+      },
+      {},
+      curatedAt,
+    );
+  }
+
+  const research = curateResearchForFind(find, rawResearch, new Date(curatedAt));
+  evidenceByFindId[find.id] = research;
+  const notes = [...(find.notes ?? [])];
+  const output = {
+    ...find,
+    capturedAt: find.capturedAt || scanCreatedAt,
+    condition: find.condition || "new/sealed",
+    ebayResearchKeyword: research.query || research.variants?.[0] || "",
+    ebayResearchKeywordVariants: research.variants ?? [],
+    ebayResearchLatestSaleDate: research.latestSoldDate ?? null,
+    ebayResearchRows: (research.rows ?? []).slice(0, 12),
+    ebayResearchStatus: research.status,
+    ebayResearchUpdatedAt: curatedAt,
+    ebayResearchUrl: research.url || find.ebayResearchUrl,
+    latestSoldDate: research.latestSoldDate ?? find.latestSoldDate ?? null,
+    notes,
+    productResearchRows: (research.rows ?? []).slice(0, 12),
+  };
+
+  if (research.status === "validated") {
+    output.averageSoldPrice = research.averageSoldPrice;
+    output.averageSoldShipping = research.averageSoldShipping;
+    output.oneSellerSoldCount = research.oneSellerSoldCount;
+    output.totalSoldCount = research.totalSoldCount;
+    output.ebaySoldCondition = "new_sealed";
+    output.ebaySoldMatchConfidence = research.matchConfidence ?? "unknown";
+    output.soldEvidence = mergeAggregateResearchWithDatedEvidence(find.soldEvidence, research);
+    notes.push(
+      `Product Research matched ${research.aggregateUnitsSold ?? research.totalSoldCount} sold units across ${
+        research.rows.length
+      } usable row${research.rows.length === 1 ? "" : "s"}; weighted average ${money(
+        research.averageSoldPrice,
+      )} + ${money(research.averageSoldShipping)} shipping; latest sale ${
+        research.latestSoldDate ?? "unknown"
+      }.`,
+      research.velocityStatus === "dated_single_unit_rows"
+        ? "Every accepted Product Research row was a unique, individually dated single-unit observation, so those rows can support dated 30/90/365-day velocity."
+        : "Aggregate Product Research quantities remain long-window evidence only; they cannot prove recent velocity or create a BUY by themselves.",
+    );
+  } else if (research.status === "no_rows") {
+    output.averageSoldPrice = null;
+    output.averageSoldShipping = null;
+    output.oneSellerSoldCount = 0;
+    output.totalSoldCount = 0;
+    if (!hasDatedVelocityEvidence(find.soldEvidence)) {
+      output.soldEvidence = {
+        capturedAt: curatedAt,
+        condition: "new_sealed",
+        latestSaleDate: null,
+        matchConfidence: "unknown",
+        source: "ebay-product-research",
+        status: "no_rows",
+        supportsMarketplaceSellerRepeatProof: false,
+        unitsSold30Days: null,
+        unitsSold90Days: null,
+        unitsSold365Days: null,
+        unitsSold1095Days: 0,
+        velocityEvidence: "unknown",
+      };
+    }
+    notes.push(
+      `Product Research checked ${research.variants?.join(", ") || "the normalized query"} but found no usable same-record new-vinyl rows.`,
+    );
+  } else {
+    if (!hasDatedVelocityEvidence(find.soldEvidence)) {
+      output.soldEvidence = {
+        ...(find.soldEvidence ?? {}),
+        capturedAt: find.soldEvidence?.capturedAt ?? null,
+        condition: find.soldEvidence?.condition ?? "new_sealed",
+        matchConfidence: find.soldEvidence?.matchConfidence ?? "unknown",
+        source: find.soldEvidence?.source ?? "ebay-product-research",
+        status: research.status === "failed" ? "failed" : "pending",
+        velocityEvidence: find.soldEvidence?.velocityEvidence ?? "unknown",
+      };
+    }
+    notes.push(
+      "Product Research is still pending or failed; the candidate remains a validation task rather than being converted into a false reject.",
+    );
+  }
+
+  output.notes = unique(notes);
+  return evaluateOpportunity(output, {}, curatedAt);
+}
+
+function mergeAggregateResearchWithDatedEvidence(existing, research) {
+  if (hasDatedVelocityEvidence(existing)) {
+    return {
+      ...existing,
+      supportsMarketplaceSellerRepeatProof:
+        existing.supportsMarketplaceSellerRepeatProof === true,
+      unitsSold1095Days:
+        research.aggregateUnitsSold ?? existing.unitsSold1095Days ?? null,
+    };
+  }
+
+  const hasSafeDatedRows =
+    research.velocityStatus === "dated_single_unit_rows" &&
+    research.sales30Days !== null &&
+    research.sales90Days !== null &&
+    research.sales365Days !== null;
+  return {
+    capturedAt: curatedAt,
+    condition: "new_sealed",
+    conservativeResalePrice: null,
+    latestSaleDate: research.latestSoldDate ?? null,
+    matchConfidence: research.matchConfidence ?? "unknown",
+    source: "ebay-product-research",
+    status: "validated",
+    supportsMarketplaceSellerRepeatProof: false,
+    transactionCount: hasSafeDatedRows ? research.rows.length : null,
+    unitsSold30Days: hasSafeDatedRows ? research.sales30Days : null,
+    unitsSold90Days: hasSafeDatedRows ? research.sales90Days : null,
+    unitsSold365Days: hasSafeDatedRows ? research.sales365Days : null,
+    unitsSold1095Days: research.aggregateUnitsSold ?? null,
+    velocityEvidence: hasSafeDatedRows
+      ? "dated_transactions"
+      : "aggregate_last_sale_only",
+  };
+}
+
+function hasDatedVelocityEvidence(evidence) {
+  return Boolean(
+    evidence &&
+      (evidence.velocityEvidence === "dated_transactions" ||
+        evidence.source === "local-own-sales-history"),
+  );
+}
+
+function buildSummary(curatedFinds) {
+  const byDecision = { BUY: 0, REVIEW: 0, REJECT: 0, WATCH: 0 };
+  const productFinds = curatedFinds.filter((find) => find.opportunityType !== "sitewide_sale");
+  for (const find of curatedFinds) {
+    const decision = find.decision ?? find.status ?? "REVIEW";
+    byDecision[decision] = (byDecision[decision] ?? 0) + 1;
+  }
+  return {
+    byDecision,
+    findCount: curatedFinds.length,
+    productResearch: {
+      failed: productFinds.filter((find) => find.ebayResearchStatus === "failed").length,
+      no_rows: productFinds.filter((find) => find.ebayResearchStatus === "no_rows").length,
+      pending: productFinds.filter((find) => !find.ebayResearchStatus || find.ebayResearchStatus === "pending").length,
+      validated: productFinds.filter((find) => find.ebayResearchStatus === "validated").length,
+      velocityValidated: productFinds.filter((find) => find.gates?.soldEvidence).length,
+    },
+  };
+}
+
+function writeJsonAtomically(path, value) {
+  const temporaryPath = resolve(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  writeFileSync(temporaryPath, JSON.stringify(value, null, 2));
+  renameSync(temporaryPath, path);
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function money(value) {
+  return value === null || value === undefined ? "n/a" : `$${Number(value).toFixed(2)}`;
+}
+
+function cleanText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function validIsoTimestamp(value) {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
+    !Number.isNaN(Date.parse(value))
+  );
+}

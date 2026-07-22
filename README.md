@@ -38,7 +38,18 @@ ARBITRAGE_UPLOAD_URL=https://ebayscan.vercel.app/api/arbitrage/upload
 ARBITRAGE_UPLOAD_TOKEN=same_shared_secret_as_production
 ```
 
-`node scripts/runRetailArbitrageScan.mjs` still writes a local archive in `exports/arbitrage-finds/`, then uploads the same JSON payload to the hosted site when those automation variables are present. If a workflow enriches or validates the JSON after the first scan pass, run `node scripts/uploadLatestArbitrageFinds.mjs` at the end to publish the newest local JSON file.
+The scanner writes a timestamped draft in `exports/arbitrage-finds/`; drafts are never publishable. The daily workflow builds the Product Research plan, curates one final artifact, validates that exact file, and uploads it once. The server rejects low-coverage or targeted/partial new runs instead of replacing the latest trustworthy publication.
+
+Useful commands:
+
+```powershell
+npm run arbitrage:scan
+npm run arbitrage:research-plan -- <draft-json>
+node scripts/curateRetailArbitrageRun.mjs <draft-json> <research-json|--pending>
+npm run arbitrage:upload -- --file=<final-json>
+```
+
+See `RETAIL_ARBITRAGE.md` for the evidence and publication workflow and `RETAIL_SOURCE_COVERAGE.md` for the current source-by-source audit.
 
 ## Color Semantics
 
@@ -55,9 +66,12 @@ EBAY_ENV=production
 EBAY_CLIENT_ID=your_production_app_id_here
 EBAY_MARKETPLACE_ID=EBAY_US
 EBAY_CLIENT_SECRET=your_production_cert_id_here
+EBAY_DELIVERY_POSTAL_CODE=your_destination_zip_here
 ```
 
 Do not commit `.env.local`. For hosted Vercel, set the same values in the project environment variable dashboard. The client secret is used only server-side and is not bundled into browser code.
+
+The destination ZIP is required for verified retail-acquisition evidence because shipping is part of landed cost. Without it, official eBay purchase results remain visible as discovery leads, but the canonical evaluator will not promote them to `BUY`.
 
 The server mints and caches short-lived eBay application tokens automatically. If eBay rejects a real request, normal searches show a YELLOW no-results warning instead of misleading mock matches. Only explicit demo inputs use mock fallback.
 

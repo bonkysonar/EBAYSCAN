@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  canonicalizeRetailDealUrl,
+  extractAmazonAsin,
   extractVinylPriceDropCards,
   parseOldRedditDealPage,
   parseRedditAtomFeed,
@@ -8,6 +10,18 @@ import {
 } from "../../scripts/lib/dealSourceAdapters.mjs";
 
 describe("deal source adapters", () => {
+  it("canonicalizes supported Amazon product links to a stable ASIN URL", () => {
+    expect(
+      canonicalizeRetailDealUrl(
+        "https://www.amazon.com/gp/product/B0170A169Q?tag=affiliate-20&utm_source=feed&psc=1",
+      ),
+    ).toBe("https://www.amazon.com/dp/B0170A169Q");
+    expect(extractAmazonAsin("https://www.amazon.com/gp/aw/d/B0170A169Q/ref=something")).toBe(
+      "B0170A169Q",
+    );
+    expect(extractAmazonAsin("https://a.co/d/short")).toBeNull();
+  });
+
   it("parses Reddit Atom entries and prefers a direct retailer URL", () => {
     const feed = `
       <feed>
@@ -93,6 +107,14 @@ describe("deal source adapters", () => {
     expect(splitDealArtistTitle("[Amazon] [Regional] Artist - Album [2xLP] @ $19.99")).toEqual({
       artist: "Artist",
       title: "Album [2xLP]",
+    });
+    expect(
+      splitDealArtistTitle(
+        'Janelle Monáe "Dirty Computer" (2LP Vinyl + MP3 Album) $16.99 + Free Shipping',
+      ),
+    ).toEqual({
+      artist: "Janelle Monáe",
+      title: "Dirty Computer",
     });
   });
 });

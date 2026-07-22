@@ -4,6 +4,10 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
+    "arbitrage:scan": "node scripts/runRetailArbitrageScan.mjs --skipUpload",
+    "arbitrage:research-plan": "node scripts/prepareArbitrageResearchPlan.mjs",
+    "arbitrage:upload": "node scripts/uploadLatestArbitrageFinds.mjs",
+    "sold-history:sync": "node scripts/syncEbaySoldHistory.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

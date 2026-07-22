@@ -1,5 +1,4 @@
 import { uploadArbitrageFinds } from "../../src/server/arbitrageFindsApi.js";
-import type { ArbitrageImportPayload } from "../../src/lib/arbitrage/types.js";
 
 type VercelRequest = {
   body?: unknown;
@@ -20,10 +19,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const payload = typeof req.body === "string" ? (JSON.parse(req.body) as ArbitrageImportPayload) : (req.body as ArbitrageImportPayload);
+    const payload = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     res.status(200).json(await uploadArbitrageFinds(process.cwd(), payload, readUploadToken(req.headers)));
   } catch (error) {
-    const statusCode = typeof error === "object" && error !== null && "statusCode" in error ? Number(error.statusCode) : 500;
+    const statusCode =
+      error instanceof SyntaxError
+        ? 400
+        : typeof error === "object" && error !== null && "statusCode" in error
+          ? Number(error.statusCode)
+          : 500;
     res.status(Number.isFinite(statusCode) ? statusCode : 500).json({
       error: error instanceof Error ? error.message : "Unknown arbitrage upload API error",
     });

@@ -1,170 +1,281 @@
-# Retail Arbitrage Workflow
+# Retail Arbitrage Scanner
 
-Captured from David's current process on 2026-06-26.
+This guide describes the record-buying workflow used by the Retail Arbitrage and Site-wide Sales pages.
 
-## Source List
+## Purpose
 
-The source inventory lives in `src/lib/arbitrage/vinylShopSources.ts`. It was captured from the Chrome tab group named `vinyl shops`.
+The scanner has two related jobs:
 
-## eBay Research Baseline
+1. Find individual new/sealed records that may sell quickly enough and profitably enough to buy for resale.
+2. Track broad retailer campaigns without presenting the same unchanged sale as new every day.
 
-Use eBay active listings as the automated ranking step:
+A source check, a promising price, or an active eBay asking price is not a buy recommendation by itself. `BUY` is reserved for records that clear the canonical demand, supply, match, freshness, and economics gates.
 
-- Search active eBay listings in category `176985` for Vinyl Records.
-- Filter to condition `NEW`.
-- Normalize the source row to artist + album title before searching.
-- Remove retailer/vendor copy, price text, format/color/edition noise, merch/accessory terms, source suffixes, and label/vendor values when the source title provides a cleaner `Artist - Title`.
-- Rank by the spread between source all-in cost and the cheapest matching active new-vinyl eBay listing.
-- Keep the Seller Hub Product Research link on each row for manual sold-history validation, but do not use Product Research as the default automated scoring input.
+## Source Catalog and Coverage
 
-Use eBay Seller Hub Product Research as the manual validation step:
+The source inventory lives in `src/lib/arbitrage/vinylShopSources.ts`. Each source can carry operational metadata such as priority, retailer type, sale likelihood, noise level, crawl type, default discount threshold, and source-specific minimum profit or ROI. The latest bounded live audit, repaired storefront routes, and known external limitations are recorded in `RETAIL_SOURCE_COVERAGE.md`.
 
-- `tabName=SOLD`
-- `dayRange=1095`
-- `sorting=-itemssold`
-- `marketplace=EBAY-US`
-- Prefer sold price plus shipping as the comparable sale amount.
+Every scan preserves source and page health in `sourceReports`:
 
-The current manual Product Research URL shape is:
+- Catalog and sale pages are reported separately.
+- Requested and resolved URLs are retained, including homepage fallback and discovered same-store sale pages.
+- Healthy, partial/degraded, blocked, and failed checks remain distinguishable.
+- A failed source check produces unknown coverage; it does not prove that a sale ended or that the retailer had no useful records.
+- Discovery feeds and aggregators remain labeled as leads until a retailer page confirms the offer.
 
-```text
-https://www.ebay.com/sh/research?marketplace=EBAY-US&keywords=<artist-or-title>&dayRange=1095&categoryId=176985&conditionId=1000&offset=0&limit=50&sorting=-itemssold&tabName=SOLD&tz=America%2FLos_Angeles
+The UI reports attempted, sale-page-capable, productive, parser-empty, blocked, and priority-source coverage. It also shows the server-assessed run-quality status and final-selection concentration. Counts describe what the scanner actually reached, not what it hoped to reach.
+
+Requests use bounded concurrency, per-host pacing, timeouts, retries, and backoff. Active eBay token/Browse calls also have request deadlines, and the parent scan will stop a stuck enrichment subprocess instead of hanging indefinitely. Diagnostic runs can limit the source set without changing the catalog:
+
+```powershell
+node scripts/runRetailArbitrageScan.mjs --sources=source-id-1,source-id-2 --skipUpload
 ```
 
-For retail arbitrage, Product Research links should be constrained to new vinyl:
+Source-limited runs are diagnostics only. New run manifests distinguish the full configured catalog from the sources actually scanned, and the publication API rejects a targeted/partial run as the new site-wide latest result.
 
-- `categoryId=176985` for Vinyl Records.
-- `conditionId=1000` for New.
-- `dayRange=1095`, `sorting=-itemssold`, and `tabName=SOLD`.
-- Treat local sold history as a fast cache only. If it has fewer than three useful new/sealed comps, or does not answer the repeat-seller question, eBay Product Research is still required.
-- For soundtracks, try broad query variants before accepting thin evidence: core title, core title + `Soundtrack`, and core title + `OST`. Use the variant that returns the strongest relevant sold evidence.
+Useful scan controls include `--sourceConcurrency`, `--fetchRetries`, `--fetchRetryDelayMs`, `--hostDelayMs`, `--fetchTimeoutMs`, `--maxDiscoveredSalePages`, `--discoveryDetailLimit`, `--discoveryConcurrency`, and `--ebayPurchaseMaxDetailRequests`. Defaults favor coverage over speed: four sources run concurrently, same-host requests are spaced by 650 ms, and retryable failures back off from one second.
 
-## Initial Buy Rules
+Walmart has a dedicated structured-data adapter. When Walmart permits access, it scans first-party vinyl across `$10`, `$15`, and `$20` price bands with price-low, best-match, and best-seller lanes, follows up to `--walmartMaxPages` per lane, deduplicates by Walmart item/UPC, and admits useful absolute prices without requiring a markdown badge. When Walmart returns a block such as HTTP 412, the run records blocked/unknown coverage and does not attempt to evade it.
 
-These are the current human rules to turn into a ratioed scoring table:
+`ebay-purchase` uses the official eBay Browse API to discover new, fixed-price vinyl in bounded, paginated price and genre lanes. The acquisition price includes the item price plus the lowest explicit fixed USD shipping quote, so inbound shipping is not added twice. A lane-balanced item-detail pass must also confirm artist, release, format/type, and independent record-specific metadata before the offer is trusted (with a stricter multi-aspect fallback when eBay omits `Type`). Labels, decals, mats, clocks, bowls, coasters, sleeves, bags, jewelry, and other accessories are rejected in purchase and active-comparison paths. These are active purchase listings only: the candidate's own listing is excluded from active resale comps, and an asking price never counts as sold evidence.
 
-- Strong buy candidate: eBay Product Research shows a seller has sold 10 or more copies of the same album in the last 3 years.
-- Minimum spread: all-in purchase price, including source-site tax, should leave at least `$5-$7` between cost and average sold price plus shipping.
-- Single-copy sold history: route into a separate review category instead of an automatic buy.
-- Thin sold history plus many active listings: usually reject.
-- Thin sold history plus few/no active listings: review manually; scarcity can occasionally make it worth testing.
+`EBAY_DELIVERY_POSTAL_CODE` is required before an eBay acquisition offer can be marked `official_api`, because the landed shipping quote must apply to a real destination. Without it—or when item-detail identity remains incomplete—the result stays a `discovery_lead` and cannot become an automatic `BUY`.
 
-## Signals To Capture Per Candidate
+Amazon is not claimed as a direct catalog while approved Amazon Creators API credentials are absent. A discovery feed can still surface an Amazon product URL; those results retain both identities and display as, for example, `Amazon via Vinyl Price Drop`.
 
-- Source site and source URL.
-- Candidate title and artist.
-- Purchase price.
-- Estimated source-site tax.
-- Estimated shipping to David.
-- All-in unit cost.
-- Bulk quantity available, when visible.
-- eBay 3-year total sold count.
-- Evidence that one seller has sold 10 or more copies, when visible.
-- Average sold price plus shipping.
-- Current active eBay listing count.
-- Lowest active eBay price plus shipping.
-- Estimated margin dollars.
-- Estimated margin ratio.
-- Decision bucket: `BUY`, `WATCH`, `REVIEW`, or `REJECT`.
+## Product Discovery
 
-## Daily Automation Plan
+The scanner first rejects obvious navigation, promotion-only, non-music, non-vinyl, accessory, merch, and alternate-format rows. Strong soundtrack and unknown-artist listings can remain when the product URL and vinyl-format evidence are credible.
 
-The Codex app automation `daily-vinyl-retail-arbitrage-scan` runs daily at 5:30 a.m. local time. The default mode is now a sale radar, not a comprehensive per-record pricing sweep. Its job is to:
+High-noise marketplace sources require explicit vinyl/LP evidence in the product itself. ISBN/book links, digital-only products, turntables/record players, apparel, merch, and conflicting physical formats are rejected even when surrounding page text mentions vinyl. Broad volume/BOGO collection offers remain sale-campaign leads unless the scanner can normalize a real per-record price; they do not become product candidates by themselves.
 
-1. Read the source list from `src/lib/arbitrage/vinylShopSources.ts`.
-2. Detect broad sale signals such as 30%+ off, site-wide/store-wide sales, all-vinyl sales, warehouse/clearance sales, and BOGO offers.
-3. Keep only high-signal product candidates from final-deal, clearance, price-drop, and sale-heavy sources.
-4. Validate those product candidates against local sold history only.
-5. Write a small importable JSON payload into `exports/arbitrage-finds/`.
-6. Publish the final newest JSON payload to the hosted Vercel site with `node scripts/uploadLatestArbitrageFinds.mjs` after any Product Research validation/enrichment step.
+General-retailer price cards are normalized before discount math. Per-unit values such as `$26.68/lb` or `$34.43/ea`, shipping amounts, savings callouts, and coupons cannot become the record's purchase price. Escaped HTML entities and query separators are decoded, and retailer taxonomy such as `Music & Performance` is removed from artist/title and eBay search text. A high-confidence record with a genuine compare-at markdown can enter an exploratory validation slot below a noisy source's main sale threshold; small markdowns still stay out of sale-radar.
 
-The default daily scan now attempts capped active-listing enrichment when `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET` are configured. If credentials are missing, the scan still completes and records active enrichment as skipped. eBay Product Research links are still generated for manual review.
+Shopify sources use paginated JSON catalogs rather than silently stopping after the first 250 products:
 
-```bash
-# Default: sale radar with capped product finds and sale alerts
-node scripts/runRetailArbitrageScan.mjs
+- Collection context is queried when the configured URL identifies a collection.
+- Pagination continues up to `--shopifyMaxPages`.
+- Only available variants can become candidates.
+- Each available variant is assessed separately, so a mixed CD/LP product cannot use the CD price for the LP. Explicit variant formats such as `2LP`, `2xLP`, and `2-LP` override contradictory product-level CD taxonomy throughout ingestion, active-supply enrichment, publication filtering, and display.
+- Price, compare-at price, currency, SKU, barcode, variant identity, inventory quantity, and collection context are retained when present.
+- All observed collection memberships are retained. A fixed percentage from a verified retailer page can change the candidate price only when it is truly sitewide/vinyl-wide or the product was observed in that exact sale collection. `Up to`, BOGO, and already-marked-down offers are never uniformly discounted.
 
-# Upload the newest local JSON to the hosted Vercel site after validation/enrichment
-node scripts/uploadLatestArbitrageFinds.mjs
+Candidates from all sources are scored together before the daily limit is applied. Ranking considers record confidence, source quality, discount, sold evidence, identifiers, and deal context. The research pool and final post-evaluation queue both use source-diverse selection. Strong global candidates are protected, each eligible source receives representation when capacity permits, and source/family caps prevent one high-volume feed from consuming the queue. The payload retains exclusion reasons, largest-source share, represented-source count, and concentration HHI.
 
-# Optional old behavior for an intentional broad scan
-node scripts/runRetailArbitrageScan.mjs --mode=comprehensive
+The default sale-radar run caps the final candidate queue; `--mode=comprehensive` intentionally retains the broader set.
 
-# Optional capped active-listing enrichment after reviewing the sale radar output
-node scripts/enrichArbitrageActiveEbay.mjs --max=25 --concurrency=1
+## Canonical Buy Decision
 
-# Local validation only: do not enrich or publish the generated payload
-node scripts/runRetailArbitrageScan.mjs --skipActiveEnrichment --skipUpload
+The shared evaluator lives in `src/lib/arbitrage/evaluateOpportunity.mjs`. The scan, curator, and browser UI use the same evaluator and reason codes.
+
+An automatic `BUY` still requires exact, fresh evidence, but economics are velocity-sensitive rather than one hard rule. The evaluator offers three profiles:
+
+- `Fast turn / smaller margin`: up to 45 estimated days, at least `$4` net, and 20% ROI.
+- `Balanced`: up to 120 estimated days, at least `$7` net, and 30% ROI.
+- `Slower / higher margin`: up to 270 estimated days, at least `$12` net, and 50% ROI.
+
+The thresholds are editable, and a record can qualify through any one profile. Faster records can therefore justify a smaller margin without weakening evidence or supply requirements.
+
+An automatic `BUY` requires all of these:
+
+- Dated, condition-matched sold transactions with validated recent velocity.
+- At least the configured 90-day units, sales-per-month, recency, and sell-through thresholds.
+- A complete active search with an exact matched active-listing count.
+- Sold and active artist, title, and edition matches at or above the configured confidence threshold.
+- Sold and active evidence captured within the configured freshness window.
+- A retailer offer captured within the configured offer-freshness window so price and availability are current.
+- Active supply and months-of-supply below the configured limits.
+- A conservative resale value.
+- Net profit and ROI above one profile's configured thresholds after the full cost ledger.
+- A priority score high enough for a normal buy; lower-scoring qualified records remain one-copy tests.
+
+Default evidence gates include at least 3 units sold in 90 days, 1 sale per month, a sale within 60 days for the balanced profile, 20% sell-through, market evidence no older than 30 days, and a retail offer no older than 2 days. Exact supply is converted into estimated days-to-sale and tested against each profile's inventory horizon. The default ledger reserves `$5` for inbound shipping unless known free shipping or pickup is explicitly recorded as zero. Unknown source currency withholds USD profit/ROI, and a foreign-currency price requires a positive, fresh dated conversion before it can clear economics.
+
+Priority is scored separately across demand durability, economics, competition/supply, evergreen strength, and evidence quality. Artist-level results from this account's own order history, retailer best-seller/customer-pick signals, reviews, identifiers, and explicit user preference are weak evergreen priors; they cannot rescue weak item-level velocity or crowded supply.
+
+Decision meanings:
+
+- `BUY`: every automatic gate passed.
+- `REVIEW`: promising or incomplete, but required evidence is missing, stale, undated, or not exact.
+- `WATCH`: demand, supply, and matching are acceptable, but the current buy price misses the economics gate and may become viable at a lower price.
+- `REJECT`: validated evidence fails the core gates or shows an explicit weak match.
+
+Missing research stays in `REVIEW`; it is not converted into a false reject.
+
+One exception is a complete, high-confidence exact active search that already exceeds the configured listing-count ceiling. That is known supply evidence, so it produces `SUPPLY_HARD_FAIL` immediately rather than consuming the validation queue while sold research is pending.
+
+## Demand, Supply, and Match Evidence
+
+Sold velocity must be based on dated transactions. The sold evidence model carries:
+
+- Units sold in 30, 90, and 365 days.
+- Transaction count and quantity-weighted unit count.
+- Latest sale date and days since last sale.
+- Sales per month.
+- Condition bucket.
+- Conservative price evidence.
+- Title/edition match confidence and evidence capture time.
+
+Active supply is enriched through paginated eBay active-listing searches. It carries:
+
+- Exact matched active-listing count.
+- Raw listings inspected.
+- Search completeness.
+- Match confidence.
+- Capture time and representative matches.
+
+Broad eBay result totals and the lowest active asking price can help research, but they are not accepted as exact supply unless the matching pass and search-completeness fields say so.
+
+Local sold evidence validates artist identity separately from title and edition. A same-title sale by another artist does not establish demand for the candidate.
+
+## Full Cost Ledger
+
+The evaluator calculates landed cost, selling cost, expected net profit, margin, ROI, and a recommended maximum purchase price. The ledger supports:
+
+- Purchase price and sales tax.
+- Inbound shipping.
+- FX fees and duty.
+- Other acquisition costs.
+- Marketplace percentage and fixed fees.
+- Promoted-listing fees.
+- Outbound shipping and packaging.
+- Returns reserve.
+- Other selling costs.
+
+The Retail Arbitrage detail panel shows this ledger instead of treating purchase price plus tax as the entire cost.
+
+## Local Sold History
+
+The primary sold-history path now uses the configured eBay user refresh token. It fetches Fulfillment orders and Finances transactions in bounded date slices, re-fetches a 14-day overlap for late refunds/fees, and writes only sanitized seller-side records:
+
+```powershell
+npm run sold-history:sync -- --lookback-days=730 --refresh-overlap-days=14
 ```
 
-The sale radar checks both the configured catalog URL and the store homepage, then follows a small capped set of sale links that the store actually publishes. A stale configured path can therefore fall back to a working homepage instead of losing the entire source. Successful fallback URLs are carried into later runs so the same known 404 is not retried every day. `--maxDiscoveredSalePages=<n>` controls the per-store discovery cap, `--fetchTimeoutMs=<n>` controls the request timeout, and `--sources=<id-1,id-2>` limits a diagnostic run to named catalog sources. `--discoveryDetailLimit=<n>` and `--discoveryConcurrency=<n>` cap structured discovery-source detail requests.
+Outputs include `sold-records-ebay-api.json`, `sold-comps-index.json`, `ebay-economics-summary.json`, and `sync-state.json`. Buyer identities, addresses, credentials, and raw API payloads are never persisted. Selling fees, promoted-listing charges, refunds, and directly attributable shipping labels are joined to orders; unmatched label charges remain account-level calibration percentiles instead of being guessed onto a record.
 
-### Structured Discovery Sources
+The index includes quantity-aware 30/90/365-day record metrics and artist aggregates used as a weak evergreen prior. A CSV remains an optional fallback/import path:
 
-- **Reddit VinylDeals:** reads the official public Atom feed at `/r/VinylDeals/new/.rss` and falls back to the old Reddit HTML feed when Atom is blocked or rate-limited. The adapter extracts the post price, publication time, discussion URL, and preferred direct retailer URL while excluding helper/Discord/social links. `r/VGMvinyl` remains catalog metadata but no longer displaces VinylDeals through domain deduplication.
-- **Vinyl Price Drop:** reads current deal cards from `/deals`, follows a capped set of detail pages to obtain current price, prior price, discount, retailer URL, and expiration state, and separately verifies `/deals/type/sitewide` entries. Expired sitewide entries are discarded rather than treated as active alerts.
-
-Both are discovery sources. Product listings point to the direct retailer when available and retain the discovery page as evidence. Sitewide findings remain labeled as unverified leads until the retailer itself confirms the offer.
-
-## Site-wide Sale Discovery Improvement Plan
-
-The unchanged daily sale list was primarily a coverage problem: the July 12 run had 47 failed sources, including many valid stores behind stale catalog paths. The first remediation is now implemented: homepage fallback, same-store sale-link discovery, request timeouts, structured page-health reporting, campaign fingerprints, and New / Changed / Ongoing labels. Aggregator results are labeled as unverified discovery leads rather than confirmed retailer sales.
-
-The next improvements should be delivered in this order:
-
-1. **Measure direct-retailer coverage every day.** Track healthy, recovered, blocked, and failed sources separately; alert when direct-retailer coverage falls below 85% or changes sharply. Keep stale paths out of the blocked count when a working homepage was scanned.
-2. **Add source-specific official feeds and adapters for priority stores.** Prefer Shopify catalog endpoints, retailer RSS/Atom feeds, sitemaps, public promotion pages, and email/newsletter inputs where available. Build small maintained adapters for the high-sale-likelihood stores that cannot be understood from generic HTML. Do not attempt to bypass access controls on 403/412 sources; route those to assisted browser review or an approved feed.
-3. **Use a two-stage discovery and confirmation pipeline.** Let deal sites and community feeds nominate a retailer and offer, then confirm the offer on the retailer's own page before counting it as a retailer sale. Keep unconfirmed leads visible in their own queue with the actual linked retailer URL and evidence text.
-4. **Track campaign lifecycle, not just today's phrase match.** Persist first seen, last seen, offer fingerprint, and consecutive successful observations. Highlight New and Changed campaigns, keep Ongoing campaigns quieter, and report Ended only after two successful scans no longer find the offer.
-5. **Improve evidence extraction.** Store the exact short banner/link evidence, promo code, percentage, scope, expiration date when present, and the page that supplied it. Reject generic navigation labels such as “All Vinyl” unless they occur with a real discount, BOGO, coupon, clearance, or price-threshold signal.
-6. **Tune from review outcomes.** Record confirmed sale, false positive, expired, and wrong-scope feedback. Review weekly recall/precision by source and add or tighten source rules based on that evidence.
-
-The operating targets should be: at least 85% of direct retailer sources successfully checked, zero repeated known-404 probes after recovery is learned, all alerts linked to their evidence page, and a daily summary that leads with New / Changed retailer sales instead of repeating the full ongoing list.
-
-The automation is intentionally review-oriented. It should not purchase anything, submit forms, alter listings, or dismiss finds.
-
-## Retail Arbitrage Page
-
-The app page lives at `#/retail-arbitrage`.
-
-It currently supports:
-
-- Automatically loading the newest daily findings JSON from `exports/arbitrage-finds/` through `/api/arbitrage/latest`.
-- Filtering by decision and source.
-- Sorting by margin, sold count, purchase price, decision, or newest.
-- Dismissing and restoring finds.
-- Tuning local buy parameters such as minimum margin, repeat-seller sold count, total sold count, source tax rate, and scarcity thresholds.
-- Exporting the visible queue back to JSON.
-
-Expected import shape:
-
-```json
-{
-  "createdAt": "2026-06-26T12:30:00.000Z",
-  "source": "daily-vinyl-retail-arbitrage-scan",
-  "finds": [
-    {
-      "id": "source-stable-record-id",
-      "sourceId": "vinyl-price-drop",
-      "sourceName": "Vinyl Price Drop",
-      "sourceUrl": "https://example.com/product",
-      "artist": "Artist Name",
-      "title": "Album Title",
-      "purchasePrice": 12.99,
-      "averageSoldPrice": 19.99,
-      "averageSoldShipping": 5.00,
-      "totalSoldCount": 18,
-      "oneSellerSoldCount": 11,
-      "activeListingCount": 4,
-      "capturedAt": "2026-06-26T12:30:00.000Z",
-      "notes": ["Short evidence note."]
-    }
-  ]
-}
+```powershell
+node scripts/buildSoldHistoryFromEbayCsv.mjs path\to\orders.csv exports\sold-history my-export --as-of=2026-07-16
 ```
 
-## Open Questions
+The builder allocates order-level shipping, preserves transaction and unit counts, separates new/sealed, used, and unknown condition buckets, and calculates 30/90/365-day metrics. This is the account's own sales evidence; it does not prove that another marketplace seller repeatedly sold the record.
 
-- Whether the daily scan should start by scraping/reading source pages directly, by opening source pages for assisted review, or by accepting manually clipped candidates from the browser.
-- Whether to require the 10-copy signal from one seller specifically, or allow total sold count across all sellers when one-seller evidence is unavailable.
-- Whether the default margin floor should be `$5`, `$7`, or a tiered rule based on quantity and source reliability.
+## eBay Product Research
+
+Seller Hub Product Research remains useful for sold-price and repeat-row validation. Research links target Vinyl Records (`categoryId=176985`), New (`conditionId=1000`), the Sold tab, and normalized query variants.
+
+Product Research rows are aggregate rows. Even when they show a total sold quantity and a latest-sale date, they do not reveal how those units were distributed across the last 30, 90, and 365 days. Aggregate Product Research alone therefore cannot prove velocity or create a `BUY`.
+
+Research is generic and keyed by stable find ID:
+
+```powershell
+node scripts/prepareArbitrageResearchPlan.mjs
+node scripts/prepareArbitrageResearchPlan.mjs exports\arbitrage-finds\<scan-file>.json --max=40
+```
+
+The generated plan includes the find ID, normalized query variants, research URL, source identity, and edition terms. The curation step matches returned rows to the record, rejects bundles, merch, damaged copies, used copies, and conflicting editions, then stores the usable evidence by find ID. There is no title-by-title allowlist in the curator.
+
+For soundtracks, the plan can try the core title, `Soundtrack`, and `OST` variants. A pending, failed, or no-row search remains explicitly labeled.
+
+## Scan, Enrichment, Curation, and Publication
+
+The pipeline has explicit phases:
+
+1. The scanner refreshes sanitized eBay sold history when user credentials are configured, unless `--skipEbaySync` is supplied.
+2. `runRetailArbitrageScan.mjs` writes a timestamped `phase: "scan"`, `publicationStatus: "draft"` artifact with a stable `runId`.
+3. Active eBay enrichment updates that draft when credentials are available.
+4. Product Research is gathered against the find-ID plan.
+5. `curateRetailArbitrageRun.mjs` applies the research, runs the canonical evaluator, and writes the dated `phase: "final"` artifact plus an evidence sidecar.
+6. `uploadLatestArbitrageFinds.mjs` accepts only final schema-version-2 payloads.
+
+Example:
+
+```powershell
+node scripts/runRetailArbitrageScan.mjs --skipUpload
+node scripts/prepareArbitrageResearchPlan.mjs exports\arbitrage-finds\<scan-file>.json --max=40
+node scripts/curateRetailArbitrageRun.mjs exports\arbitrage-finds\<scan-file>.json exports\arbitrage-finds\<raw-research-file>.json 2026-07-16
+node scripts/uploadLatestArbitrageFinds.mjs --file=exports\arbitrage-finds\retail-arbitrage-2026-07-16.json --dryRun
+node scripts/uploadLatestArbitrageFinds.mjs --file=exports\arbitrage-finds\retail-arbitrage-2026-07-16.json
+```
+
+Raw scan and enrichment artifacts cannot become latest. Final publication stores an immutable run artifact and advances the latest pointer atomically. Retrying identical content for the same `runId` is safe; conflicting content or an older observation cannot silently replace a newer run. The server re-runs the canonical evaluator for every claimed `BUY`, rejects incomplete source coverage, normalizes duplicate sale-page variants, guarantees unique returned find IDs, and rebuilds summary counts from the returned rows. Legacy payloads with explicit draft markers are rejected even when their filename resembles a daily final, and pointerless legacy fallback chooses the newest valid observation time rather than filesystem/upload time.
+
+Publishing requires `ARBITRAGE_UPLOAD_URL` and `ARBITRAGE_UPLOAD_TOKEN`. The scripts never purchase products, submit retailer forms, or mutate eBay listings.
+
+## Sale Campaign Lifecycle
+
+Site-wide sales are tracked as campaigns rather than one latest phrase per source. Multiple simultaneous offers from one retailer can coexist.
+
+Repeated title/body fragments that describe the same URL, scope, discount, and promo code collapse into one observation. Distinct simultaneous offers, such as separate 30%-off and 40%-off campaigns, remain separate.
+
+Statuses:
+
+- `new`: first observation.
+- `changed`: the campaign's offer, evidence, scope, code, discount, or content changed.
+- `ongoing`: recently reconfirmed.
+- `evergreen`: repeatedly observed and intentionally quieter.
+- `unknown`: the campaign was not observed because its source check failed or was not trustworthy.
+- `ended`: absent for the required number of successful source checks.
+
+A failed scan never ends a campaign. The current lifecycle requires repeated healthy misses before `ended`. First seen, last seen, observation counts, miss/failure counts, evidence hashes, reopening, and transition history are retained.
+
+The latest final payload is available at `/api/arbitrage/latest`. Campaign history is available at `/api/arbitrage/history`, with optional `sourceId`, `status`, and `limit` query parameters.
+
+## Buyer UI
+
+The Retail Arbitrage page is `#/retail-arbitrage`.
+
+- It opens on the complete active queue, sorted by priority band and score, so an evidence-limited run never looks falsely empty.
+- Separate views cover Buy now, Needs validation, Watch, Reject, purchased/tracked, user-rejected, and all active records.
+- Rows show priority, recommended strategy, buy cost, profit per 30 days, estimated turn, recent/long-term velocity, supply, and evidence/source status.
+- Details show all three buy profiles, the score breakdown, full ledger, 30/90/365-day and three-year evidence, sell-through, supply horizon, confidence/freshness, gate failures, research links, and suggested quantity.
+- Threshold settings, dismissals, and record outcomes are stored locally in the browser.
+- Outcomes include bought, listed, sold, returned, not for me, too slow, margin too thin, and false positive.
+- The page reloads the latest publication every five minutes, refreshes immediately when the tab becomes visible or focused again, and re-evaluates freshness every minute. Cached recommendations stay hidden until an authoritative latest response arrives, while later transient refresh failures keep the last verified publication visible.
+- Dismissals and outcomes are tied to a material offer fingerprint. A new price, original price, discount, URL, inventory state, or publication observation returns the record to review.
+
+The Site-wide Sales page is `#/site-wide-sales`.
+
+- New and changed campaigns lead the page.
+- Ongoing, evergreen, unknown, and ended campaigns are separated.
+- Cards show retailer versus discovery-lead confidence, evidence, first/last seen, scan history, and the latest lifecycle transition.
+- Feedback includes confirmed, false positive, expired, and wrong scope.
+- Current campaigns render without waiting for optional history. History has a five-second deadline and can replace embedded campaign data only when its `runId` matches the latest publication.
+- Campaign feedback is tied to the observed campaign version and lifecycle health, so changed, reopened, or newly recovered sales are not hidden by an older expired/false-positive review.
+
+Local feedback changes the browser's working queues; it does not alter retailer data or marketplace listings.
+
+## Daily Automation
+
+The `daily-vinyl-retail-arbitrage-scan` automation is scheduled for 5:30 a.m. local time. Its deterministic workflow is:
+
+1. Refresh sanitized eBay Fulfillment/Finances history with the incremental overlap.
+2. Run the broad source scan and retain honest page-level coverage.
+3. Keep the raw artifact as a draft and enrich active eBay evidence when credentials permit.
+4. Build the find-ID Product Research plan.
+5. Gather or ingest sold research without patching source code for individual titles.
+6. Curate once through the canonical evaluator.
+7. Validate the final artifact and publish it once.
+8. Report coverage, evidence status, adaptive priority, and decisions.
+
+The automation must not edit the curator to accommodate the day's titles, publish a draft, buy anything, submit forms, change listings, or dismiss user feedback.
+
+## Verification
+
+Run before handoff or deployment:
+
+```powershell
+npm test
+npm run build
+node scripts/uploadLatestArbitrageFinds.mjs --file=exports\arbitrage-finds\retail-arbitrage-YYYY-MM-DD.json --dryRun
+```
+
+Useful focused suites:
+
+```powershell
+npx vitest run src/tests/candidatePipeline.test.ts src/tests/shopifyCatalog.test.ts
+npx vitest run src/tests/arbitrageEvaluation.test.ts src/tests/productResearchCuration.test.ts
+npx vitest run src/tests/saleCampaignLifecycle.test.ts src/tests/arbitrageFindsApi.test.ts
+```

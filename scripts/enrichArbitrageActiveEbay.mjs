@@ -1,47 +1,23 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  activeSearchKey,
+  buildActiveSearchProfile,
+  isExcludedEbayActiveListing,
+  matchActiveListing,
+} from "../src/lib/arbitrage/activeEbayMatching.mjs";
+import { getEbayApplicationToken } from "./lib/ebayPurchaseDiscovery.mjs";
 
 const WORKSPACE = process.cwd();
 const FINDS_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
 const EBAY_VINYL_CATEGORY_ID = "176985";
 const EBAY_MARKETPLACE_ID = "EBAY_US";
-const SEARCH_LIMIT = 10;
+const SEARCH_PAGE_LIMIT = 100;
+const DEFAULT_MAX_SEARCH_PAGES = 2;
 const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_MAX_QUERIES = 100;
-const FORMAT_NOISE_TOKENS = new Set([
-  "album",
-  "anniversary",
-  "black",
-  "blue",
-  "clear",
-  "color",
-  "colored",
-  "colour",
-  "deluxe",
-  "edition",
-  "exclusive",
-  "gold",
-  "gram",
-  "green",
-  "heavyweight",
-  "indie",
-  "limited",
-  "orange",
-  "pink",
-  "purple",
-  "record",
-  "records",
-  "red",
-  "remaster",
-  "sealed",
-  "silver",
-  "splatter",
-  "swirl",
-  "transparent",
-  "vinyl",
-  "white",
-  "yellow",
-]);
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 const args = new Map(
   process.argv
@@ -54,66 +30,77 @@ const args = new Map(
 
 const maxQueries = args.has("max") ? Number(args.get("max")) : DEFAULT_MAX_QUERIES;
 const concurrency = args.has("concurrency") ? Math.max(1, Number(args.get("concurrency"))) : DEFAULT_CONCURRENCY;
+const maxSearchPages = args.has("pages") ? Math.max(1, Number(args.get("pages"))) : DEFAULT_MAX_SEARCH_PAGES;
 const includeCompleted = args.has("all");
-const latestPath = args.get("file") ? join(WORKSPACE, args.get("file")) : latestFindsPath();
-
 const env = readLocalEnv();
-const token = await getApplicationToken(env);
-const payload = JSON.parse(readFileSync(latestPath, "utf8"));
-const queue = buildQueue(payload.finds).slice(0, maxQueries);
-const startedAt = new Date().toISOString();
-
-let completed = 0;
-let withLowest = 0;
-let withoutResults = 0;
-let failed = 0;
+let token = "";
 let haltedByRateLimit = false;
+const isMain = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
 
-console.log(
-  JSON.stringify({
-    file: latestPath,
-    rows: payload.finds.length,
-    uniqueQueries: queue.length,
-    concurrency,
-    startedAt,
-  }),
-);
+if (isMain) await main();
 
-await runPool(queue, concurrency, async (entry) => {
-  const result = await enrichEntry(entry);
-  if (haltedByRateLimit && result.status !== "failed") return;
-  applyResult(payload.finds, entry.key, result);
-  completed += 1;
-  if (result.status === "available") withLowest += 1;
-  if (result.status === "no_results") withoutResults += 1;
-  if (result.status === "failed") failed += 1;
+async function main() {
+  const latestPath = args.get("file") ? join(WORKSPACE, args.get("file")) : latestFindsPath();
+  const endpointRoot = env.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+  const tokenResult = await getEbayApplicationToken({ endpointRoot, env, fetchImpl: fetch });
+  if (!tokenResult.available) throw new Error(tokenResult.reason);
+  token = tokenResult.token;
+  const payload = JSON.parse(readFileSync(latestPath, "utf8"));
+  const queue = buildQueue(payload.finds).slice(0, maxQueries);
+  const startedAt = new Date().toISOString();
+  let completed = 0;
+  let withLowest = 0;
+  let withoutResults = 0;
+  let failed = 0;
 
-  if (completed % 10 === 0 || completed === queue.length) {
-    writeFileSync(latestPath, JSON.stringify(payload, null, 2));
-    console.log(
-      JSON.stringify({
-        completed,
-        failed,
-        remaining: queue.length - completed,
-        withLowest,
-        withoutResults,
-      }),
-    );
-  }
-});
+  console.log(
+    JSON.stringify({
+      file: latestPath,
+      rows: payload.finds.length,
+      uniqueQueries: queue.length,
+      concurrency,
+      maxSearchPages,
+      pageLimit: SEARCH_PAGE_LIMIT,
+      startedAt,
+    }),
+  );
 
-writeFileSync(latestPath, JSON.stringify(payload, null, 2));
-console.log(
-  JSON.stringify({
-    completed,
-    failed,
-    file: latestPath,
-    finishedAt: new Date().toISOString(),
-    startedAt,
-    withLowest,
-    withoutResults,
-  }),
-);
+  await runPool(queue, concurrency, async (entry) => {
+    const result = await enrichActiveEntry(entry);
+    if (haltedByRateLimit && result.status !== "failed") return;
+    applyResult(payload.finds, entry.key, result);
+    completed += 1;
+    if (result.status === "available") withLowest += 1;
+    if (result.status === "no_results") withoutResults += 1;
+    if (result.status === "failed") failed += 1;
+
+    if (completed % 10 === 0 || completed === queue.length) {
+      writeFileSync(latestPath, JSON.stringify(payload, null, 2));
+      console.log(
+        JSON.stringify({
+          completed,
+          failed,
+          remaining: queue.length - completed,
+          withLowest,
+          withoutResults,
+        }),
+      );
+    }
+  });
+
+  writeFileSync(latestPath, JSON.stringify(payload, null, 2));
+  console.log(
+    JSON.stringify({
+      completed,
+      failed,
+      file: latestPath,
+      finishedAt: new Date().toISOString(),
+      startedAt,
+      withLowest,
+      withoutResults,
+    }),
+  );
+}
 
 function latestFindsPath() {
   const latest = readdirSync(FINDS_DIR)
@@ -135,195 +122,253 @@ function readLocalEnv() {
   }
 
   return {
+    EBAY_APPLICATION_ACCESS_TOKEN:
+      process.env.EBAY_APPLICATION_ACCESS_TOKEN ?? parsed.EBAY_APPLICATION_ACCESS_TOKEN,
+    EBAY_APP_ACCESS_TOKEN: process.env.EBAY_APP_ACCESS_TOKEN ?? parsed.EBAY_APP_ACCESS_TOKEN,
+    EBAY_BROWSE_ACCESS_TOKEN:
+      process.env.EBAY_BROWSE_ACCESS_TOKEN ?? parsed.EBAY_BROWSE_ACCESS_TOKEN,
     EBAY_CLIENT_ID: process.env.EBAY_CLIENT_ID ?? parsed.EBAY_CLIENT_ID,
     EBAY_CLIENT_SECRET: process.env.EBAY_CLIENT_SECRET ?? parsed.EBAY_CLIENT_SECRET,
     EBAY_ENV: process.env.EBAY_ENV ?? parsed.EBAY_ENV ?? "production",
+    EBAY_DELIVERY_POSTAL_CODE:
+      process.env.EBAY_DELIVERY_POSTAL_CODE ?? parsed.EBAY_DELIVERY_POSTAL_CODE,
     EBAY_MARKETPLACE_ID: process.env.EBAY_MARKETPLACE_ID ?? parsed.EBAY_MARKETPLACE_ID ?? EBAY_MARKETPLACE_ID,
   };
-}
-
-async function getApplicationToken(env) {
-  if (!env.EBAY_CLIENT_ID || !env.EBAY_CLIENT_SECRET) {
-    throw new Error("Missing EBAY_CLIENT_ID or EBAY_CLIENT_SECRET.");
-  }
-
-  const endpointRoot = env.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
-  const credentials = Buffer.from(`${env.EBAY_CLIENT_ID}:${env.EBAY_CLIENT_SECRET}`).toString("base64");
-  const response = await fetch(`${endpointRoot}/identity/v1/oauth2/token`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Basic ${credentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      scope: "https://api.ebay.com/oauth/api_scope",
-    }),
-  });
-
-  const payloadText = await response.text();
-  const payload = payloadText ? JSON.parse(payloadText) : {};
-  if (!response.ok || !payload.access_token) {
-    throw new Error(`eBay token request failed (${response.status}): ${payload.error_description ?? response.statusText}`);
-  }
-
-  return payload.access_token;
 }
 
 function buildQueue(finds) {
   const byKey = new Map();
   for (const find of finds) {
-    if (find.opportunityType === "sitewide_sale" || find.purchasePrice <= 0 || isSkippableActiveFind(find)) continue;
-    const variants = activeSearchVariants(find);
-    const primary = variants[0];
-    if (!primary) continue;
-    const key = primary.toLowerCase();
+    const profile = buildActiveSearchProfile(find);
+    if (!profile) continue;
+    const key = profile.key;
     if (!byKey.has(key)) {
       byKey.set(key, {
-        artist: normalizedActiveArtist(find),
         key,
         needsRun: false,
-        title: normalizedActiveTitle(find),
-        variants,
+        primary: profile.primary,
+        profile,
+        variants: profile.variants,
       });
     }
     const entry = byKey.get(key);
-    if (includeCompleted || !["available", "no_results"].includes(find.ebayActiveSearchStatus)) {
+    if (
+      includeCompleted ||
+      !["available", "no_results"].includes(find.ebayActiveSearchStatus) ||
+      find.ebayActiveSearchComplete !== true
+    ) {
       entry.needsRun = true;
     }
   }
   return [...byKey.values()].filter((entry) => entry.needsRun);
 }
 
-function activeSearchVariants(find) {
-  const artist = normalizedActiveArtist(find);
-  const title = normalizedActiveTitle(find);
-  const variants = new Set();
-  const add = (value) => {
-    const cleaned = cleanSearchText(value);
-    if (cleaned) variants.add(cleaned);
-  };
-
-  if (title) {
-    const titleAlreadyHasArtist = artist && startsWithSameWords(title, artist);
-    add(titleAlreadyHasArtist || !artist ? title : `${artist} ${title}`);
-
-    if (/\bsoundtrack\b|\bost\b|\bmotion\s+picture\b/i.test(`${find.title ?? ""} ${find.sourceListingTitle ?? ""}`)) {
-      const coreTitle = cleanSearchText(title.replace(/\b(?:soundtrack|ost|original motion picture soundtrack|motion picture soundtrack)\b/gi, " "));
-      const prefix = artist && !startsWithSameWords(coreTitle, artist) ? `${artist} ` : "";
-      add(`${prefix}${coreTitle}`);
-      add(`${prefix}${coreTitle} Soundtrack`);
-      add(`${prefix}${coreTitle} OST`);
-    }
-  }
-
-  if (variants.size === 0) {
-    const urlKeyword = keywordFromUrl(find.ebayResearchUrl);
-    if (urlKeyword) add(urlKeyword);
-  }
-
-  return [...variants];
-}
-
-function keywordFromUrl(url) {
-  if (!url) return "";
-  try {
-    return cleanSearchText(new URL(url).searchParams.get("keywords") ?? "");
-  } catch {
-    return "";
-  }
-}
-
-async function enrichEntry(entry) {
-  let lastError = null;
-  let lastNoResults = null;
+export async function enrichActiveEntry(entry, options = {}) {
+  const listingsById = new Map();
+  const errors = [];
+  const variantResults = [];
+  let rawListingsInspected = 0;
+  let excludedSourceListingCount = 0;
+  let searchComplete = true;
+  let successfulVariants = 0;
 
   for (const variant of entry.variants) {
     try {
-      const result = await searchLowestNewVinyl(variant, entry);
-      if (result.status === "available") return result;
-      lastNoResults = result;
+      const result = options.searchVariant
+        ? await options.searchVariant(variant, entry.profile)
+        : await searchVariantPages(variant, entry.profile, options.searchOptions);
+      successfulVariants += 1;
+      rawListingsInspected += result.rawListingsInspected;
+      excludedSourceListingCount += Number(result.excludedSourceListingCount) || 0;
+      searchComplete = searchComplete && result.searchComplete;
+      variantResults.push({
+        keyword: variant,
+        excludedSourceListingCount: result.excludedSourceListingCount ?? 0,
+        matchedListings: result.listings.length,
+        pagesFetched: result.pagesFetched,
+        rawListingsInspected: result.rawListingsInspected,
+        searchComplete: result.searchComplete,
+      });
+      for (const listing of result.listings) {
+        const existing = listingsById.get(listing.id);
+        if (!existing || listing.totalPrice < existing.totalPrice) listingsById.set(listing.id, listing);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (isRateLimitError(message)) {
         haltedByRateLimit = true;
         return {
           error: `${message}. Stopped the batch to protect the shared eBay API quota.`,
+          excludedSourceListingCount,
+          rawListingsInspected,
+          searchComplete: false,
           searchedVariants: entry.variants,
           status: "failed",
+          variantResults,
         };
       }
-      lastError = message;
+      errors.push(`${variant}: ${message}`);
+      searchComplete = false;
     }
   }
 
-  if (lastNoResults) return { ...lastNoResults, searchedVariants: entry.variants };
-
-  return {
-    error: lastError ?? "Active eBay search failed without a response.",
-    searchedVariants: entry.variants,
-    status: "failed",
-  };
-}
-
-async function searchLowestNewVinyl(keyword, entry) {
-  const endpointRoot = env.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
-  const url = new URL("/buy/browse/v1/item_summary/search", endpointRoot);
-  url.searchParams.set("q", keyword);
-  url.searchParams.set("category_ids", EBAY_VINYL_CATEGORY_ID);
-  url.searchParams.set("filter", "conditions:{NEW}");
-  url.searchParams.set("limit", String(SEARCH_LIMIT));
-  url.searchParams.set("sort", "price");
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-      "X-EBAY-C-MARKETPLACE-ID": env.EBAY_MARKETPLACE_ID,
-    },
-  });
-
-  const payloadText = await response.text();
-  const payload = payloadText ? JSON.parse(payloadText) : {};
-  if (!response.ok) {
-    const message = payload.errors?.map((error) => error.message).join("; ") || response.statusText;
-    throw new Error(`eBay Browse API failed (${response.status}): ${message}`);
-  }
-
-  const listings = (payload.itemSummaries ?? [])
-    .map(mapItem)
-    .filter(Boolean)
-    .filter((listing) => isUsableActiveVinylListing(listing, entry))
-    .sort((left, right) => left.totalPrice - right.totalPrice);
-  const lowest = listings[0];
-  if (!lowest) {
+  if (successfulVariants === 0) {
     return {
-      activeListingCount: payload.total ?? 0,
-      keyword,
-      listings: [],
-      searchUrl: publicSearchUrl(keyword),
-      status: "no_results",
+      error: errors.join("; ") || "Active eBay search failed without a response.",
+      excludedSourceListingCount,
+      rawListingsInspected,
+      searchComplete: false,
+      searchedVariants: entry.variants,
+      status: "failed",
+      variantResults,
     };
   }
 
+  const listings = [...listingsById.values()].sort((left, right) => left.totalPrice - right.totalPrice);
+  const lowest = listings[0];
+  const status = lowest ? "available" : "no_results";
   return {
-    activeListingCount: payload.total ?? listings.length,
-    keyword,
-    listings: listings.slice(0, 5),
+    activeListingCount: listings.length,
+    error: errors.length > 0 ? errors.join("; ") : undefined,
+    excludedSourceListingCount,
+    keyword: entry.primary,
+    listings: listings.slice(0, 10),
     lowest,
-    searchUrl: publicSearchUrl(keyword),
-    status: "available",
+    matchConfidence: searchComplete ? "high" : "unknown",
+    rawListingsInspected,
+    searchComplete,
+    searchedVariants: entry.variants,
+    searchUrl: publicSearchUrl(entry.primary),
+    status,
+    variantResults,
   };
 }
 
-function mapItem(item) {
+export async function searchVariantPages(keyword, profile, options = {}) {
+  const environment = options.env ?? env;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const tokenValue = options.token ?? token;
+  const pageLimit = Math.max(1, options.pageLimit ?? SEARCH_PAGE_LIMIT);
+  const pageCountLimit = Math.max(1, options.maxPages ?? maxSearchPages);
+  const requestTimeoutMs = positiveNumber(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
+  const endpointRoot = environment.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+  const deliveryCountry = "US";
+  const deliveryPostalCode = String(environment.EBAY_DELIVERY_POSTAL_CODE ?? "").trim();
+  if (!deliveryPostalCode) {
+    throw new Error("EBAY_DELIVERY_POSTAL_CODE is required for trustworthy active eBay landed-price evidence.");
+  }
+  const listingsById = new Map();
+  let pagesFetched = 0;
+  let excludedSourceListingCount = 0;
+  let rawListingsInspected = 0;
+  let untrustedMatchedListingCount = 0;
+  let searchComplete = false;
+
+  for (let page = 0; page < pageCountLimit; page += 1) {
+    const offset = page * pageLimit;
+    const url = new URL("/buy/browse/v1/item_summary/search", endpointRoot);
+    url.searchParams.set("q", keyword);
+    url.searchParams.set("category_ids", EBAY_VINYL_CATEGORY_ID);
+    url.searchParams.set(
+      "filter",
+      `conditionIds:{1000},buyingOptions:{FIXED_PRICE},deliveryCountry:${deliveryCountry},deliveryPostalCode:${deliveryPostalCode},itemLocationCountry:${deliveryCountry}`,
+    );
+    url.searchParams.set("limit", String(pageLimit));
+    url.searchParams.set("offset", String(offset));
+    url.searchParams.set("sort", "price");
+
+    const response = await fetchWithTimeout(fetchImpl, url, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${tokenValue}`,
+        "X-EBAY-C-MARKETPLACE-ID": environment.EBAY_MARKETPLACE_ID,
+        "X-EBAY-C-ENDUSERCTX": `contextualLocation=${encodeURIComponent(
+          `country=${deliveryCountry},zip=${deliveryPostalCode}`,
+        )}`,
+      },
+    }, requestTimeoutMs);
+    const payloadText = await response.text();
+    let payload = {};
+    if (payloadText) {
+      try {
+        payload = JSON.parse(payloadText);
+      } catch {
+        if (response.ok) throw new Error("eBay Browse API returned invalid JSON.");
+      }
+    }
+    if (!response.ok) {
+      const message = payload.errors?.map((error) => error.message).join("; ") || payloadText.slice(0, 180) || response.statusText;
+      throw new Error(`eBay Browse API failed (${response.status}): ${message}`);
+    }
+
+    const summaries = payload.itemSummaries ?? [];
+    pagesFetched += 1;
+    rawListingsInspected += summaries.length;
+    for (const item of summaries) {
+      if (isExcludedEbayActiveListing(item, profile)) {
+        excludedSourceListingCount += 1;
+        continue;
+      }
+      const match = matchActiveListing(item.title ?? "", profile);
+      if (!match.matched) continue;
+      const listing = mapItem(item, {
+        currency: "USD",
+        deliveryCountry,
+        deliveryPostalCode,
+      });
+      if (!listing) {
+        untrustedMatchedListingCount += 1;
+        continue;
+      }
+      const matchedListing = {
+        ...listing,
+        editionSignals: match.editionSignals,
+        matchConfidence: match.confidence,
+        matchScore: match.score,
+        matchedVariant: keyword,
+      };
+      const existing = listingsById.get(matchedListing.id);
+      if (!existing || matchedListing.totalPrice < existing.totalPrice) listingsById.set(matchedListing.id, matchedListing);
+    }
+
+    const total = parseMoney(payload.total);
+    const hasMoreByTotal = total !== null && offset + summaries.length < total;
+    const hasMore = Boolean(payload.next) || hasMoreByTotal || (total === null && summaries.length === pageLimit);
+    if (!hasMore) {
+      searchComplete = untrustedMatchedListingCount === 0;
+      break;
+    }
+  }
+
+  return {
+    excludedSourceListingCount,
+    listings: [...listingsById.values()].sort((left, right) => left.totalPrice - right.totalPrice),
+    pagesFetched,
+    rawListingsInspected,
+    searchComplete,
+    untrustedMatchedListingCount,
+  };
+}
+
+function mapItem(item, destination) {
+  if (String(item.conditionId ?? "") !== "1000") return null;
+  if (String(item.itemLocation?.country ?? "").toUpperCase() !== destination.deliveryCountry) return null;
   const price = parseMoney(item.price?.value);
-  if (price === null) return null;
-  const shippingPrice = parseMoney(item.shippingOptions?.[0]?.shippingCost?.value) ?? 0;
+  if (price === null || String(item.price?.currency ?? "").toUpperCase() !== destination.currency) return null;
+  const shippingPrices = (item.shippingOptions ?? [])
+    .filter((option) => {
+      return (
+        String(option.shippingCostType ?? "").toUpperCase() === "FIXED" &&
+        String(option.shippingCost?.currency ?? "").toUpperCase() === destination.currency
+      );
+    })
+    .map((option) => parseMoney(option.shippingCost?.value))
+    .filter((value) => value !== null);
+  if (shippingPrices.length === 0) return null;
+  const shippingPrice = Math.min(...shippingPrices);
   return {
     condition: item.condition ?? "Unknown",
-    currency: item.price?.currency ?? item.shippingOptions?.[0]?.shippingCost?.currency ?? "USD",
+    currency: destination.currency,
     id: item.itemId ?? item.itemWebUrl ?? item.title,
     itemUrl: item.itemWebUrl,
     price,
@@ -333,37 +378,41 @@ function mapItem(item) {
   };
 }
 
-function isUsableActiveVinylListing(listing, entry) {
-  if (/\b(?:cd|compact\s+disc|hoodie|shirt|t-shirt|tee\b|sweatshirt|trading\s+card|cassette|dvd|blu-ray|book|poster|slipmat|koozie|pizza\s+cutter|turntable|speaker|stylus|cartridge|tote|hat|socks|pin|patch|sticker|gift\s+card|coupon|bundle|lot of)\b/i.test(
-    listing.title,
-  )) {
-    return false;
-  }
-
-  const listingTokens = new Set(searchTokens(listing.title));
-  const artistTokens = searchTokens(entry.artist);
-  const titleTokens = searchTokens(entry.title).filter((token) => !FORMAT_NOISE_TOKENS.has(token));
-  const matchedTitleTokens = titleTokens.filter((token) => listingTokens.has(token)).length;
-  const matchedArtistTokens = artistTokens.filter((token) => listingTokens.has(token)).length;
-
-  if (titleTokens.length >= 3 && matchedTitleTokens < 2) return false;
-  if (titleTokens.length > 0 && titleTokens.length < 3 && matchedTitleTokens < titleTokens.length) return false;
-  if (artistTokens.length > 0 && matchedArtistTokens === 0 && titleTokens.length < 4) return false;
-  return true;
-}
-
 function applyResult(finds, key, result) {
   const now = new Date().toISOString();
   for (const find of finds) {
-    const primary = activeSearchVariants(find)[0]?.toLowerCase();
-    if (primary !== key) continue;
+    if (activeSearchKey(find) !== key) continue;
+    const profile = buildActiveSearchProfile(find);
+    if (!profile) continue;
 
     find.ebayActiveSearchStatus = result.status;
     find.ebayActiveSearchUpdatedAt = now;
-    find.ebayActiveSearchKeyword = result.keyword ?? result.searchedVariants?.[0] ?? key;
-    find.ebayActiveSearchUrl = result.searchUrl ?? publicSearchUrl(result.keyword ?? key);
+    find.ebayActiveSearchKeyword = result.keyword ?? result.searchedVariants?.[0] ?? profile.primary;
+    find.ebayActiveSearchUrl = result.searchUrl ?? publicSearchUrl(result.keyword ?? profile.primary);
     find.ebayActiveSearchVariants = result.searchedVariants ?? (result.keyword ? [result.keyword] : undefined);
     find.activeListingCount = result.activeListingCount ?? null;
+    find.activeListingCountIsExactMatch = result.searchComplete === true;
+    find.activeEvidence = {
+      capturedAt: now,
+      exactMatchedListingCount: result.activeListingCount ?? null,
+      excludedSourceListingCount: result.excludedSourceListingCount ?? 0,
+      matchConfidence: result.matchConfidence ?? "unknown",
+      rawListingsInspected: result.rawListingsInspected ?? 0,
+      searchComplete: result.searchComplete === true,
+      status: result.status,
+    };
+    find.ebayActiveEditionIdentity = {
+      colors: profile.edition.colors,
+      format: profile.edition.format,
+      key: profile.edition.key,
+      retailerExclusive: profile.edition.retailerExclusive,
+      signals: profile.edition.signals,
+    };
+    find.ebayActiveMatchConfidence = result.matchConfidence ?? "unknown";
+    find.ebayActiveExcludedSourceListingCount = result.excludedSourceListingCount ?? 0;
+    find.ebayActiveRawListingsInspected = result.rawListingsInspected ?? 0;
+    find.ebayActiveSearchComplete = result.searchComplete === true;
+    find.exactActiveListingCount = result.activeListingCount ?? null;
     find.lowestActivePrice = result.lowest?.totalPrice ?? null;
     find.lowestActiveItemPrice = result.lowest?.price ?? null;
     find.lowestActiveShippingPrice = result.lowest?.shippingPrice ?? null;
@@ -371,6 +420,7 @@ function applyResult(finds, key, result) {
     find.lowestActiveUrl = result.lowest?.itemUrl;
     find.ebayActiveListings = result.listings ?? [];
     if (result.error) find.ebayActiveSearchError = result.error;
+    else delete find.ebayActiveSearchError;
   }
 }
 
@@ -395,85 +445,31 @@ function publicSearchUrl(keyword) {
   return url.toString();
 }
 
-function cleanSearchText(value) {
-  return String(value)
-    .replace(/[\u2013\u2014]/g, " ")
-    .replace(/[^A-Za-z0-9&'./\s-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function normalizedActiveArtist(find) {
-  const sourceArtist = artistFromListingTitle(find.sourceListingTitle);
-  return cleanSearchText(
-    String(sourceArtist || find.artist || "")
-      .replace(/\b(?:unknown\s+artist|various\s+artists?)\b/gi, " ")
-      .replace(/\b(?:official\s+store|sound\s+of\s+vinyl|records?|recordings|music|shop|store)\b/gi, " "),
-  );
-}
-
-function normalizedActiveTitle(find) {
-  const sourceTitle = titleFromListingTitle(find.sourceListingTitle);
-  const title = sourceTitle || find.title || find.sourceListingTitle || "";
-  return cleanSearchText(
-    String(title)
-      .replace(/\$\s*[0-9.,]+/g, " ")
-      .replace(/\bat\s+(?:amazon|target|walmart|urban outfitters|barnes\s*&\s*noble|deep discount)\b.*$/gi, " ")
-      .replace(/\b(?:music\s+(?:on|and|from|by|performance)|music\s*(?:&|and)\s*performance|was\s*\/\s*ea)\b.*$/gi, " ")
-      .replace(/\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban outfitters|uo)\s+edition\b/gi, " ")
-      .replace(/\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban outfitters|uo)\b/gi, " ")
-      .replace(/\b(?:colored|colour|color|clear|red|blue|green|yellow|pink|purple|orange|white|black|gold|silver|splatter|swirl|marbled|translucent|transparent)\s+vinyl\b/gi, " ")
-      .replace(/\b(?:vinyl|record|records|album|lp|2lp|3lp|4lp|ep|single)\b/gi, " ")
-      .replace(/\b(?:180g|180\s*gram|180grams|heavyweight|remaster(?:ed)?|half-speed\s+master)\b/gi, " ")
-      .replace(/\b(?:pre[-\s]?order|sale|clearance|new|sealed|brand\s+new|staff\s+pick)\b/gi, " ")
-      .replace(/\[[^\]]*\]/g, " ")
-      .replace(/\([^)]*(?:vinyl|lp|record|edition|exclusive|color|colour|soundtrack|remaster|sale|deal|gram)[^)]*\)/gi, " ")
-      .replace(/[()]/g, " "),
-  );
-}
-
-function isSkippableActiveFind(find) {
-  const title = normalizedActiveTitle(find);
-  if (!title || title.length < 3) return true;
-  return /^(cheap|deals?|home|facebook page|filter amazon|click here|continue shopping|sign up|sign in|order history|premium membership|time|under)$/i.test(title);
-}
-
-function artistFromListingTitle(title) {
-  const cleaned = cleanSearchText(title || "");
-  const match = cleaned.match(/^(.{2,80}?)(?:\s+-\s+|\s*:\s+).{2,}$/);
-  return match ? cleanSearchText(match[1]) : "";
-}
-
-function titleFromListingTitle(title) {
-  const cleaned = cleanSearchText(title || "");
-  const match = cleaned.match(/^.{2,80}?(?:\s+-\s+|\s*:\s+)(.{2,})$/);
-  return match ? cleanSearchText(match[1]) : "";
-}
-
-function startsWithSameWords(value, prefix) {
-  return value.toLowerCase().split(/\s+/).slice(0, 4).join(" ") === prefix.toLowerCase().split(/\s+/).slice(0, 4).join(" ");
-}
-
-function searchTokens(value) {
-  return cleanSearchText(value)
-    .toLowerCase()
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9'\s]/g, " ")
-    .split(/\s+/)
-    .filter((token) => token.length > 1 && !["the", "and", "for", "with", "from", "new"].includes(token));
-}
-
 function parseMoney(value) {
   const parsed = Number.parseFloat(String(value ?? ""));
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function roundMoney(value) {
-  return Math.round(value * 100) / 100;
+async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function positiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function roundMoney(value) {
+  return Math.round(value * 100) / 100;
 }
 
 function isRateLimitError(message) {

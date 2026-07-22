@@ -1,0 +1,788 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "Record Scanner: Usability and Buy-Priority Redesign",
+    "description": "A diagnosis of the current scanner and a phased redesign for reliable retail-arbitrage recommendations.",
+    "generatedAt": "2026-07-16T22:00:00Z",
+    "cards": [],
+    "charts": [
+      {
+        "id": "source_outcomes_chart",
+        "title": "Configured source outcomes",
+        "subtitle": "Latest run: 126 configured sources; 68 ended in error and 18 produced candidates.",
+        "type": "horizontalBar",
+        "intent": "comparison",
+        "question": "How much of the configured source universe produced usable candidates?",
+        "rationale": "Three non-overlapping outcome categories show the dominant source-coverage failure without implying a sequential funnel.",
+        "comparisonContext": {
+          "denominator": "126 configured sources",
+          "grain": "one row per source outcome",
+          "unit": "sources"
+        },
+        "dataset": "source_outcomes",
+        "sourceId": "latest_scan",
+        "valueFormat": "number",
+        "palette": {
+          "kind": "sequential",
+          "name": "blue"
+        },
+        "labels": {
+          "values": "all"
+        },
+        "encodings": {
+          "x": {
+            "field": "outcome",
+            "type": "nominal",
+            "label": "Outcome"
+          },
+          "y": {
+            "field": "source_count",
+            "type": "quantitative",
+            "label": "Sources"
+          },
+          "tooltip": [
+            {
+              "field": "share",
+              "type": "quantitative",
+              "label": "Share of configured sources",
+              "format": "percent"
+            },
+            {
+              "field": "interpretation",
+              "type": "nominal",
+              "label": "Interpretation"
+            }
+          ]
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "sam_current_table",
+        "title": "What the current final payload actually stores for Sam & Dave",
+        "subtitle": "Sold observations and active supply are separate facts and cannot be rendered as one ratio.",
+        "dataset": "sam_current",
+        "sourceId": "latest_scan",
+        "defaultSort": {
+          "field": "metric",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "metric",
+            "label": "Metric",
+            "type": "text"
+          },
+          {
+            "field": "value",
+            "label": "Current value",
+            "type": "text"
+          },
+          {
+            "field": "meaning",
+            "label": "What it means",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "failure_table",
+        "title": "The current scanner fails before the recommendation score",
+        "subtitle": "Identity, discovery, metric lineage, and economics all need correction.",
+        "dataset": "failure_modes",
+        "source": {
+          "query": {
+            "engine": "duckdb",
+            "sql": "SELECT row.*\nFROM read_json_auto(\n  'reports/scanner-usability-redesign-2026-07-16/artifact.json'\n) AS artifact,\nUNNEST(artifact.snapshot.datasets.failure_modes) AS rows(row)",
+            "description": "Loads the reviewed failure-mode rows documented by the scanner audit.",
+            "id": "scanner-failure-modes"
+          }
+        },
+        "defaultSort": {
+          "field": "priority",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "priority",
+            "label": "Priority",
+            "type": "number"
+          },
+          {
+            "field": "failure",
+            "label": "Finding and evidence",
+            "type": "text"
+          },
+          {
+            "field": "required_change",
+            "label": "Required change",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "history_table",
+        "title": "The user's own sales history is the strongest available training set",
+        "subtitle": "The existing export validates the user's recollection, but it ends on April 10.",
+        "dataset": "seller_history",
+        "source": {
+          "query": {
+            "engine": "duckdb",
+            "sql": "SELECT row.*\nFROM read_json_auto(\n  'reports/scanner-usability-redesign-2026-07-16/artifact.json'\n) AS artifact,\nUNNEST(artifact.snapshot.datasets.seller_history) AS rows(row)",
+            "description": "Loads reviewed aggregates calculated from the sanitized eBay sold-history index.",
+            "id": "seller-history-reviewed-aggregates"
+          }
+        },
+        "defaultSort": {
+          "field": "metric",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "metric",
+            "label": "Metric",
+            "type": "text"
+          },
+          {
+            "field": "value",
+            "label": "Value",
+            "type": "text"
+          },
+          {
+            "field": "use",
+            "label": "How the model should use it",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "score_table",
+        "title": "Proposed 100-point priority model",
+        "subtitle": "Evergreen is a prior; it never overrides weak demand, crowded supply, or bad economics.",
+        "dataset": "priority_model",
+        "source": {
+          "query": {
+            "engine": "duckdb",
+            "sql": "SELECT row.*\nFROM read_json_auto(\n  'reports/scanner-usability-redesign-2026-07-16/artifact.json'\n) AS artifact,\nUNNEST(artifact.snapshot.datasets.priority_model) AS rows(row)",
+            "description": "Loads the proposed scanner priority-model components.",
+            "id": "priority-model-design"
+          }
+        },
+        "defaultSort": {
+          "field": "weight",
+          "direction": "desc"
+        },
+        "columns": [
+          {
+            "field": "component",
+            "label": "Component",
+            "type": "text"
+          },
+          {
+            "field": "weight",
+            "label": "Points",
+            "type": "number"
+          },
+          {
+            "field": "inputs",
+            "label": "Evidence and role",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "market_stack_table",
+        "title": "Each data source should answer one question",
+        "subtitle": "Advertised prices, realized sales, product identity, and evergreen awareness are different evidence types.",
+        "dataset": "market_stack",
+        "source": {
+          "query": {
+            "engine": "duckdb",
+            "sql": "SELECT row.*\nFROM read_json_auto(\n  'reports/scanner-usability-redesign-2026-07-16/artifact.json'\n) AS artifact,\nUNNEST(artifact.snapshot.datasets.market_stack) AS rows(row)",
+            "description": "Loads the proposed role and limitation for each market-data source.",
+            "id": "market-data-role-design"
+          }
+        },
+        "defaultSort": {
+          "field": "order",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "order",
+            "label": "Order",
+            "type": "number"
+          },
+          {
+            "field": "source",
+            "label": "Source",
+            "type": "text"
+          },
+          {
+            "field": "role",
+            "label": "Use and limitation",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "roadmap_table",
+        "title": "Implementation sequence",
+        "subtitle": "Fix trust and coverage before tuning an evergreen score.",
+        "dataset": "roadmap",
+        "source": {
+          "query": {
+            "engine": "duckdb",
+            "sql": "SELECT row.*\nFROM read_json_auto(\n  'reports/scanner-usability-redesign-2026-07-16/artifact.json'\n) AS artifact,\nUNNEST(artifact.snapshot.datasets.roadmap) AS rows(row)",
+            "description": "Loads the proposed implementation phases and acceptance tests.",
+            "id": "scanner-roadmap-design"
+          }
+        },
+        "defaultSort": {
+          "field": "phase",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "phase",
+            "label": "Phase",
+            "type": "number"
+          },
+          {
+            "field": "name",
+            "label": "Workstream and deliverable",
+            "type": "text"
+          },
+          {
+            "field": "acceptance",
+            "label": "Acceptance test",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "inputs_table",
+        "title": "Inputs needed from the user",
+        "subtitle": "The screen recording is valuable, but updated transaction economics are equally important.",
+        "dataset": "user_inputs",
+        "source": {
+          "query": {
+            "engine": "duckdb",
+            "sql": "SELECT row.*\nFROM read_json_auto(\n  'reports/scanner-usability-redesign-2026-07-16/artifact.json'\n) AS artifact,\nUNNEST(artifact.snapshot.datasets.user_inputs) AS rows(row)",
+            "description": "Loads the prioritized user-input checklist for calibration.",
+            "id": "scanner-input-checklist"
+          }
+        },
+        "defaultSort": {
+          "field": "priority",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "priority",
+            "label": "Priority",
+            "type": "number"
+          },
+          {
+            "field": "input",
+            "label": "Input and request",
+            "type": "text"
+          },
+          {
+            "field": "why",
+            "label": "Why it matters",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "latest_scan",
+        "label": "Latest final retail-arbitrage scan",
+        "path": "exports/arbitrage-finds/retail-arbitrage-2026-07-16.json"
+      },
+      {
+        "id": "sold_history",
+        "label": "Sanitized eBay sold-history index",
+        "path": "exports/sold-history/sold-comps-index.json"
+      },
+      {
+        "id": "audit_notes",
+        "label": "Scanner usability audit notes",
+        "path": "reports/scanner-usability-redesign-2026-07-16/audit-notes.md"
+      },
+      {
+        "id": "user_screenshots",
+        "label": "User-provided Sam & Dave Product Research screenshots",
+        "path": "inputs/sam-dave-product-research-screenshots.png"
+      },
+      {
+        "id": "evaluator_code",
+        "label": "Arbitrage evaluator",
+        "path": "src/lib/arbitrage/evaluateOpportunity.mjs"
+      },
+      {
+        "id": "curation_code",
+        "label": "Product Research curation",
+        "path": "scripts/lib/productResearchCuration.mjs"
+      },
+      {
+        "id": "ui_code",
+        "label": "Retail Arbitrage UI",
+        "path": "src/components/RetailArbitrage.tsx"
+      },
+      {
+        "id": "walmart_config",
+        "label": "Retail source catalog",
+        "path": "src/lib/arbitrage/vinylShopSources.ts"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# Record Scanner: Usability and Buy-Priority Redesign\n\n## Executive summary\n\n- The user is right: the current interface presents unrelated sold and active metrics in a way that can look like sell-through.\n- The Sam & Dave recommendation should be rejected. Its sparse sold evidence cannot support demand, and the active market is crowded.\n- Walmart is not underperforming because there are no deals. The scanner misses structured results, does not paginate, and excludes low absolute prices unless a large markdown badge is visible.\n- The redesign should fix identity and data lineage first, then score demand durability, economics, competition, evergreen strength, and evidence quality separately.\n- A narrated screen recording plus a fresh eBay orders/economics export will make the model materially better than a hand-built famous-artist list."
+      },
+      {
+        "id": "sam_screenshot",
+        "type": "markdown",
+        "sourceId": "user_screenshots",
+        "body": "## Sam & Dave is a reject, not a buy signal\n\nThe attached Product Research screenshots show 20 active listings with a $21.11 floor and only two sold rows. If those two observations cover the selected three-year window, the implied pace is about 0.06 sales per month. Against 20 active copies, that is roughly 360 months of supply. The $27.75 average sold price can still be useful as sparse price evidence, but it says almost nothing about how quickly another copy will sell."
+      },
+      {
+        "id": "sam_current",
+        "type": "table",
+        "tableId": "sam_current_table"
+      },
+      {
+        "id": "diagnosis_intro",
+        "type": "markdown",
+        "body": "## The main problem is trust, not a missing score\n\nThe pipeline currently loses or contaminates evidence before ranking. A better evergreen formula cannot rescue a candidate whose artist, edition, active floor, sold rows, or cost basis is wrong. The scanner should temporarily suppress automatic buy recommendations whenever identity or metric provenance is uncertain."
+      },
+      {
+        "id": "source_outcomes",
+        "type": "chart",
+        "chartId": "source_outcomes_chart"
+      },
+      {
+        "id": "failure_modes",
+        "type": "table",
+        "tableId": "failure_table"
+      },
+      {
+        "id": "history_intro",
+        "type": "markdown",
+        "body": "## Existing seller history already contains the beginning of the answer\n\nThe local export contains enough repeated sales to learn title- and artist-level priors. It also confirms the user's memory: a typical new/sealed item sold for a median $22 before buyer-paid shipping. The model should learn from exact editions first, then carefully back off to album and artist priors when exact history is absent."
+      },
+      {
+        "id": "seller_history",
+        "type": "table",
+        "tableId": "history_table"
+      },
+      {
+        "id": "priority_intro",
+        "type": "markdown",
+        "body": "## Priority should combine five independent dimensions\n\nUse hard gates before the score: exact identity, current availability, a credible conservative resale floor, and calibrated positive economics. Prefer buys at $10-$16, treat $16-$20 as conditional, and require an explicit margin exception above $20. Then rank the survivors with the model below."
+      },
+      {
+        "id": "priority_model",
+        "type": "table",
+        "tableId": "score_table"
+      },
+      {
+        "id": "bands",
+        "type": "markdown",
+        "body": "## Recommended action bands\n\n- **A — Evergreen restock (80-100):** proven repeat demand, stable price, manageable supply; buy normal quantity.\n- **B — Evergreen test (65-79):** strong catalog prior and economics, but incomplete direct sales proof; buy one copy.\n- **C — Speculative (50-64):** niche or trend-led; only consider at a very low buy price and cap at one copy.\n- **Reject:** any hard-gate failure, score below 50, or extreme supply relative to dated demand."
+      },
+      {
+        "id": "market_stack_intro",
+        "type": "markdown",
+        "body": "## Price and demand need separate source stacks\n\nA blank eBay search is useful for current active supply, but it cannot replace long-term realized sales. [eBay Browse](https://developer.ebay.com/api-docs/buy/static/api-browse.html) is suitable for active items and landed asking prices. [eBay Product Research](https://www.ebay.com/help/selling/selling-tools/product-research?id=4853) remains the strongest eBay source for up to three years of sold history, although its results must be edition-matched and its sparse aggregates must not be treated as velocity. Marketplace Insights is restricted and is not a dependable new integration path. Optional cross-retail price context can come from Google Shopping services and Amazon history from [Keepa](https://keepa.com/#!api); these sources show advertised prices or demand proxies, not realized eBay unit sales."
+      },
+      {
+        "id": "market_stack",
+        "type": "table",
+        "tableId": "market_stack_table"
+      },
+      {
+        "id": "walmart",
+        "type": "markdown",
+        "sourceId": "audit_notes",
+        "body": "## Walmart needs a dedicated adapter\n\nParse Walmart's structured page state instead of visible anchors; capture item ID, UPC/GTIN, canonical URL, current and was price, seller, fulfillment, stock, badges, ratings, and reviews. Crawl a query matrix for Walmart-sold vinyl across $10, $15, and $20 price bands, best-match, best-seller, and price-low sorts, and all available pages. Add an **absolute-price lane** so a $12.91 or $17.97 record can qualify without a 25%-40% strike-through discount. Deduplicate by Walmart item ID and UPC before market research."
+      },
+      {
+        "id": "roadmap",
+        "type": "table",
+        "tableId": "roadmap_table"
+      },
+      {
+        "id": "inputs_intro",
+        "type": "markdown",
+        "body": "## What is needed from the user\n\nA screen recording is absolutely useful. The best recording is 20-30 minutes at normal speed, with voiceover, showing one Walmart scan and the exact eBay validation process. Say why each record is opened, skipped, bought, or rejected. Include both obvious winners and borderline decisions. Buyer names, addresses, passwords, and other personal information should be hidden."
+      },
+      {
+        "id": "user_inputs",
+        "type": "table",
+        "tableId": "inputs_table"
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "body": "## Caveats and open decisions\n\nThe current sold-history file stops on 2026-04-10, so it cannot measure the last three months. Buyer-paid shipping is known, but actual label cost, marketplace fees, promoted-listing fees, inbound cost allocation, purchase cost, and returns are not complete enough to calibrate net profit. Evergreen awareness should start with the user's labels and own history; external popularity signals such as MusicBrainz identity and Wikimedia pageviews should remain weak priors until they prove predictive."
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-16T22:00:00Z",
+    "status": "partial",
+    "datasets": {
+      "source_outcomes": [
+        {
+          "outcome": "Ended in error",
+          "source_count": 68,
+          "share": 0.5397,
+          "interpretation": "No usable source result in the latest run."
+        },
+        {
+          "outcome": "Checked, no candidates",
+          "source_count": 40,
+          "share": 0.3175,
+          "interpretation": "The source completed without yielding a candidate."
+        },
+        {
+          "outcome": "Produced candidates",
+          "source_count": 18,
+          "share": 0.1429,
+          "interpretation": "At least one raw candidate was discovered."
+        }
+      ],
+      "sam_current": [
+        {
+          "metric": "Active matched supply",
+          "value": "23",
+          "meaning": "Current Browse listings that passed the scanner matcher; not Product Research sold rows."
+        },
+        {
+          "metric": "Aggregate Product Research sold units",
+          "value": "2",
+          "meaning": "Two accepted sold observations; not active supply and not a sell-through numerator with a validated time window."
+        },
+        {
+          "metric": "Validated sold 30 / 90 / 365 days",
+          "value": "n/a / n/a / n/a",
+          "meaning": "The current curation did not establish dated velocity."
+        },
+        {
+          "metric": "Scanner active floor",
+          "value": "$31.98",
+          "meaning": "Higher than the screenshot's $21.11 floor; at least one title-encoding mismatch can exclude the cheaper listing."
+        },
+        {
+          "metric": "Conservative resale estimate",
+          "value": "$28.64",
+          "meaning": "Sparse price evidence only; it does not establish demand."
+        },
+        {
+          "metric": "Current decision",
+          "value": "REJECT",
+          "meaning": "The local final payload rejects the candidate on economics and insufficient demand evidence."
+        }
+      ],
+      "failure_modes": [
+        {
+          "priority": 1,
+          "failure": "Misleading deployed labels and stale cache — the older UI presents a pseudo sold ratio, while the current API carries 23 active listings for Sam & Dave.",
+          "evidence": "The older UI displays maximum-row sold quantity divided by summed sold quantity as 'sold'; the current production API carries 23 active for Sam & Dave.",
+          "required_change": "Remove the pseudo-ratio, show publication age, and never silently retain cached candidates after a failed latest-data request."
+        },
+        {
+          "priority": 2,
+          "failure": "Cross-record Product Research contamination — at least one album inherited another album's sold rows because fuzzy evidence beat its exact no-row result.",
+          "evidence": "At least one album inherited another album's sold rows because fuzzy evidence with sales beat the exact find-ID result with no rows.",
+          "required_change": "Require exact find-ID/query provenance, block incompatible formats such as box sets, and quarantine ambiguous matches."
+        },
+        {
+          "priority": 3,
+          "failure": "Weak artist and edition identity — retailer titles can be parsed with an album name such as The Amalgamut as the artist.",
+          "evidence": "Retail titles such as 'The Amalgamut - 20th Anniversary Edition' can be parsed with the album as the artist.",
+          "required_change": "Normalize by UPC/GTIN, MusicBrainz release identity, label/catalog number, format, color, and edition before searching markets."
+        },
+        {
+          "priority": 4,
+          "failure": "Active matcher drops valid low-price listings — mojibake punctuation can push a correct title below threshold and rejected reasons are discarded.",
+          "evidence": "Mojibake punctuation can push a correct Sam & Dave title below the match threshold and the rejected-listing reason is discarded.",
+          "required_change": "Normalize mojibake, retain rejected-listing diagnostics, and show broad count beside exact matched count."
+        },
+        {
+          "priority": 5,
+          "failure": "Walmart discovery and filtering — 18 raw candidates became zero final finds; one replay recovered 9 of 37 structured products and did not paginate.",
+          "evidence": "18 raw Walmart candidates became zero final finds; one replay recovered 9 of 37 structured products and did not paginate.",
+          "required_change": "Build a Walmart structured-data adapter, crawl pages/query bands, and add an absolute-price lane independent of markdown badges."
+        },
+        {
+          "priority": 6,
+          "failure": "Uncalibrated economics — every candidate inherits fixed $5 inbound, $6 outbound, 15% fee, 2% promotion, and 3% returns assumptions.",
+          "evidence": "The evaluator assumes $5 inbound shipping, $6 outbound shipping, 15% fees, 2% promotion, and a 3% returns reserve for every candidate.",
+          "required_change": "Estimate source-specific inbound cost and learn real selling costs from payouts, labels, promotion, returns, and purchase-cost records."
+        }
+      ],
+      "seller_history": [
+        {
+          "metric": "Order rows / units",
+          "value": "2,492 / 2,521",
+          "use": "Train exact-title, album, and artist repeat-demand priors."
+        },
+        {
+          "metric": "Covered sale dates",
+          "value": "2025-12-31 to 2026-04-10",
+          "use": "Useful historical slice, but refresh before computing current velocity."
+        },
+        {
+          "metric": "New/sealed rows / units",
+          "value": "611 / 632",
+          "use": "Primary cohort for the retail-arbitrage model."
+        },
+        {
+          "metric": "Median new/sealed item price",
+          "value": "$22.00",
+          "use": "Supports the user's statement that normal new records sell around $20."
+        },
+        {
+          "metric": "Median new/sealed buyer-paid total",
+          "value": "$25.97",
+          "use": "Keep item price, buyer-paid shipping, and total collected explicit in the economics ledger."
+        },
+        {
+          "metric": "Median buyer-paid shipping",
+          "value": "$4.47",
+          "use": "Useful revenue context, but not a substitute for actual shipping-label cost."
+        },
+        {
+          "metric": "Exact title groups with 3+ new units",
+          "value": "58",
+          "use": "Seed the evergreen-restock training set."
+        },
+        {
+          "metric": "Exact title groups with 5+ new units",
+          "value": "41",
+          "use": "High-confidence repeat sellers for initial positive labels."
+        }
+      ],
+      "priority_model": [
+        {
+          "component": "Demand durability",
+          "weight": 30,
+          "inputs": "Own exact-edition sales, dated marketplace sales, recency, and stability across 90/365/1,095 days. Use: prefer repeated sellers over one-off observations.",
+          "purpose": "Prefer titles that repeatedly sell rather than titles with one or two lifetime observations."
+        },
+        {
+          "component": "Economics",
+          "weight": 30,
+          "inputs": "Buy cost, tax, inbound allocation, buyer-paid shipping, fees, label cost, promotion, returns, and conservative price floor. Use: rank real net contribution and ROI.",
+          "purpose": "Rank net contribution and ROI using the user's real transaction economics."
+        },
+        {
+          "component": "Competition and supply",
+          "weight": 20,
+          "inputs": "Exact and broad active counts, cheapest-three landed prices, months of supply, and seller concentration. Use: reject crowded records even when famous.",
+          "purpose": "Reject crowded records even when the artist is famous."
+        },
+        {
+          "component": "Evergreen prior",
+          "weight": 15,
+          "inputs": "User whitelist/blacklist, own artist/catalog repeat history, catalog age, and stable public awareness. Use: support one-copy tests, never override weak sales.",
+          "purpose": "Break ties and support one-copy tests; never substitute popularity for sales evidence."
+        },
+        {
+          "component": "Evidence quality",
+          "weight": 5,
+          "inputs": "UPC/catalog/edition confidence, freshness, source agreement, and sample size. Use: expose uncertainty and prevent false precision.",
+          "purpose": "Make uncertainty visible and prevent weak matches from looking precise."
+        }
+      ],
+      "market_stack": [
+        {
+          "order": 1,
+          "source": "User's own sold orders",
+          "role": "Primary evidence for what this account can sell, at what item price, and how often. Not for current external active supply.",
+          "do_not_use_for": "Current external active supply."
+        },
+        {
+          "order": 2,
+          "source": "eBay Browse / public active search",
+          "role": "Exact active supply, broad supply, and landed asking-price floor. Not for realized sold price or long-term velocity.",
+          "do_not_use_for": "Realized sold price or long-term velocity."
+        },
+        {
+          "order": 3,
+          "source": "eBay Product Research",
+          "role": "Up to three years of realized sold-price evidence and explicit time-bounded trends. Do not turn aggregate rows into dated units or seller-repeat proof.",
+          "do_not_use_for": "Treating aggregate listing rows as dated units or seller-level repeat proof."
+        },
+        {
+          "order": 4,
+          "source": "Google Shopping service pilot",
+          "role": "Cross-retailer current price ceiling/floor and offer discovery by UPC. Advertised offers do not prove completed sales or demand.",
+          "do_not_use_for": "Completed sales or demand."
+        },
+        {
+          "order": 5,
+          "source": "Keepa",
+          "role": "Amazon price history, offer-count history, and sales-rank trend as a secondary proxy. It does not provide exact eBay units sold.",
+          "do_not_use_for": "Exact eBay units sold."
+        },
+        {
+          "order": 6,
+          "source": "MusicBrainz + user labels + Wikimedia",
+          "role": "Edition identity and a weak evergreen-awareness prior. It must not override weak margin or high marketplace supply.",
+          "do_not_use_for": "Overriding weak margin or high marketplace supply."
+        }
+      ],
+      "roadmap": [
+        {
+          "phase": 1,
+          "name": "Restore trust — deploy explicit active, sold-window, sample-size, and publication-age labels; remove the pseudo sold ratio and stale-cache ambiguity.",
+          "deliverable": "Deploy explicit active, sold-window, price-sample, and publication-age labels; remove the pseudo sold ratio and stale-cache ambiguity.",
+          "acceptance": "Sam & Dave shows about 20-23 active, 2 sparse sold observations, no validated sell-through, and a reject reason."
+        },
+        {
+          "phase": 2,
+          "name": "Fix identity and evidence provenance — require exact find-ID curation, UPC/catalog identity, incompatible-format blocks, mojibake normalization, and rejected-listing diagnostics.",
+          "deliverable": "Exact find-ID curation, UPC/catalog identity, incompatible-format blocks, mojibake normalization, and rejected-listing diagnostics.",
+          "acceptance": "No candidate can inherit another candidate's sold rows; the $21.11 Sam & Dave listing is either matched or visibly explained."
+        },
+        {
+          "phase": 3,
+          "name": "Calibrate economics — build a source- and order-aware ledger from real fees, labels, promotion, returns, purchase cost, and shipping allocation.",
+          "deliverable": "A source- and order-aware profit ledger trained from real fees, labels, promotion, returns, purchase cost, and shipping allocation.",
+          "acceptance": "Known good $13-to-$25 examples score similarly to the user's actual outcomes."
+        },
+        {
+          "phase": 4,
+          "name": "Rebuild Walmart discovery — add a structured-data adapter, price-band/sort/page matrix, first-party filter, dedupe, and absolute-price qualification.",
+          "deliverable": "Structured-data adapter, price-band/sort/page matrix, Walmart-first-party filter, dedupe, and absolute-price qualification.",
+          "acceptance": "A benchmark recording's accepted Walmart titles are recovered at high recall without flooding the queue with non-vinyl products."
+        },
+        {
+          "phase": 5,
+          "name": "Add priority bands — ship evergreen restock, evergreen test, speculative, and reject queues with quantity caps.",
+          "deliverable": "Evergreen restock, evergreen test, speculative, and reject queues with quantity caps.",
+          "acceptance": "Well-known repeat sellers rise only when margin and supply are acceptable; Pokey LaFarge-like low-proof candidates remain test-only or reject."
+        },
+        {
+          "phase": 6,
+          "name": "Measure scanner quality — maintain a labeled benchmark and weekly discovery-recall, false-positive, price-error, buy-precision, and days-to-sale report.",
+          "deliverable": "A labeled benchmark and weekly report for discovery recall, false-positive rate, price error, buy precision, and days-to-sale.",
+          "acceptance": "The scanner demonstrably finds at least as many valid Walmart opportunities as the user's manual benchmark."
+        }
+      ],
+      "user_inputs": [
+        {
+          "priority": 1,
+          "input": "Narrated screen recording — 20-30 minutes showing a normal Walmart scan and eBay validation, including accepted, rejected, and borderline records.",
+          "request": "20-30 minutes showing a normal Walmart scan and eBay validation, including accepted, rejected, and borderline records.",
+          "why": "Captures the user's visual heuristics, query changes, artist priors, and tolerance for imperfect evidence."
+        },
+        {
+          "priority": 2,
+          "input": "Fresh eBay orders export — at minimum 2026-04-11 through today; ideally the latest 12 months, without buyer names or addresses.",
+          "request": "At minimum 2026-04-11 through today; ideally the latest 12 months. Buyer names and addresses are not needed.",
+          "why": "The current local history stops on April 10 and cannot calibrate current velocity."
+        },
+        {
+          "priority": 3,
+          "input": "Real transaction economics — fees, promoted fees, shipping-label cost, buyer-paid shipping, net payout, returns, and unit purchase cost for a representative sample.",
+          "request": "Fees, promoted fees, shipping-label cost, buyer-paid shipping, net payout, returns, and unit purchase cost for a representative sample.",
+          "why": "The current fixed cost assumptions can misclassify otherwise good or bad buys."
+        },
+        {
+          "priority": 4,
+          "input": "Good and bad buy labels — about 30 successful buys and 30 slow, low-margin, or regretted buys, each with a one-line reason.",
+          "request": "About 30 successful buys and 30 slow, low-margin, or regretted buys, with one-line reasons.",
+          "why": "Creates a gold set for testing the priority model."
+        },
+        {
+          "priority": 5,
+          "input": "Operating targets — minimum net profit, target ROI, maximum days-to-sale, normal max buy, test-copy cap, and delivery ZIP.",
+          "request": "Minimum acceptable net profit, target ROI, maximum days-to-sale, maximum normal buy price, test-copy cap, and delivery ZIP.",
+          "why": "Turns 'sell quickly' and 'worth buying' into measurable decision rules."
+        },
+        {
+          "priority": 6,
+          "input": "Optional paid-data approval — permission for a small Google Shopping service pilot and, later, Keepa if owned/free data still needs help.",
+          "request": "Permission for a small Google Shopping service pilot and, later, Keepa if the free/owned-data model still needs help.",
+          "why": "Adds cross-retail price history without committing to a costly dependency before the model is proven."
+        }
+      ]
+    },
+    "accessIssues": [
+      {
+        "id": "sold_history_stale",
+        "dataset": "seller_history",
+        "message": "The available sold-history export ends on 2026-04-10; current demand calibration requires a fresh export."
+      },
+      {
+        "id": "economics_incomplete",
+        "dataset": "priority_model",
+        "message": "Actual fees, shipping-label cost, promotion, returns, inbound allocation, and purchase cost are incomplete."
+      },
+      {
+        "id": "human_benchmark_missing",
+        "dataset": "roadmap",
+        "message": "No narrated Walmart/eBay benchmark recording has been provided yet."
+      }
+    ]
+  },
+  "sources": [
+    {
+      "id": "latest_scan",
+      "label": "Latest final retail-arbitrage scan",
+      "path": "exports/arbitrage-finds/retail-arbitrage-2026-07-16.json",
+      "query": {
+        "engine": "duckdb",
+        "sql": "WITH scan AS (\n  SELECT\n    summary.sourceCount AS total_sources,\n    summary.sourcesWithErrors AS error_sources,\n    summary.sourcesWithCandidates AS candidate_sources\n  FROM read_json_auto(\n    'exports/arbitrage-finds/retail-arbitrage-2026-07-16.json'\n  )\n)\nSELECT\n  'Ended in error' AS outcome,\n  error_sources AS source_count,\n  error_sources * 1.0 / total_sources AS share,\n  'No usable source result in the latest run.' AS interpretation\nFROM scan\nUNION ALL\nSELECT\n  'Checked, no candidates',\n  total_sources - error_sources - candidate_sources,\n  (total_sources - error_sources - candidate_sources) * 1.0 / total_sources,\n  'The source completed without yielding a candidate.'\nFROM scan\nUNION ALL\nSELECT\n  'Produced candidates',\n  candidate_sources,\n  candidate_sources * 1.0 / total_sources,\n  'At least one raw candidate was discovered.'\nFROM scan",
+        "description": "Partitions configured scanner sources into error, checked-without-candidates, and candidate-producing outcomes.",
+        "executed_at": "2026-07-16T22:00:00Z"
+      }
+    },
+    {
+      "id": "sold_history",
+      "label": "Sanitized eBay sold-history index",
+      "path": "exports/sold-history/sold-comps-index.json"
+    },
+    {
+      "id": "audit_notes",
+      "label": "Scanner usability audit notes",
+      "path": "reports/scanner-usability-redesign-2026-07-16/audit-notes.md"
+    },
+    {
+      "id": "user_screenshots",
+      "label": "User-provided Sam & Dave Product Research screenshots",
+      "path": "inputs/sam-dave-product-research-screenshots.png"
+    },
+    {
+      "id": "evaluator_code",
+      "label": "Arbitrage evaluator",
+      "path": "src/lib/arbitrage/evaluateOpportunity.mjs"
+    },
+    {
+      "id": "curation_code",
+      "label": "Product Research curation",
+      "path": "scripts/lib/productResearchCuration.mjs"
+    },
+    {
+      "id": "ui_code",
+      "label": "Retail Arbitrage UI",
+      "path": "src/components/RetailArbitrage.tsx"
+    },
+    {
+      "id": "walmart_config",
+      "label": "Retail source catalog",
+      "path": "src/lib/arbitrage/vinylShopSources.ts"
+    }
+  ]
+}
