@@ -3,9 +3,38 @@ const SALE_LINK_TERMS =
 const SALE_PATH_TERMS =
   /(?:^|[-_/])(?:sale|sales|on-sale|clearance|outlet|deals?|specials?|last-chance|closeout|warehouse(?:-sale)?|overstock|discounted|promotions?|offers?|bogo|buy-more-save-more)(?:$|[-_/])/i;
 const NON_DISCOVERY_PATH = /\/(?:account|cart|checkout|login|pages\/contact|policies|products?)\b/i;
+const COMMON_SALE_HINT_PREFIX = ["/sale", "/sales", "/clearance"];
+const SHOPIFY_COLLECTION_HINT_ORDER = [
+  "/collections/sale",
+  "/collections/clearance",
+  "/collections/outlet",
+  "/collections/last-chance",
+  "/collections/warehouse-sale",
+  "/collections/50-off",
+  "/collections/vinyl-sale",
+  "/collections/record-sale",
+];
 
 export function sourceEntryUrls(sourceOrUrl, options = {}) {
   return sourceEntryTargets(sourceOrUrl, options).map((target) => target.url);
+}
+
+export function sourceEntryTargetsWithPriorRechecks(sourceOrUrl, options = {}) {
+  const targets = sourceEntryTargets(sourceOrUrl, options);
+  if (typeof sourceOrUrl === "string") return targets;
+  const source = sourceOrUrl ?? {};
+  const baseUrl = source.url ?? source.baseUrl;
+  const base = normalizeHttpUrl(baseUrl, baseUrl);
+  if (!base) return targets;
+  const baseHost = normalizedHostname(base);
+  const seen = new Set(targets.map((target) => target.url));
+  for (const value of source.priorSaleUrls ?? []) {
+    const url = normalizeHttpUrl(value, base);
+    if (!url || normalizedHostname(url) !== baseHost || seen.has(url)) continue;
+    seen.add(url);
+    targets.push({ purpose: "prior-campaign-recheck", role: "sale", url });
+  }
+  return targets;
 }
 
 export function sourceEntryTargets(sourceOrUrl, options = {}) {
@@ -17,7 +46,7 @@ export function sourceEntryTargets(sourceOrUrl, options = {}) {
   const homepage = `${parsed.origin}/`;
   const maxHintUrls = Number.isFinite(options.maxHintUrls) ? Math.max(0, Math.floor(options.maxHintUrls)) : 4;
   const hintTargets = uniqueTargets(
-    (source.salePathHints ?? [])
+    rankedSalePathHints(source)
       .map((hint) => normalizeHttpUrl(hint, homepage))
       .filter(
         (url) =>
@@ -34,6 +63,56 @@ export function sourceEntryTargets(sourceOrUrl, options = {}) {
     ...hintTargets,
   ];
   return uniqueTargets(targets);
+}
+
+function rankedSalePathHints(source) {
+  const hints = Array.isArray(source.salePathHints) ? source.salePathHints : [];
+  if (!isShopifySource(source)) return hints;
+
+  const suffixStart = commonSaleHintSuffixStart(hints);
+  if (suffixStart < 0) return hints;
+
+  const sourceSpecificHints = hints.slice(0, suffixStart);
+  const genericHints = hints.slice(suffixStart);
+  const shopifyRank = new Map(SHOPIFY_COLLECTION_HINT_ORDER.map((path, index) => [path, index]));
+  const rankedGenericHints = genericHints
+    .map((hint, index) => ({
+      hint,
+      index,
+      rank: shopifyRank.get(normalizedHintPath(hint)) ?? SHOPIFY_COLLECTION_HINT_ORDER.length,
+    }))
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+    .map(({ hint }) => hint);
+  return [...sourceSpecificHints, ...rankedGenericHints];
+}
+
+function isShopifySource(source) {
+  return source.sourceType === "shopify-store" || source.crawlType === "shopify-store";
+}
+
+function commonSaleHintSuffixStart(hints) {
+  const paths = hints.map(normalizedHintPath);
+  for (let index = 0; index <= paths.length - COMMON_SALE_HINT_PREFIX.length; index += 1) {
+    if (COMMON_SALE_HINT_PREFIX.every((path, offset) => paths[index + offset] === path)) return index;
+  }
+  return -1;
+}
+
+function normalizedHintPath(value) {
+  try {
+    const url = new URL(String(value), "https://sale-hint.invalid/");
+    return url.pathname.toLowerCase().replace(/\/+$/, "") || "/";
+  } catch {
+    return String(value).trim().toLowerCase().split(/[?#]/, 1)[0].replace(/\/+$/, "") || "/";
+  }
+}
+
+function normalizedHostname(value) {
+  try {
+    return new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
 }
 
 export function isSaleSpecificUrl(value, source = {}) {

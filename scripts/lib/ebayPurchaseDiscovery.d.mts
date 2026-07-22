@@ -22,7 +22,7 @@ export type EbayPurchaseCandidate = {
   purchasePriceScope: "item_plus_listed_shipping_before_tax";
   productIdentityEvidence: string[];
   productIdentityVerification: "detail_aspects" | "summary_only";
-  shippingDestinationPostalCode: string | null;
+  shippingDestinationVerified: boolean;
   shippingQuoteType: "fixed";
   sellerAccountType: string | null;
   sellerFeedbackPercentage: number;
@@ -217,7 +217,7 @@ export const DEFAULT_EBAY_MIN_SELLER_FEEDBACK_PERCENTAGE: 97;
 export const DEFAULT_EBAY_MIN_SELLER_FEEDBACK_SCORE: 25;
 export function ebayPurchaseOfferVerification(candidate: {
   productIdentityVerification?: string | null;
-  shippingDestinationPostalCode?: string | null;
+  shippingDestinationVerified?: boolean | null;
 }): "discovery_lead" | "official_api";
 export function assessEbayPurchaseDetail(detail: unknown): {
   evidence: string[];

@@ -60,6 +60,51 @@ describe("arbitrage finds publication", () => {
     });
   });
 
+  it("removes destination postal data from public publication artifacts", async () => {
+    const diagnosticUrl =
+      "https://api.ebay.com/buy/browse/v1/item_summary/search?filter=conditionIds%3A%7B1000%7D%2CdeliveryPostalCode%3A19406%2CpriceCurrency%3AUSD";
+    const sourceReports = [
+      {
+        ...sourceReport("healthy"),
+        adapterStats: {
+          browseApi: {
+            errors: [{ message: "Invalid deliveryPostalCode value 19406" }],
+            pageReports: [{ requestedUrl: diagnosticUrl, resolvedUrl: diagnosticUrl }],
+          },
+        },
+      },
+    ];
+
+    await uploadArbitrageFinds(
+      workspace,
+      finalPayload({
+        finds: [
+          productFind({
+            id: "private-postal-candidate",
+            purchaseOfferVerification: "discovery_lead",
+            shippingDestinationPostalCode: "19406",
+          }),
+        ],
+        runId: "postal-redaction-run",
+        sourceReports,
+      }),
+      "test-upload-token",
+    );
+
+    const runPath = join(
+      workspace,
+      "exports",
+      "arbitrage-finds",
+      "runs",
+      "postal-redaction-run",
+      "final.json",
+    );
+    const rawStoredPayload = readFileSync(runPath, "utf8");
+    expect(rawStoredPayload).not.toContain("19406");
+    expect(rawStoredPayload).not.toContain("shippingDestinationPostalCode");
+    expect(rawStoredPayload).not.toContain("deliveryPostalCode");
+  });
+
   it("rejects draft, legacy, and unsafe run payloads", async () => {
     await expect(
       uploadArbitrageFinds(

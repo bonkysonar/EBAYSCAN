@@ -355,17 +355,18 @@ export function purchaseOfferVerificationForSource(candidate = {}, source = {}) 
   const crawlType = cleanText(source?.crawlType ?? source?.sourceType).toLowerCase();
   const group = cleanText(source?.group).toLowerCase();
   const retailSourceType = cleanText(source?.retailSourceType ?? source?.sourceType).toLowerCase();
+  const sourceId = cleanText(source?.id).toLowerCase();
+  if (sourceId === "ebay-purchase") return "discovery_lead";
   if (crawlType === "deal-aggregator" || crawlType === "social-feed" || group === "discovery sources") {
     return "discovery_lead";
   }
   if (
     retailSourceType === "marketplace_retailer" &&
-    cleanText(source?.id).toLowerCase() !== "ebay-purchase" &&
     candidate?.retailerSoldBySource !== true
   ) {
     return "discovery_lead";
   }
-  return cleanText(source?.id).toLowerCase() === "ebay-purchase" ? "official_api" : "direct_retailer";
+  return "direct_retailer";
 }
 
 function hasConditionalDiscountRequirement(value) {

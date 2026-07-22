@@ -6,7 +6,7 @@ export const DEFAULT_EBAY_MIN_SELLER_FEEDBACK_SCORE = 25;
 export const DEFAULT_EBAY_MIN_SELLER_FEEDBACK_PERCENTAGE = 97;
 
 export function ebayPurchaseOfferVerification(candidate) {
-  return cleanText(candidate?.shippingDestinationPostalCode) &&
+  return candidate?.shippingDestinationVerified === true &&
     candidate?.productIdentityVerification === "detail_aspects"
     ? "official_api"
     : "discovery_lead";
@@ -342,6 +342,7 @@ export async function discoverEbayPurchases(options = {}) {
     for (let pageIndex = 0; pageIndex < maxPagesPerLane; pageIndex += 1) {
       const offset = pageIndex * pageSize;
       const url = buildEbayPurchaseSearchUrl(lane, { ...requestOptions, offset });
+      const diagnosticUrl = redactEbayPurchaseDiagnosticUrl(url);
       const pageReport = {
         error: null,
         failureKind: null,
@@ -350,7 +351,7 @@ export async function discoverEbayPurchases(options = {}) {
         offset,
         pageNumber: pageIndex + 1,
         rawItemCount: 0,
-        requestedUrl: url.toString(),
+        requestedUrl: diagnosticUrl,
         resolvedUrl: null,
         status: "attempted",
         totalReported: null,
@@ -383,7 +384,9 @@ export async function discoverEbayPurchases(options = {}) {
 
       const payloadResult = await readJsonResponse(response);
       pageReport.httpStatus = response.status;
-      pageReport.resolvedUrl = cleanText(response.url) ?? url.toString();
+      pageReport.resolvedUrl = redactEbayPurchaseDiagnosticUrl(
+        cleanText(response.url) ?? url,
+      );
       if (!response.ok) {
         const message = apiErrorMessage(response, payloadResult.value, payloadResult.error);
         pageReport.error = message;
@@ -696,7 +699,7 @@ export function assessEbayPurchaseItem(item, lane = {}, options = {}) {
       purchasePriceScope: "item_plus_listed_shipping_before_tax",
       productIdentityEvidence: [],
       productIdentityVerification: "summary_only",
-      shippingDestinationPostalCode: cleanText(options.deliveryPostalCode),
+      shippingDestinationVerified: Boolean(cleanText(options.deliveryPostalCode)),
       shippingQuoteType: "fixed",
       sellerAccountType: cleanText(item.seller?.sellerAccountType) ?? null,
       sellerFeedbackPercentage,
@@ -713,6 +716,27 @@ export function assessEbayPurchaseItem(item, lane = {}, options = {}) {
       title: identity.title,
     },
   };
+}
+
+function redactEbayPurchaseDiagnosticUrl(value) {
+  try {
+    const url = value instanceof URL ? new URL(value.toString()) : new URL(String(value));
+    const filter = url.searchParams.get("filter");
+    if (filter) {
+      const safeFilter = filter
+        .split(",")
+        .filter((entry) => !/^deliveryPostalCode:/i.test(entry.trim()))
+        .join(",");
+      if (safeFilter) url.searchParams.set("filter", safeFilter);
+      else url.searchParams.delete("filter");
+    }
+    return url.toString();
+  } catch {
+    return String(value ?? "").replace(
+      /deliveryPostalCode(?::|%3A)[^,%\s&]+/gi,
+      "deliveryPostalCode:[redacted]",
+    );
+  }
 }
 
 function normalizeLanes(lanes) {

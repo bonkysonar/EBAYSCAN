@@ -11,6 +11,7 @@ import {
   type SaleReviewOutcome,
 } from "../lib/arbitrage/reviewFeedback";
 import {
+  coverageHealthStatus,
   normalizeSaleCampaigns,
   summarizeSourceCoverage,
   type NormalizedSaleCampaign,
@@ -469,7 +470,7 @@ function SaleCard({
             {campaign.saleScope ?? "sale"}
           </small>
         </div>
-        <strong>{campaign.saleDiscountPercent ? `${campaign.saleDiscountPercent}%+` : saleSignalLabel(campaign)}</strong>
+        <strong>{saleDiscountLabel(campaign)}</strong>
       </div>
 
       <p>{campaign.saleSignal ?? campaign.sourceListingTitle ?? campaign.title}</p>
@@ -600,6 +601,9 @@ function statusPriority(status?: CampaignStatus): number {
 
 function coverageLabel(report: SaleSourceReport, state: ReturnType<typeof summarizeSourceCoverage>["sources"][number]["state"]): string {
   const prefix = state === "not_checked" ? "Not checked" : `${state[0].toUpperCase()}${state.slice(1)}`;
+  if (["blocked", "error", "failed", "timeout", "unavailable", "unknown"].includes(coverageHealthStatus(report.salePageHealth))) {
+    return `${prefix} · sale-page checks failed`;
+  }
   if (state === "blocked") return `${prefix} · ${report.error ?? "source fetch failed"}`;
   const recovery = report.pageErrors?.some((error) => error.failureKind === "not_found")
     ? " · stale URL bypassed"
@@ -618,6 +622,16 @@ function saleSignalLabel(sale: DisplaySaleCampaign): string {
   }
   if (/\b(?:code|coupon|promo)\b/i.test(sale.saleSignal ?? "")) return "Code";
   return "Sale";
+}
+
+function saleDiscountLabel(sale: DisplaySaleCampaign): string {
+  if (!sale.saleDiscountPercent) return saleSignalLabel(sale);
+  const evidence = [sale.saleEvidence, sale.saleSignal, sale.sourceListingTitle, sale.title].filter(Boolean).join(" ");
+  const escapedDiscount = String(sale.saleDiscountPercent).replace(".", "\\.");
+  const upTo =
+    sale.saleDiscountQualifier === "up_to" ||
+    new RegExp(`\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`, "i").test(evidence);
+  return upTo ? `Up to ${sale.saleDiscountPercent}% off` : `${sale.saleDiscountPercent}% off`;
 }
 
 async function fetchWithTimeout(

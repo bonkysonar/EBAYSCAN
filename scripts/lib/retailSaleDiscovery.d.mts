@@ -1,11 +1,15 @@
 export type SaleDiscoverySource = {
   baseUrl?: string;
+  crawlType?: string;
+  priorSaleUrls?: string[];
   salePathHints?: string[];
   saleUrlPatterns?: string[];
+  sourceType?: string;
   url?: string;
 };
 export type SourceEntryTarget = {
-  purpose: "configured" | "configured-sale-hint" | "homepage";
+  purpose: "configured" | "configured-sale-hint" | "homepage" | "prior-campaign-recheck";
+  role?: "catalog" | "sale";
   url: string;
 };
 export function sourceEntryUrls(
@@ -13,6 +17,10 @@ export function sourceEntryUrls(
   options?: { maxHintUrls?: number },
 ): string[];
 export function sourceEntryTargets(
+  sourceOrUrl: SaleDiscoverySource | string,
+  options?: { maxHintUrls?: number },
+): SourceEntryTarget[];
+export function sourceEntryTargetsWithPriorRechecks(
   sourceOrUrl: SaleDiscoverySource | string,
   options?: { maxHintUrls?: number },
 ): SourceEntryTarget[];

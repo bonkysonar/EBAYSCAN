@@ -41,10 +41,11 @@ import {
   hasCouponSignal,
   httpFailureKind,
   isSaleSpecificUrl,
-  sourceEntryTargets,
+  sourceEntryTargetsWithPriorRechecks,
   verifiedSalePathOffer,
 } from "./lib/retailSaleDiscovery.mjs";
 import {
+  priorSaleRecheckUrlsForSource,
   reconcileSaleCampaigns,
   saleCampaignIdFor,
   saleCampaignLedgerFromPayload,
@@ -244,7 +245,11 @@ const sourceScanResults = await mapWithConcurrency(sources, sourceConcurrency, a
   const preferredUrl = compatiblePreferredSourceUrl(catalogUrl, storedPreferredUrl)
     ? storedPreferredUrl
     : catalogUrl;
-  const scanTarget = preferredUrl === catalogUrl ? source : { ...source, url: preferredUrl };
+  const scanTarget = {
+    ...source,
+    priorSaleUrls: priorSaleRecheckUrlsForSource(previousScanState.saleCampaignLedger, source),
+    url: preferredUrl,
+  };
   try {
     const scanResult = await scanSource(scanTarget);
     const candidates = scanResult.candidates ?? [];
@@ -1628,8 +1633,8 @@ async function fetchSourcePages(source, options = {}) {
   const attempted = new Set();
   const resolved = new Set();
 
-  for (const target of sourceEntryTargets(source, { maxHintUrls: salePathHintLimit(source) })) {
-    await addPage(target.url, target.purpose, sourceEntryRole(source, target));
+  for (const target of sourceEntryTargetsWithPriorRechecks(source, { maxHintUrls: salePathHintLimit(source) })) {
+    await addPage(target.url, target.purpose, target.role ?? sourceEntryRole(source, target));
   }
 
   const hasUsableConfiguredCatalog = pages.some(
@@ -2207,13 +2212,15 @@ function discoveryDealToCandidate(source, deal) {
 function vinylPriceDropSaleEvent(source, detail) {
   const rawSignal = cleanText(detail.title);
   const discountPercent = detail.discountPercent ?? extractMaxDiscountPercent(rawSignal);
+  const discountQualifier = discountQualifierFor(rawSignal, discountPercent);
   const scope = /\ball\s+(?:vinyl|records|lps|music)\b/i.test(rawSignal) ? "vinyl-wide" : "sitewide";
   const url = detail.directUrl ?? detail.detailUrl ?? source.url;
-  const signal = saleSignalSummary(source, rawSignal, discountPercent, scope);
+  const signal = saleSignalSummary(source, rawSignal, discountPercent, scope, discountQualifier);
   const fingerprint = saleFingerprint(source, rawSignal, url, discountPercent, scope);
   return {
     capturedAt,
     discountPercent,
+    discountQualifier,
     evidence: rawSignal.slice(0, 320),
     fingerprint,
     id: stableId("sale", source.id, fingerprint),
@@ -2222,7 +2229,7 @@ function vinylPriceDropSaleEvent(source, detail) {
     sourceId: source.id,
     sourceName: source.name,
     sourceUrl: url,
-    title: `${discountPercent ? `${discountPercent}%+ sale` : "Broad sale"}: ${source.name}`,
+    title: `${discountPercent ? `${discountLabel(discountPercent, discountQualifier)} sale` : "Broad sale"}: ${source.name}`,
     verification: "discovery-lead",
   };
 }
@@ -2428,6 +2435,7 @@ function detectSaleEvents(source, html, pageUrl = source.url) {
     ? verifiedSalePathOffer(pageUrl)
     : null;
   if (pathOffer) {
+    const discountQualifier = discountQualifierFor(pathOffer.evidence, pathOffer.discountPercent);
     const fingerprint = saleFingerprint(
       source,
       pathOffer.evidence,
@@ -2438,6 +2446,7 @@ function detectSaleEvents(source, html, pageUrl = source.url) {
     events.push({
       capturedAt,
       discountPercent: pathOffer.discountPercent,
+      discountQualifier,
       evidence: pathOffer.evidence,
       fingerprint,
       id: stableId("sale", source.id, fingerprint),
@@ -2449,11 +2458,12 @@ function detectSaleEvents(source, html, pageUrl = source.url) {
         pathOffer.evidence,
         pathOffer.discountPercent,
         pathOffer.scope,
+        discountQualifier,
       ),
       sourceId: source.id,
       sourceName: source.name,
       sourceUrl: pageUrl,
-      title: `${pathOffer.discountPercent}% sale: ${source.name}`,
+      title: `${discountLabel(pathOffer.discountPercent, discountQualifier)} sale: ${source.name}`,
       verification: pathOffer.saleVerification,
     });
   }
@@ -2477,15 +2487,17 @@ function detectSaleEventsFromText(source, text, url = source.url) {
   if (!rawSignal || !isLargeSaleSignal(rawSignal, source, url)) return [];
 
   const discountPercent = extractMaxDiscountPercent(rawSignal);
+  const discountQualifier = discountQualifierFor(rawSignal, discountPercent);
   const scope = saleScope(rawSignal, source);
-  const titlePrefix = discountPercent ? `${discountPercent}%+ sale` : hasBogoSignal(rawSignal) ? "BOGO sale" : "Broad sale";
-  const signal = saleSignalSummary(source, rawSignal, discountPercent, scope);
+  const titlePrefix = discountPercent ? `${discountLabel(discountPercent, discountQualifier)} sale` : hasBogoSignal(rawSignal) ? "BOGO sale" : "Broad sale";
+  const signal = saleSignalSummary(source, rawSignal, discountPercent, scope, discountQualifier);
   const fingerprint = saleFingerprint(source, rawSignal, url, discountPercent, scope);
 
   return [
     {
       capturedAt,
       discountPercent,
+      discountQualifier,
       evidence: rawSignal.slice(0, 320),
       fingerprint,
       id: stableId("sale", source.id, fingerprint),
@@ -2509,41 +2521,21 @@ function saleEventPriority(event) {
   const scope = event.scope ?? event.saleScope;
   const scopeScore = scope === "sitewide" ? 5 : scope === "vinyl-wide" ? 4 : scope === "clearance" ? 3 : 2;
   const discountScore = event.discountPercent ?? event.saleDiscountPercent ?? (hasBogoSignal(event.signal ?? event.saleSignal) ? 45 : 0);
-  return discountScore * 10 + scopeScore;
+  const verificationScore = (event.verification ?? event.saleVerification) === "retailer-page" ? 100_000 : 0;
+  const salePageScore = /\b(?:sale|clearance|deal|garage|overstock|promo)\b/i.test(String(event.sourceUrl ?? "")) ? 1_000 : 0;
+  return verificationScore + salePageScore + discountScore * 10 + scopeScore;
 }
 
 function saleEventDedupeKey(event) {
-  const evidence = `${event.signal ?? event.saleSignal ?? ""} ${event.evidence ?? event.saleEvidence ?? ""}`;
-  const offerType = hasBogoSignal(evidence)
-    ? "bogo"
-    : hasVolumeDiscountSignal(evidence)
-      ? "volume"
-      : hasCouponSignal(evidence)
-        ? "coupon"
-        : "sale";
-  const promoCode = extractPromoCode(evidence) ?? "no-code";
-  let url = String(event.sourceUrl ?? "");
-  try {
-    const parsed = new URL(url);
-    parsed.hash = "";
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/^(?:fbclid|gclid|mc_cid|mc_eid|ref|source|utm_.+)$/i.test(key)) {
-        parsed.searchParams.delete(key);
-      }
-    }
-    parsed.searchParams.sort();
-    url = parsed.toString().replace(/\/$/, "");
-  } catch {
-    // Keep the original source URL when it cannot be normalized.
-  }
-  return [
-    event.sourceId ?? "unknown",
-    url,
-    event.scope ?? event.saleScope ?? "unknown",
-    event.discountPercent ?? event.saleDiscountPercent ?? "none",
-    offerType,
-    promoCode,
-  ].join("|");
+  const rawDiscount = event.discountPercent ?? event.saleDiscountPercent;
+  const discount = typeof rawDiscount === "number" && Number.isFinite(rawDiscount) && rawDiscount > 0
+    ? Math.round(rawDiscount * 100) / 100
+    : "none";
+  const qualifier = event.discountQualifier ?? event.saleDiscountQualifier ?? discountQualifierFor(
+    `${event.evidence ?? event.saleEvidence ?? ""} ${event.signal ?? event.saleSignal ?? ""}`,
+    discount === "none" ? null : discount,
+  );
+  return `${saleCampaignIdFor(saleEventToFind(event))}|discount:${discount}|qualifier:${qualifier}`;
 }
 
 function isLargeSaleSignal(text, source, evidenceUrl = source.url) {
@@ -2627,13 +2619,25 @@ function hasNonVinylSaleContext(text) {
   );
 }
 
-function saleSignalSummary(source, rawSignal, discountPercent, scope) {
+function saleSignalSummary(source, rawSignal, discountPercent, scope, discountQualifier = discountQualifierFor(rawSignal, discountPercent)) {
   const scopeLabel = scope === "unknown" ? "broad" : scope.replace(/-/g, " ");
   const verb = source.sourceType === "deal-aggregator" || source.sourceType === "social-feed" ? "surfaced" : "has";
-  if (discountPercent) return `${source.name} ${verb} a ${scopeLabel} vinyl sale signal at ${discountPercent}%+ off.`;
+  if (discountPercent) return `${source.name} ${verb} a ${scopeLabel} vinyl sale signal at ${discountLabel(discountPercent, discountQualifier)}.`;
   if (hasBogoSignal(rawSignal)) return `${source.name} ${verb} a ${scopeLabel} vinyl BOGO or volume-discount sale signal.`;
   if (hasCouponSignal(rawSignal)) return `${source.name} ${verb} a ${scopeLabel} vinyl coupon or promo-code sale signal.`;
   return `${source.name} ${verb} a ${scopeLabel} vinyl sale signal.`;
+}
+
+function discountQualifierFor(text, discountPercent) {
+  if (discountPercent === null || discountPercent === undefined) return "none";
+  const escapedDiscount = String(discountPercent).replace(".", "\\.");
+  return new RegExp(`\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`, "i").test(String(text ?? ""))
+    ? "up_to"
+    : "exact";
+}
+
+function discountLabel(discountPercent, qualifier) {
+  return qualifier === "up_to" ? `up to ${discountPercent}% off` : `${discountPercent}% off`;
 }
 
 function extractMaxDiscountPercent(text) {
@@ -2664,6 +2668,7 @@ function saleEventToFind(event) {
     opportunityType: "sitewide_sale",
     purchasePrice: 0,
     saleDiscountPercent: event.discountPercent,
+    saleDiscountQualifier: event.discountQualifier,
     saleCode: event.promoCode ?? extractPromoCode(event.evidence ?? event.signal),
     saleEvidence: event.evidence,
     saleFingerprint: event.fingerprint,

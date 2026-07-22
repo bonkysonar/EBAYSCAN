@@ -283,15 +283,15 @@ describe("eBay purchase discovery", () => {
   });
 
   it("requires both destination context and detail-aspect identity before trusting an eBay quote", () => {
-    expect(ebayPurchaseOfferVerification({ shippingDestinationPostalCode: null })).toBe(
+    expect(ebayPurchaseOfferVerification({ shippingDestinationVerified: false })).toBe(
       "discovery_lead",
     );
-    expect(ebayPurchaseOfferVerification({ shippingDestinationPostalCode: "19406" })).toBe(
+    expect(ebayPurchaseOfferVerification({ shippingDestinationVerified: true })).toBe(
       "discovery_lead",
     );
     expect(ebayPurchaseOfferVerification({
       productIdentityVerification: "detail_aspects",
-      shippingDestinationPostalCode: "19406",
+      shippingDestinationVerified: true,
     })).toBe(
       "official_api",
     );
@@ -508,8 +508,11 @@ describe("eBay purchase discovery", () => {
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]).toMatchObject({
       productIdentityVerification: "detail_aspects",
-      shippingDestinationPostalCode: "19406",
+      shippingDestinationVerified: true,
     });
+    expect(result.candidates[0]).not.toHaveProperty("shippingDestinationPostalCode");
+    expect(result.diagnostics.pageReports[0].requestedUrl).not.toContain("19406");
+    expect(result.diagnostics.pageReports[0].resolvedUrl).not.toContain("19406");
     expect(ebayPurchaseOfferVerification(result.candidates[0])).toBe("official_api");
     expect(result.diagnostics.detailVerification).toMatchObject({
       rejectedCount: 0,

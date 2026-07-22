@@ -154,11 +154,19 @@ describe("canonical arbitrage evaluation", () => {
         { id: "target", retailSourceType: "marketplace_retailer" },
       ),
     };
+    const unverifiedEbayCandidate = {
+      ...validatedFind(),
+      purchaseOfferVerification: purchaseOfferVerificationForSource(
+        {},
+        { id: "ebay-purchase", retailSourceType: "marketplace_retailer" },
+      ),
+    };
 
     for (const candidate of [
       campaignCandidate,
       discoveryCandidate,
       unverifiedTargetMarketplaceCandidate,
+      unverifiedEbayCandidate,
     ]) {
       const result = evaluateOpportunity(candidate, defaultArbitrageSettings, NOW);
       expect(result.decision).toBe("REVIEW");

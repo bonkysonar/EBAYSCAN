@@ -15,9 +15,20 @@ export type SaleObservation = Omit<ArbitrageFind, "saleStatus"> & {
   saleObservationPageCount?: number;
   saleObservationUrls?: string[];
   saleObservedThisRun?: boolean;
+  saleCode?: string | null;
   salePromoCode?: string | null;
+  promoCode?: string | null;
   saleStatus?: SaleLifecycleStatus;
 };
+
+type SourceHealthValue =
+  | string
+  | {
+      health?: string;
+      state?: string;
+      status?: string;
+    }
+  | null;
 
 export type NormalizedSaleCampaign = SaleObservation & {
   displayCampaignKey: string;
@@ -30,7 +41,7 @@ export type NormalizedSaleCampaign = SaleObservation & {
 
 export type SaleSourceReport = {
   candidateCount?: number;
-  catalogHealth?: string;
+  catalogHealth?: SourceHealthValue;
   catalogPageAttemptCount?: number;
   catalogPageAvailableCount?: number;
   error?: string;
@@ -43,7 +54,7 @@ export type SaleSourceReport = {
   saleEventCount?: number;
   salePageAttemptCount?: number;
   salePageAvailableCount?: number;
-  salePageHealth?: string;
+  salePageHealth?: SourceHealthValue;
   status?: string;
   url?: string;
   usableCoverage?: string;
@@ -78,6 +89,7 @@ export type CoverageSummary = Record<CoverageState, number> & {
 };
 
 const ACTIVE_STATUSES = new Set<SaleLifecycleStatus>(["changed", "evergreen", "new", "ongoing"]);
+const FAILED_HEALTH_STATES = new Set(["blocked", "error", "failed", "timeout", "unavailable", "unknown"]);
 const MEANINGFUL_USABLE_COVERAGE = new Set(["high_signal", "raw_candidates", "selected"]);
 const STATUS_PRIORITY: Record<SaleLifecycleStatus, number> = {
   changed: 5,
@@ -122,19 +134,21 @@ export function normalizeSaleCampaigns(
     campaigns: normalized,
     pageCount: activePages.size,
     rawObservationCount: rawObservations.length || fallbackObservationCount,
-    retailerCount: new Set(active.map((campaign) => campaign.sourceId)).size,
+    retailerCount: new Set(active.map(retailerIdentity)).size,
     uniqueOfferCount: active.length,
   };
 }
 
 export function displaySaleCampaignKey(sale: SaleObservation): string {
-  const source = normalizeSource(sale);
+  const retailer = retailerIdentity(sale);
   const page = normalizeSalePageUrl(sale.sourceUrl);
   const text = saleIdentityText(sale);
   const promoCode = explicitPromoCode(sale) ?? extractSalePromoCode(text);
   const discount = normalizedDiscount(sale.saleDiscountPercent);
+  const discountQualifier = normalizedDiscountQualifier(sale, text, discount);
   const offer = offerIdentity(text, page, discount, promoCode);
-  return `${source}|page:${page}|offer:${offer}|code:${promoCode ?? "none"}|discount:${discount ?? "none"}`;
+  const pageIdentity = portableEconomicOffer(offer, discount, promoCode) ? "any" : page;
+  return `${retailer}|page:${pageIdentity}|offer:${offer}|code:${promoCode ?? "none"}|discount:${discount ?? "none"}|qualifier:${discountQualifier}`;
 }
 
 export function normalizeSalePageUrl(value: string): string {
@@ -195,21 +209,28 @@ export function extractSalePromoCode(value: string): string | null {
 }
 
 export function classifySourceCoverage(report: SaleSourceReport): CoverageState {
+  const catalogHealth = coverageHealthStatus(report.catalogHealth);
+  const salePageHealth = coverageHealthStatus(report.salePageHealth);
   const meaningful =
     finiteCount(report.candidateCount) > 0 ||
     finiteCount(report.saleEventCount) > 0 ||
     report.productParseHealth === "productive" ||
     MEANINGFUL_USABLE_COVERAGE.has(report.usableCoverage ?? "");
-  const failed = report.status === "error" || report.catalogHealth === "failed" || report.productParseHealth === "failed";
+  const salePageFailed = FAILED_HEALTH_STATES.has(salePageHealth);
+  const catalogFailed = FAILED_HEALTH_STATES.has(catalogHealth);
+  const failed = report.status === "error" || catalogFailed || report.productParseHealth === "failed";
   const partial =
     report.status === "partial" ||
-    report.catalogHealth === "partial" ||
-    report.salePageHealth === "partial" ||
+    catalogHealth === "partial" ||
+    salePageHealth === "partial" ||
     (report.pageErrors?.length ?? 0) > 0;
+  const catalogReached =
+    finiteCount(report.catalogPageAvailableCount) > 0 || ["healthy", "partial", "success"].includes(catalogHealth);
 
-  if (failed && !meaningful) return "blocked";
-  if (meaningful && (failed || partial)) return "degraded";
+  if (meaningful && (failed || salePageFailed || partial)) return "degraded";
   if (meaningful) return "healthy";
+  if (salePageFailed && catalogReached && !catalogFailed) return "degraded";
+  if (salePageFailed || failed) return "blocked";
 
   const attempted =
     finiteCount(report.catalogPageAttemptCount) > 0 ||
@@ -217,11 +238,21 @@ export function classifySourceCoverage(report: SaleSourceReport): CoverageState 
     finiteCount(report.catalogPageAvailableCount) > 0 ||
     finiteCount(report.salePageAvailableCount) > 0 ||
     ["candidates", "empty", "healthy", "partial", "sale_signals"].includes(report.status ?? "") ||
-    ["healthy", "partial"].includes(report.catalogHealth ?? "") ||
-    ["healthy", "partial"].includes(report.salePageHealth ?? "") ||
+    ["healthy", "partial", "success"].includes(catalogHealth) ||
+    ["healthy", "partial", "success"].includes(salePageHealth) ||
     report.productParseHealth === "empty" ||
     (report.resolvedUrls?.length ?? 0) > 0;
   return attempted ? "empty" : "not_checked";
+}
+
+export function coverageHealthStatus(value: SourceHealthValue | undefined): string {
+  const raw =
+    typeof value === "string"
+      ? value
+      : value && typeof value === "object"
+        ? value.status ?? value.state ?? value.health ?? ""
+        : "";
+  return raw.trim().toLowerCase();
 }
 
 export function summarizeSourceCoverage(reports: SaleSourceReport[]): CoverageSummary {
@@ -253,25 +284,26 @@ function groupByDisplayIdentity(rows: SaleObservation[]): Map<string, SaleObserv
 function suppressConflictingDiscoveryLeads(rows: SaleObservation[]): SaleObservation[] {
   const byOfferBase = new Map<string, SaleObservation[]>();
   for (const sale of rows) {
-    const source = normalizeSource(sale);
+    const retailer = retailerIdentity(sale);
     const page = normalizeSalePageUrl(sale.sourceUrl);
     const text = saleIdentityText(sale);
     const promoCode = explicitPromoCode(sale) ?? extractSalePromoCode(text);
     const discount = normalizedDiscount(sale.saleDiscountPercent);
     const offer = offerIdentity(text, page, discount, promoCode);
-    const key = `${source}|page:${page}|offer:${offer}|code:${promoCode ?? "none"}`;
+    const pageIdentity = portableEconomicOffer(offer, discount, promoCode) ? "any" : page;
+    const key = `${retailer}|page:${pageIdentity}|offer:${offer}|code:${promoCode ?? "none"}`;
     byOfferBase.set(key, [...(byOfferBase.get(key) ?? []), sale]);
   }
   return [...byOfferBase.values()].flatMap((group) => {
     const confirmed = group.filter((sale) => sale.saleVerification === "retailer-page");
     if (confirmed.length === 0) return group;
     const confirmedDiscounts = new Set(
-      confirmed.map((sale) => normalizedDiscount(sale.saleDiscountPercent) ?? "none"),
+      confirmed.map(economicDiscountIdentity),
     );
     return group.filter(
       (sale) =>
         sale.saleVerification === "retailer-page" ||
-        confirmedDiscounts.has(normalizedDiscount(sale.saleDiscountPercent) ?? "none"),
+        confirmedDiscounts.has(economicDiscountIdentity(sale)),
     );
   });
 }
@@ -321,8 +353,10 @@ function compareRepresentatives(left: SaleObservation, right: SaleObservation): 
 
 function representativeScore(sale: SaleObservation): number {
   const status = sale.saleStatus ?? "ongoing";
-  const salePage = /\b(?:sale|clearance|deal|garage|overstock|promo)/i.test(normalizeSalePageUrl(sale.sourceUrl)) ? 3 : 0;
-  return (sale.saleVerification === "retailer-page" ? 10_000 : 0) + STATUS_PRIORITY[status] * 100 + salePage + (sale.saleEvidence ? 1 : 0);
+  const salePage = /\b(?:sale|clearance|deal|garage|overstock|promo)/i.test(normalizeSalePageUrl(sale.sourceUrl)) ? 30 : 0;
+  const scope = normalizedSaleScope(sale);
+  const scopeScore = scope === "sitewide" ? 5 : scope === "vinyl-wide" ? 4 : scope === "clearance" ? 3 : 2;
+  return (sale.saleVerification === "retailer-page" ? 10_000 : 0) + STATUS_PRIORITY[status] * 100 + salePage + scopeScore + (sale.saleEvidence ? 1 : 0);
 }
 
 function highestStatus(rows: SaleObservation[]): SaleLifecycleStatus {
@@ -331,8 +365,9 @@ function highestStatus(rows: SaleObservation[]): SaleLifecycleStatus {
   )[0]?.saleStatus ?? "ongoing";
 }
 
-function normalizeSource(sale: SaleObservation): string {
-  const source = sale.sourceId || sale.sourceName || normalizeSalePageUrl(sale.sourceUrl).split("/", 1)[0];
+function retailerIdentity(sale: SaleObservation): string {
+  const pageHost = normalizeSalePageUrl(sale.sourceUrl).split("/", 1)[0];
+  const source = pageHost || sale.sourceId || sale.sourceName || "unknown-source";
   return source.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
@@ -341,25 +376,49 @@ function saleIdentityText(sale: SaleObservation): string {
 }
 
 function explicitPromoCode(sale: SaleObservation): string | null {
-  return typeof sale.salePromoCode === "string" && sale.salePromoCode.trim()
-    ? sale.salePromoCode.trim().toUpperCase()
-    : null;
+  for (const value of [sale.salePromoCode, sale.saleCode, sale.promoCode]) {
+    if (typeof value === "string" && value.trim()) return value.trim().toUpperCase();
+  }
+  return null;
 }
 
 function normalizedDiscount(value: number | null | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value * 100) / 100 : null;
 }
 
+function economicDiscountIdentity(sale: SaleObservation): string {
+  const discount = normalizedDiscount(sale.saleDiscountPercent);
+  return `${discount ?? "none"}|${normalizedDiscountQualifier(sale, saleIdentityText(sale), discount)}`;
+}
+
+function normalizedDiscountQualifier(
+  sale: SaleObservation,
+  text: string,
+  discount: number | null,
+): "exact" | "none" | "up_to" {
+  if (sale.saleDiscountQualifier === "up_to") return "up_to";
+  if (sale.saleDiscountQualifier === "exact") return "exact";
+  if (discount === null) return "none";
+  const escapedDiscount = String(discount).replace(".", "\\.");
+  return new RegExp(`\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`, "i").test(text)
+    ? "up_to"
+    : "exact";
+}
+
 function offerIdentity(text: string, page: string, discount: number | null, promoCode: string | null): string {
-  if (promoCode) return "promo-code";
   if (/\b(?:bogo|buy\s+one\s+get\s+one|buy\s+1\s+get\s+1|2\s+for\s+1|two\s+for\s+one)\b/i.test(text)) return "bogo";
   if (/\b(?:buy\s+more|volume\s+discount|multi[- ]?buy)\b/i.test(text)) return "volume";
+  if (promoCode) return "promo-code";
+  if (discount !== null) return "percent-sale";
   if (/\bgarage[- ]sale\b/i.test(`${page} ${text}`)) return "garage-sale";
   if (/\bwarehouse[- ](?:overstock|sale)\b|\boverstock[- ]sale\b/i.test(`${page} ${text}`)) return "warehouse-overstock";
   if (/\bclearance\b/i.test(`${page} ${text}`)) return "clearance";
-  if (discount !== null) return "percent-sale";
   if (/\bfree\s+shipping\b/i.test(text)) return "free-shipping";
   return "sale";
+}
+
+function portableEconomicOffer(offer: string, discount: number | null, promoCode: string | null): boolean {
+  return discount !== null || Boolean(promoCode) || offer === "bogo" || offer === "volume";
 }
 
 function finiteCount(value: number | undefined): number {

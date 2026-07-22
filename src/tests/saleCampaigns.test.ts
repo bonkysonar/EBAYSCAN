@@ -58,6 +58,57 @@ describe("sale campaign display normalization", () => {
     });
   });
 
+  it("combines one quantified retailer offer across landing pages and discovery sources", () => {
+    const rows = [
+      sale({
+        id: "tagged",
+        saleDiscountPercent: 50,
+        saleEvidence: "SUPER SALE - 50% OFF LPs - Tagged FORMAT_TAPE",
+        saleScope: "clearance",
+        sourceId: "lunchbox-records",
+        sourceName: "Lunchbox Records",
+        sourceUrl: "https://lunchboxrecords.com/collections/super-sale-lps/format_tape",
+      }),
+      sale({
+        id: "collection",
+        saleDiscountPercent: 50,
+        sourceId: "lunchbox-records",
+        sourceName: "Lunchbox Records",
+        sourceUrl: "https://lunchboxrecords.com/collections/super-sale-lps",
+      }),
+      sale({
+        id: "homepage",
+        saleDiscountPercent: 50,
+        sourceId: "lunchbox-records",
+        sourceName: "Lunchbox Records",
+        sourceUrl: "https://lunchboxrecords.com/",
+      }),
+      sale({
+        id: "reddit",
+        saleDiscountPercent: 50,
+        saleVerification: "discovery-lead",
+        sourceId: "reddit-vinyl-deals",
+        sourceName: "Reddit VinylDeals",
+        sourceUrl: "https://lunchboxrecords.com/collections/super-sale-lps?page=1",
+      }),
+    ];
+
+    const normalized = normalizeSaleCampaigns(rows, rows);
+
+    expect(normalized).toMatchObject({
+      pageCount: 2,
+      rawObservationCount: 4,
+      retailerCount: 1,
+      uniqueOfferCount: 1,
+    });
+    expect(normalized.campaigns[0]).toMatchObject({
+      saleObservationCount: 4,
+      saleObservationPageCount: 2,
+      saleVerification: "retailer-page",
+      sourceId: "lunchbox-records",
+    });
+  });
+
   it("does not collapse unrelated simultaneous offers from one retailer", () => {
     const rows = [
       sale({
@@ -192,6 +243,38 @@ describe("sale source coverage", () => {
       not_checked: 1,
       total: 5,
     });
+  });
+
+  it("distinguishes failed sale-page checks from genuinely empty coverage", () => {
+    const degraded = {
+      catalogHealth: { status: "healthy" },
+      catalogPageAvailableCount: 1,
+      id: "degraded-sale-pages",
+      name: "Degraded sale pages",
+      pageErrors: [{ failureKind: "timeout" }],
+      salePageHealth: { status: "failed" },
+      status: "partial",
+    };
+    const blocked = {
+      catalogHealth: "failed",
+      id: "blocked-everywhere",
+      name: "Blocked everywhere",
+      pageErrors: [{ failureKind: "blocked" }],
+      salePageHealth: "failed",
+      status: "error",
+    };
+    const empty = {
+      catalogHealth: "healthy",
+      catalogPageAvailableCount: 1,
+      id: "empty",
+      name: "Empty",
+      productParseHealth: "empty",
+      salePageAvailableCount: 1,
+      salePageHealth: "healthy",
+      status: "empty",
+    };
+
+    expect([degraded, blocked, empty].map(classifySourceCoverage)).toEqual(["degraded", "blocked", "empty"]);
   });
 });
 

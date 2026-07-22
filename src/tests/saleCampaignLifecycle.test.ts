@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   hashSaleContent,
+  priorSaleRecheckUrlsForSource,
   reconcileSaleCampaigns,
   saleCampaignIdFor,
   saleCampaignLedgerFromPayload,
@@ -121,6 +122,38 @@ describe("sale campaign lifecycle", () => {
     expect(first.ledger.campaigns).toHaveLength(1);
   });
 
+  it("uses the shared garage-sale page identity across differing page fragments", () => {
+    const result = reconcileSaleCampaigns({
+      observedAt: DAY_1,
+      runId: "run-garage-sale",
+      saleEvents: [
+        saleEvent({
+          id: "garage-heading",
+          saleDiscountPercent: null,
+          saleEvidence: "Garage Sale 2026",
+          saleFingerprint: "garage-heading",
+          sourceId: "polyvinyl",
+          sourceUrl: "https://polyvinylrecords.com/collections/garage-sale",
+        }),
+        saleEvent({
+          id: "clearance-fragment",
+          saleDiscountPercent: null,
+          saleEvidence: "Clearance vinyl records and accessories",
+          saleFingerprint: "clearance-fragment",
+          sourceId: "polyvinyl",
+          sourceUrl: "https://polyvinylrecords.com/collections/garage-sale",
+        }),
+      ],
+      sourceReports: [healthyReport()],
+    });
+
+    expect(result.ledger.campaigns).toHaveLength(1);
+    expect(result.ledger.campaigns[0]).toMatchObject({
+      saleObservationCount: 2,
+      saleObservationPageCount: 1,
+    });
+  });
+
   it("canonicalizes pagination, sort, and collection-tag observations without losing raw counts", () => {
     const urls = [
       "https://www.store.example/collections/super-sale-lps",
@@ -150,6 +183,144 @@ describe("sale campaign lifecycle", () => {
       saleObservationCount: 3,
       saleObservationPageCount: 1,
     });
+  });
+
+  it("merges retailer, tagged-page, homepage, and discovery observations for one quantified offer", () => {
+    const observations = [
+      saleEvent({
+        id: "tagged",
+        saleDiscountPercent: 50,
+        saleEvidence: "SUPER SALE - 50% OFF LPs - Tagged FORMAT_TAPE",
+        saleFingerprint: "tagged",
+        saleScope: "clearance",
+        sourceId: "lunchbox-records",
+        sourceName: "Lunchbox Records",
+        sourceUrl: "https://lunchboxrecords.com/collections/super-sale-lps/format_tape",
+      }),
+      saleEvent({
+        id: "collection",
+        saleDiscountPercent: 50,
+        saleEvidence: "50% off all LPs",
+        saleFingerprint: "collection",
+        sourceId: "lunchbox-records",
+        sourceName: "Lunchbox Records",
+        sourceUrl: "https://lunchboxrecords.com/collections/super-sale-lps",
+      }),
+      saleEvent({
+        id: "homepage",
+        saleDiscountPercent: 50,
+        saleEvidence: "Sale LPs 50% off",
+        saleFingerprint: "homepage",
+        sourceId: "lunchbox-records",
+        sourceName: "Lunchbox Records",
+        sourceUrl: "https://lunchboxrecords.com/",
+      }),
+      saleEvent({
+        id: "reddit",
+        saleDiscountPercent: 50,
+        saleEvidence: "Lunchbox Records SUPER SALE - 50% OFF LPs",
+        saleFingerprint: "reddit",
+        saleVerification: "discovery-lead",
+        sourceId: "reddit-vinyl-deals",
+        sourceName: "Reddit VinylDeals",
+        sourceUrl: "https://lunchboxrecords.com/collections/super-sale-lps?page=1",
+      }),
+    ];
+
+    const first = reconcileSaleCampaigns({
+      observedAt: DAY_1,
+      runId: "run-lunchbox",
+      saleEvents: observations,
+      sourceReports: [healthyReport()],
+    });
+
+    expect(first.ledger.campaigns).toHaveLength(1);
+    expect(first.ledger.campaigns[0]).toMatchObject({
+      saleDiscountPercent: 50,
+      saleObservationCount: 4,
+      saleObservationPageCount: 2,
+      saleVerification: "retailer-page",
+      sourceId: "lunchbox-records",
+    });
+
+    const changed = reconcileSaleCampaigns({
+      observedAt: DAY_2,
+      previousLedger: first.ledger,
+      runId: "run-lunchbox-changed",
+      saleEvents: [
+        saleEvent({
+          saleDiscountPercent: 40,
+          saleEvidence: "SUPER SALE - 40% OFF LPs",
+          saleFingerprint: "changed-offer",
+          sourceId: "lunchbox-records",
+          sourceName: "Lunchbox Records",
+          sourceUrl: "https://lunchboxrecords.com/collections/super-sale-lps",
+        }),
+      ],
+      sourceReports: [healthyReport()],
+    });
+    expect(changed.ledger.campaigns).toHaveLength(1);
+    expect(changed.ledger.campaigns[0]).toMatchObject({
+      saleCampaignId: first.ledger.campaigns[0].saleCampaignId,
+      saleDiscountPercent: 40,
+      saleStatus: "changed",
+    });
+  });
+
+  it("coalesces duplicate campaigns from a legacy ledger on the next observation", () => {
+    const legacyRows = [
+      saleEvent({ saleCampaignId: "legacy-lunchbox-a", saleDiscountPercent: 50, sourceUrl: "https://lunchboxrecords.com/" }),
+      saleEvent({ saleCampaignId: "legacy-lunchbox-b", saleDiscountPercent: 50, sourceUrl: "https://lunchboxrecords.com/collections/super-sale-lps" }),
+    ].map((campaign) => ({
+      ...campaign,
+      firstSeenAt: DAY_1,
+      lastSeenAt: DAY_1,
+      saleStatus: "ongoing",
+      sourceId: "lunchbox-records",
+      sourceName: "Lunchbox Records",
+    }));
+    const result = reconcileSaleCampaigns({
+      observedAt: DAY_2,
+      previousLedger: {
+        campaigns: legacyRows,
+        history: [],
+        runId: "legacy",
+        schemaVersion: 1,
+        updatedAt: DAY_1,
+      } as never,
+      runId: "migrated",
+      saleEvents: [
+        saleEvent({
+          saleDiscountPercent: 50,
+          sourceId: "lunchbox-records",
+          sourceName: "Lunchbox Records",
+          sourceUrl: "https://lunchboxrecords.com/collections/super-sale-lps",
+        }),
+      ],
+      sourceReports: [healthyReport()],
+    });
+
+    expect(result.ledger.campaigns).toHaveLength(1);
+  });
+
+  it("returns bounded same-retailer campaign URLs for explicit rechecks", () => {
+    const urls = priorSaleRecheckUrlsForSource(
+      {
+        campaigns: [
+          { sourceId: "store", sourceUrl: "https://store.example/", saleStatus: "ongoing" },
+          { sourceId: "store", sourceUrl: "https://store.example/collections/clearance", saleStatus: "unknown" },
+          { sourceId: "store", sourceUrl: "https://elsewhere.example/sale", saleStatus: "unknown" },
+          { sourceId: "store", sourceUrl: "https://store.example/collections/ended", saleStatus: "ended" },
+        ],
+      } as never,
+      { id: "store", url: "https://www.store.example" },
+      2,
+    );
+
+    expect(urls).toEqual([
+      "https://store.example/collections/clearance",
+      "https://store.example/",
+    ]);
   });
 
   it("merges a discovery lead into retailer-confirmed evidence for the same offer", () => {

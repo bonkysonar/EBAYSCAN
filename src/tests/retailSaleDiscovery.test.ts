@@ -9,6 +9,7 @@ import {
   httpFailureKind,
   isSaleSpecificUrl,
   sourceEntryUrls,
+  sourceEntryTargetsWithPriorRechecks,
   verifiedSalePathOffer,
 } from "../../scripts/lib/retailSaleDiscovery.mjs";
 
@@ -54,6 +55,85 @@ describe("retail sale discovery", () => {
       "https://example.com/",
       "https://example.com/collections/sale",
       "https://example.com/collections/50-off-select-vinyl",
+    ]);
+  });
+
+  it("keeps configured and homepage roles when prior campaign rechecks overlap them", () => {
+    expect(
+      sourceEntryTargetsWithPriorRechecks(
+        {
+          priorSaleUrls: [
+            "https://example.com/collections/vinyl",
+            "https://example.com/",
+            "https://example.com/collections/clearance",
+          ],
+          url: "https://example.com/collections/vinyl",
+        },
+        { maxHintUrls: 0 },
+      ),
+    ).toEqual([
+      { purpose: "configured", url: "https://example.com/collections/vinyl" },
+      { purpose: "homepage", url: "https://example.com/" },
+      {
+        purpose: "prior-campaign-recheck",
+        role: "sale",
+        url: "https://example.com/collections/clearance",
+      },
+    ]);
+  });
+
+  it("prioritizes Shopify collection sale paths inside the bounded generic hint budget", () => {
+    expect(
+      sourceEntryUrls(
+        {
+          salePathHints: [
+            "/sale",
+            "/sales",
+            "/clearance",
+            "/outlet",
+            "/deals",
+            "/collections/sale",
+            "/collections/clearance",
+            "/collections/outlet",
+          ],
+          sourceType: "shopify-store",
+          url: "https://example.com/collections/vinyl",
+        },
+        { maxHintUrls: 2 },
+      ),
+    ).toEqual([
+      "https://example.com/collections/vinyl",
+      "https://example.com/",
+      "https://example.com/collections/sale",
+      "https://example.com/collections/clearance",
+    ]);
+  });
+
+  it("keeps source-specific Shopify hints ahead of the reordered generic suffix", () => {
+    expect(
+      sourceEntryUrls(
+        {
+          crawlType: "shopify-store",
+          salePathHints: [
+            "/collections/deep-cuts-40-off-select-items",
+            "/collections/50-off-select-vinyl",
+            "/sale",
+            "/sales",
+            "/clearance",
+            "/outlet",
+            "/collections/sale",
+            "/collections/clearance",
+          ],
+          url: "https://example.com/collections/vinyl",
+        },
+        { maxHintUrls: 3 },
+      ),
+    ).toEqual([
+      "https://example.com/collections/vinyl",
+      "https://example.com/",
+      "https://example.com/collections/deep-cuts-40-off-select-items",
+      "https://example.com/collections/50-off-select-vinyl",
+      "https://example.com/collections/sale",
     ]);
   });
 

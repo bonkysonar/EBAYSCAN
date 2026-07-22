@@ -273,6 +273,7 @@ export type ArbitrageFind = {
   saleConsecutiveSeenCount?: number;
   saleContentHash?: string;
   saleDiscountPercent?: number | null;
+  saleDiscountQualifier?: "exact" | "up_to";
   saleEvidence?: string;
   saleEvidenceHash?: string;
   saleFailureCount?: number;

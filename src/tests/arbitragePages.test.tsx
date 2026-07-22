@@ -457,6 +457,58 @@ describe("arbitrage pages", () => {
     expect(card?.textContent).not.toContain("First seen ·");
   });
 
+  it("labels exact and up-to discounts without overstating either offer", async () => {
+    const exact = saleCampaign();
+    const upTo = {
+      ...saleCampaign(),
+      id: "sale-store-up-to",
+      saleCampaignId: "campaign-up-to",
+      saleDiscountPercent: 50,
+      saleDiscountQualifier: "up_to" as const,
+      saleEvidence: "Save up to 50% off select vinyl.",
+      saleSignal: "Up to 50% off select vinyl.",
+      sourceId: "up-to-store",
+      sourceName: "Up To Store",
+      sourceUrl: "https://up-to-store.example/sale",
+      title: "Up to 50% off sale",
+    };
+    const campaigns = [exact, upTo];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/history")) {
+          return jsonResponse({
+            campaigns,
+            events: [],
+            runId: "discount-labels",
+            status: "available",
+            summary: { changed: 2 },
+            updatedAt: "2026-07-15T12:00:00.000Z",
+          });
+        }
+        return jsonResponse({
+          fileName: "retail-arbitrage-sales.json",
+          payload: {
+            createdAt: "2026-07-15T12:00:00.000Z",
+            finds: [],
+            phase: "final",
+            runId: "discount-labels",
+            saleCampaignLedger: { campaigns, history: [] },
+            saleEvents: campaigns,
+            sourceReports: [],
+          },
+          status: "available",
+        });
+      }),
+    );
+
+    await render(<SiteWideSales />);
+
+    expect(container?.textContent).toContain("40% off");
+    expect(container?.textContent).toContain("Up to 50% off");
+    expect(container?.textContent).not.toMatch(/\d+%\+/);
+  });
+
   it("shows every active offer by default and separates raw observations from offers and retailers", async () => {
     const changed = {
       ...saleCampaign(),
@@ -511,6 +563,15 @@ describe("arbitrage pages", () => {
                 status: "empty",
               },
               { catalogHealth: "failed", id: "blocked", name: "Blocked", status: "error" },
+              {
+                catalogHealth: "healthy",
+                catalogPageAvailableCount: 1,
+                id: "sale-pages-failed",
+                name: "Sale Pages Failed",
+                pageErrors: [{ failureKind: "timeout" }],
+                salePageHealth: "failed",
+                status: "partial",
+              },
             ],
           },
           status: "available",
@@ -527,6 +588,11 @@ describe("arbitrage pages", () => {
     expect(siteSaleStat("Healthy")).toBe("1");
     expect(siteSaleStat("Empty")).toBe("1");
     expect(siteSaleStat("Blocked")).toBe("1");
+    expect(siteSaleStat("Degraded")).toBe("1");
+    const failedSaleSource = Array.from(container?.querySelectorAll<HTMLAnchorElement>(".site-sale-coverage-list a") ?? [])
+      .find((anchor) => anchor.textContent?.includes("Sale Pages Failed"));
+    expect(failedSaleSource?.textContent).toContain("sale-page checks failed");
+    expect(failedSaleSource?.textContent).not.toContain("pages reached");
     const shelves = Array.from(container?.querySelectorAll<HTMLDetailsElement>("details.site-sale-shelf") ?? []);
     expect(shelves.find((shelf) => shelf.querySelector("summary")?.textContent?.includes("Ongoing"))?.open).toBe(true);
     expect(shelves.find((shelf) => shelf.querySelector("summary")?.textContent?.includes("Evergreen"))?.open).toBe(true);

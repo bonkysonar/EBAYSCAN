@@ -104,7 +104,12 @@ export type ArbitrageFindsHistoryResult =
 
 export async function readLatestArbitrageFinds(cwd: string): Promise<LatestArbitrageFindsResult> {
   const result = await readLatestPublishedArbitrageFinds(cwd);
-  return result.status === "available" ? withoutNonRecordFinds(result) : result;
+  return result.status === "available"
+    ? withoutNonRecordFinds({
+        ...result,
+        payload: redactSensitivePublicationData(result.payload),
+      })
+    : result;
 }
 
 export async function readArbitrageFindsHistory(
@@ -141,7 +146,9 @@ export async function readArbitrageFindsHistory(
 
 export async function uploadArbitrageFinds(cwd: string, payload: unknown, requestToken?: string | null) {
   assertUploadAuthorized(requestToken);
-  const finalPayload = withAssessedRunQuality(assertFinalArbitragePayload(payload));
+  const finalPayload = redactSensitivePublicationData(
+    withAssessedRunQuality(assertFinalArbitragePayload(payload)),
+  );
   const inputHash = hashJson(finalPayload);
   const current = await readCurrentStoredPublication(cwd);
 
@@ -253,6 +260,48 @@ export async function uploadArbitrageFinds(cwd: string, payload: unknown, reques
     status: "published" as const,
     storage: "local-filesystem" as const,
   };
+}
+
+function redactSensitivePublicationData<T>(value: T): T {
+  return redactSensitivePublicationValue(value) as T;
+}
+
+function redactSensitivePublicationValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSensitivePublicationValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, nestedValue]) =>
+        key === "shippingDestinationPostalCode"
+          ? []
+          : [[key, redactSensitivePublicationValue(nestedValue)]],
+      ),
+    );
+  }
+  if (typeof value !== "string" || !/deliveryPostalCode/i.test(value)) return value;
+
+  try {
+    const url = new URL(value);
+    const filter = url.searchParams.get("filter");
+    let redacted = false;
+    if (filter) {
+      const safeFilter = filter
+        .split(",")
+        .filter((entry) => !/^deliveryPostalCode:/i.test(entry.trim()))
+        .join(",");
+      if (safeFilter !== filter) {
+        redacted = true;
+        if (safeFilter) url.searchParams.set("filter", safeFilter);
+        else url.searchParams.delete("filter");
+      }
+    }
+    if (url.searchParams.has("deliveryPostalCode")) {
+      url.searchParams.delete("deliveryPostalCode");
+      redacted = true;
+    }
+    return redacted ? url.toString() : "[redacted eBay delivery diagnostic]";
+  } catch {
+    return "[redacted eBay delivery diagnostic]";
+  }
 }
 
 function withAssessedRunQuality(payload: FinalArbitragePayload): FinalArbitragePayload {

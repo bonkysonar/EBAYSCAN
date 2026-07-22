@@ -70,6 +70,11 @@ export function reconcileSaleCampaigns(input: {
 };
 
 export function saleCampaignLedgerFromPayload(payload: Record<string, unknown> | null | undefined): SaleCampaignLedger;
+export function priorSaleRecheckUrlsForSource(
+  ledger: SaleCampaignLedger | null | undefined,
+  source: { id?: string; url?: string },
+  limit?: number,
+): string[];
 export function saleCampaignIdFor(event: Record<string, unknown>): string;
 export function hashSaleContent(event: Record<string, unknown>): string;
 export function hashSaleEvidence(event: Record<string, unknown>): string;
