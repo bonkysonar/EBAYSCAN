@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   activeSearchKey,
   buildActiveSearchProfile,
+  ebayItemIdentityTokens,
   extractEditionIdentity,
+  isExcludedEbayActiveListing,
   matchActiveListing,
 } from "../lib/arbitrage/activeEbayMatching.mjs";
 import type { ArbitrageFind } from "../lib/arbitrage/types";
@@ -23,6 +25,55 @@ function findFor(title: string): ArbitrageFind {
 }
 
 describe("active eBay edition matching", () => {
+  it("carries the purchase item identity so its own listing can be excluded", () => {
+    const find = {
+      ...findFor("Artist - Great Escape Vinyl LP"),
+      ebayItemId: "v1|123456789012|0",
+      sourceUrl: "https://www.ebay.com/itm/123456789012?hash=test",
+    } as ArbitrageFind & { ebayItemId: string };
+    const profile = buildActiveSearchProfile(find)!;
+
+    expect(profile.excludedItemIdentityTokens).toEqual(
+      expect.arrayContaining(["item:v1|123456789012|0", "legacy:123456789012"]),
+    );
+    expect(
+      isExcludedEbayActiveListing(
+        { itemId: "v1|123456789012|0", legacyItemId: "123456789012" },
+        profile,
+      ),
+    ).toBe(true);
+    expect(isExcludedEbayActiveListing({ itemId: "v1|999999999999|0" }, profile)).toBe(false);
+    expect(ebayItemIdentityTokens("https://www.ebay.com/itm/123456789012")).toContain(
+      "legacy:123456789012",
+    );
+  });
+
+  it("keeps same-title eBay purchases candidate-specific and excludes only self", () => {
+    const first = {
+      ...findFor("Artist - Great Escape Vinyl LP"),
+      ebayItemId: "v1|111111111111|0",
+      sourceId: "ebay-purchase",
+      sourceUrl: "https://www.ebay.com/itm/111111111111",
+    } as ArbitrageFind & { ebayItemId: string };
+    const second = {
+      ...findFor("Artist - Great Escape Vinyl LP"),
+      ebayItemId: "v1|222222222222|0",
+      sourceId: "ebay-purchase",
+      sourceUrl: "https://www.ebay.com/itm/222222222222",
+    } as ArbitrageFind & { ebayItemId: string };
+    const firstProfile = buildActiveSearchProfile(first)!;
+    const secondProfile = buildActiveSearchProfile(second)!;
+    const firstListing = { itemId: first.ebayItemId };
+    const secondListing = { itemId: second.ebayItemId };
+
+    expect(firstProfile.key).not.toBe(secondProfile.key);
+    expect(isExcludedEbayActiveListing(firstListing, firstProfile)).toBe(true);
+    expect(isExcludedEbayActiveListing(secondListing, firstProfile)).toBe(false);
+    expect(isExcludedEbayActiveListing(secondListing, secondProfile)).toBe(true);
+    expect(isExcludedEbayActiveListing(firstListing, secondProfile)).toBe(false);
+  });
+
+
   it("preserves source edition identity in the queue key", () => {
     const blue = findFor("Artist - Great Escape (Sea Blue Smoke Vinyl LP)");
     const red = findFor("Artist - Great Escape (Red Smoke Vinyl LP)");
@@ -49,6 +100,22 @@ describe("active eBay edition matching", () => {
     expect(missingDisc.matched).toBe(false);
     expect(missingDisc.reasons).toContain("edition-format-missing");
     expect(wrongProduct.reasons).toContain("blocked-product-type");
+  });
+
+  it("blocks record-shaped marketplace accessories from active comparison counts", () => {
+    const profile = buildActiveSearchProfile(findFor("The Beatles - Sgt Pepper Vinyl LP"))!;
+    for (const listing of [
+      "The Beatles Sgt Pepper Vinyl LP Platter Mat New",
+      "The Beatles Sgt Pepper Vinyl LP Wall Clock New",
+      "The Beatles Sgt Pepper Vinyl LP Coasters Set New",
+      "The Beatles Sgt Pepper Vinyl Record Bowl New",
+    ]) {
+      expect(matchActiveListing(listing, profile)).toMatchObject({
+        confidence: "low",
+        matched: false,
+        reasons: ["blocked-product-type"],
+      });
+    }
   });
 
   it("does not count a special pressing as the standard edition", () => {

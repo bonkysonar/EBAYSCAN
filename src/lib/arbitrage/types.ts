@@ -160,6 +160,12 @@ export type ArbitrageFind = {
   activeEvidence?: ArbitrageActiveEvidence;
   activeListingCount?: number | null;
   activeListingCountIsExactMatch?: boolean;
+  appliedSaleCampaignId?: string | null;
+  appliedSaleCode?: string | null;
+  appliedSaleDiscountPercent?: number | null;
+  appliedSaleEvidence?: string | null;
+  appliedSaleScope?: string | null;
+  appliedSaleUrl?: string | null;
   artist: string;
   artistSoldUnits365Days?: number | null;
   artistSoldUnits1095Days?: number | null;
@@ -231,6 +237,7 @@ export type ArbitrageFind = {
   lowestActiveTitle?: string;
   lowestActiveUrl?: string;
   latestSoldDate?: string | null;
+  listPrice?: number | null;
   longTermSalesPerMonth?: number | null;
   longTermSupplyMonths?: number | null;
   notes?: string[];
@@ -245,6 +252,10 @@ export type ArbitrageFind = {
     totalSold: number;
   }>;
   purchasePrice: number;
+  purchasePriceIncludesShipping?: boolean;
+  purchaseOfferVerification?: "campaign_advertised" | "direct_retailer" | "discovery_lead" | "official_api";
+  purchaseRetailerDomain?: string;
+  purchaseRetailerName?: string;
   purchasePriceUsd?: number | null;
   quantityAvailable?: number | null;
   retailerBadges?: string[];
@@ -286,6 +297,8 @@ export type ArbitrageFind = {
   sourceNoiseLevel?: string | null;
   sourceListingTitle?: string;
   sourceOriginalPrice?: number | null;
+  sourceItemPrice?: number | null;
+  sourceShippingPrice?: number | null;
   sourcePublishedAt?: string | null;
   sourcePriority?: number | null;
   sourceRetailType?: string | null;
@@ -298,6 +311,9 @@ export type ArbitrageFind = {
   soldUnits365Days?: number | null;
   soldUnits1095Days?: number | null;
   salesPerMonth?: number | null;
+  sellerAccountType?: string | null;
+  sellerFeedbackPercentage?: number | null;
+  sellerFeedbackScore?: number | null;
   sellThroughRate?: number | null;
   shopifyVariantId?: number | string | null;
   shopifyVariantTitle?: string | null;
@@ -324,6 +340,7 @@ export type ArbitrageScoredFind = ArbitrageFind & {
     evidenceFreshness: boolean;
     matchConfidence: boolean;
     offerFreshness: boolean;
+    purchaseOffer: boolean;
     soldEvidence: boolean;
     supply: boolean;
   };
@@ -342,9 +359,51 @@ export type ArbitrageScoredFind = ArbitrageFind & {
   strategyOptions: ArbitrageStrategyOption[];
 };
 
+export type ArbitrageRunQuality = {
+  blockedSourceCount: number;
+  directCatalogCoverageCount: number;
+  directCatalogCoverageRate: number;
+  directProductiveRate: number;
+  directProductiveSourceCount: number;
+  directSalePageCoverageCount: number;
+  directSalePageCoverageRate: number;
+  directSourceCount: number;
+  minimumDirectCatalogCoverageRate: number;
+  minimumDirectProductiveRate: number;
+  parserEmptySourceCount: number;
+  publishable: boolean;
+  reasons: string[];
+  status: "blocked" | "degraded" | "healthy";
+  targetDirectCatalogCoverageRate: number;
+  targetDirectProductiveRate: number;
+  targetDirectSalePageCoverageRate: number;
+};
+
+export type ArbitrageRunManifest = {
+  arguments?: Record<string, boolean | number | string>;
+  completedAt?: string;
+  requestedSourceIds?: string[];
+  scannedSourceCount?: number;
+  scannerVersion?: string;
+  sourceCatalogCount?: number;
+  startedAt?: string;
+};
+
 export type ArbitrageImportPayload = {
   createdAt: string;
   finds: ArbitrageFind[];
+  phase?: "final" | "scan" | string;
+  publicationStatus?: "final" | "provisional" | string;
+  runId?: string;
+  runManifest?: ArbitrageRunManifest;
+  runMode?: string;
+  runQuality?: ArbitrageRunQuality;
+  saleCampaignLedger?: unknown;
   saleEvents?: ArbitrageFind[];
+  saleLifecycleSummary?: unknown;
+  saleObservations?: ArbitrageFind[];
+  schemaVersion?: number;
   source?: string;
+  sourceReports?: Array<Record<string, unknown>>;
+  summary?: Record<string, unknown>;
 };

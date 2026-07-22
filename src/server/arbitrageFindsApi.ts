@@ -3,6 +3,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { dirname, join, resolve, sep } from "node:path";
 import { get, list, put } from "@vercel/blob";
 import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
+import { assessRunQuality } from "../../scripts/lib/runQuality.mjs";
+import { evaluateOpportunity } from "../lib/arbitrage/evaluateOpportunity.mjs";
+import { getActiveRetailSources } from "../lib/arbitrage/vinylShopSources";
+import {
+  normalizeSaleCampaigns,
+  type SaleObservation,
+} from "../lib/arbitrage/saleCampaigns";
 import {
   reconcileSaleCampaigns,
   saleCampaignLedgerFromPayload,
@@ -25,7 +32,10 @@ type ArbitrageSourceReport = Record<string, unknown> & {
   id?: string;
 };
 
-export type FinalArbitragePayload = ArbitrageImportPayload & {
+export type FinalArbitragePayload = Omit<
+  ArbitrageImportPayload,
+  "saleCampaignLedger" | "saleLifecycleSummary" | "sourceReports"
+> & {
   phase: "final";
   publicationStatus: "final";
   publishedAt?: string;
@@ -131,7 +141,7 @@ export async function readArbitrageFindsHistory(
 
 export async function uploadArbitrageFinds(cwd: string, payload: unknown, requestToken?: string | null) {
   assertUploadAuthorized(requestToken);
-  const finalPayload = assertFinalArbitragePayload(payload);
+  const finalPayload = withAssessedRunQuality(assertFinalArbitragePayload(payload));
   const inputHash = hashJson(finalPayload);
   const current = await readCurrentStoredPublication(cwd);
 
@@ -174,17 +184,18 @@ export async function uploadArbitrageFinds(cwd: string, payload: unknown, reques
         saleEvents: finalPayload.saleObservations ?? finalPayload.saleEvents ?? [],
         sourceReports: finalPayload.sourceReports ?? [],
       });
+  const normalizedLifecycle = normalizeLifecycleForPublication(lifecycle);
   const productFinds = finalPayload.finds.filter((find) => find.opportunityType !== "sitewide_sale");
-  const activeSaleEvents = lifecycle.activeSaleEvents as unknown as ArbitrageFind[];
-  const publishablePayload = {
+  const activeSaleEvents = normalizedLifecycle.activeSaleEvents;
+  const publishablePayload = withConsistentFindSummary({
     ...finalPayload,
-    finds: [...activeSaleEvents, ...productFinds],
+    finds: uniqueFindsById([...activeSaleEvents, ...productFinds]),
     phase: "final" as const,
     publishedAt,
-    saleCampaignLedger: lifecycle.ledger,
+    saleCampaignLedger: normalizedLifecycle.ledger,
     saleEvents: activeSaleEvents,
-    saleLifecycleSummary: lifecycle.summary,
-  };
+    saleLifecycleSummary: normalizedLifecycle.summary,
+  });
   const payloadWithoutPublication = { ...publishablePayload, publication: undefined };
   const payloadHash = hashJson(payloadWithoutPublication);
   const storedPayload: FinalArbitragePayload = {
@@ -218,7 +229,7 @@ export async function uploadArbitrageFinds(cwd: string, payload: unknown, reques
       : { ...pointerBase, url: blob.url };
     await writeBlobLatestPointer(pointer, current?.pointerBacked ? current.etag : undefined);
     return {
-      campaignSummary: lifecycle.summary,
+      campaignSummary: normalizedLifecycle.summary,
       fileName: pointer.fileName,
       payloadHash: pointer.payloadHash,
       runId: finalPayload.runId,
@@ -235,13 +246,110 @@ export async function uploadArbitrageFinds(cwd: string, payload: unknown, reques
   writeLocalLatestPointer(directory, pointer, current?.pointerBacked ? current.pointer : null);
 
   return {
-    campaignSummary: lifecycle.summary,
+    campaignSummary: normalizedLifecycle.summary,
     fileName: pointer.fileName,
     payloadHash: pointer.payloadHash,
     runId: finalPayload.runId,
     status: "published" as const,
     storage: "local-filesystem" as const,
   };
+}
+
+function withAssessedRunQuality(payload: FinalArbitragePayload): FinalArbitragePayload {
+  if (!Array.isArray(payload.sourceReports) || payload.sourceReports.length === 0) {
+    throw httpError(422, `Run ${payload.runId} has no source reports; latest was not changed.`);
+  }
+  const configuredSourceCount = payload.runManifest?.sourceCatalogCount;
+  const scannedSourceCount = payload.runManifest?.scannedSourceCount;
+  const authoritativeSourceIds = getActiveRetailSources().map((source) => source.id).sort();
+  if (
+    !Number.isInteger(configuredSourceCount) ||
+    Number(configuredSourceCount) <= 0 ||
+    !Number.isInteger(scannedSourceCount) ||
+    Number(scannedSourceCount) <= 0
+  ) {
+    throw httpError(
+      422,
+      `Run ${payload.runId} is missing valid sourceCatalogCount/scannedSourceCount manifest diagnostics; latest was not changed.`,
+    );
+  }
+  if (
+    Number(configuredSourceCount) !== authoritativeSourceIds.length ||
+    Number(scannedSourceCount) !== authoritativeSourceIds.length
+  ) {
+    throw httpError(
+      422,
+      `Run ${payload.runId} does not match the authoritative ${authoritativeSourceIds.length}-source catalog; latest was not changed.`,
+    );
+  }
+  if (
+    Number.isFinite(configuredSourceCount) &&
+    Number.isFinite(scannedSourceCount) &&
+    Number(scannedSourceCount) !== Number(configuredSourceCount)
+  ) {
+    throw httpError(
+      422,
+      `Run ${payload.runId} is not a complete catalog scan (${scannedSourceCount}/${configuredSourceCount} configured sources); latest was not changed.`,
+    );
+  }
+  const requestedSourceIds = payload.runManifest?.requestedSourceIds;
+  if (!Array.isArray(requestedSourceIds) || requestedSourceIds.length > 0) {
+    throw httpError(
+      422,
+      `Run ${payload.runId} has a targeted or missing requestedSourceIds manifest; latest was not changed.`,
+    );
+  }
+  if (
+    Number.isFinite(scannedSourceCount) &&
+    Number(scannedSourceCount) !== payload.sourceReports.length
+  ) {
+    throw httpError(
+      422,
+      `Run ${payload.runId} reported ${payload.sourceReports.length} source results for ${scannedSourceCount} scanned sources; latest was not changed.`,
+    );
+  }
+  const missingCatalogDiagnostics = payload.sourceReports.filter(
+    (report) =>
+      !cleanText(report.id) ||
+      !Object.prototype.hasOwnProperty.call(report, "candidateCount") ||
+      !Object.prototype.hasOwnProperty.call(report, "catalogHealth") ||
+      !Object.prototype.hasOwnProperty.call(report, "catalogPageAvailableCount") ||
+      !Object.prototype.hasOwnProperty.call(report, "productParseHealth"),
+  );
+  if (missingCatalogDiagnostics.length > 0) {
+    throw httpError(
+      422,
+      `Run ${payload.runId} has ${missingCatalogDiagnostics.length} source report${missingCatalogDiagnostics.length === 1 ? "" : "s"} without required catalog/parser diagnostics; latest was not changed.`,
+    );
+  }
+  const sourceReportIds = payload.sourceReports.map((report) => cleanText(report.id));
+  if (new Set(sourceReportIds).size !== sourceReportIds.length) {
+    throw httpError(
+      422,
+      `Run ${payload.runId} contains duplicate source report IDs; latest was not changed.`,
+    );
+  }
+  const sortedSourceReportIds = [...sourceReportIds].sort();
+  const missingSourceIds = authoritativeSourceIds.filter(
+    (sourceId, index) => sortedSourceReportIds[index] !== sourceId,
+  );
+  if (
+    sortedSourceReportIds.length !== authoritativeSourceIds.length ||
+    missingSourceIds.length > 0
+  ) {
+    throw httpError(
+      422,
+      `Run ${payload.runId} source reports do not match the authoritative source catalog; latest was not changed.`,
+    );
+  }
+  const runQuality = assessRunQuality(payload.sourceReports);
+  if (!runQuality.publishable) {
+    throw httpError(
+      422,
+      `Run ${payload.runId} failed the coverage publication gate: ${runQuality.reasons.join(" ")}`,
+    );
+  }
+  return { ...payload, runQuality } as FinalArbitragePayload;
 }
 
 export function assertFinalArbitragePayload(payload: unknown): FinalArbitragePayload {
@@ -272,7 +380,10 @@ export function assertFinalArbitragePayload(payload: unknown): FinalArbitragePay
     throw httpError(400, "Upload body must include a finds array.");
   }
 
-  candidate.finds.forEach((find, index) => assertFindShape(find, `finds[${index}]`));
+  candidate.finds.forEach((find, index) => {
+    assertFindShape(find, `finds[${index}]`);
+    assertBuyDecisionSupported(find, `finds[${index}]`);
+  });
   assertOptionalArray(candidate.saleEvents, "saleEvents");
   assertOptionalArray(candidate.saleObservations, "saleObservations");
   assertOptionalArray(candidate.sourceReports, "sourceReports");
@@ -292,6 +403,18 @@ export function assertFinalArbitragePayload(payload: unknown): FinalArbitragePay
     "lifecycle observation time",
   );
   return finalCandidate;
+}
+
+function assertBuyDecisionSupported(value: unknown, path: string) {
+  if (!value || typeof value !== "object") return;
+  const find = value as Record<string, unknown>;
+  if (find.decision !== "BUY" && find.status !== "BUY") return;
+  const evaluated = evaluateOpportunity(find as unknown as ArbitrageFind, {}, new Date());
+  if (evaluated.decision === "BUY") return;
+  throw httpError(
+    422,
+    `${path} claims BUY but canonical server evaluation returned ${evaluated.decision}: ${evaluated.reasonCodes.join(", ")}.`,
+  );
 }
 
 export function isLegacyFinalArbitragePayload(payload: unknown): payload is ArbitrageImportPayload {
@@ -641,12 +764,29 @@ function storedPublicationFromLegacy(
 ): StoredPublication {
   const inputHash = hashJson(result.payload);
   const runId = `legacy-${String(result.payload.createdAt).slice(0, 10)}-${inputHash.slice(0, 12)}`;
+  const {
+    saleCampaignLedger: _legacySaleCampaignLedger,
+    saleLifecycleSummary: _legacySaleLifecycleSummary,
+    sourceReports,
+    ...legacyPayload
+  } = result.payload;
+  const parsedLedger = saleCampaignLedgerFromPayload(result.payload as unknown as Record<string, unknown>);
+  const saleCampaignLedger = { ...parsedLedger, runId };
+  const byStatus = campaignStatusSummary(saleCampaignLedger.campaigns);
+  const active = saleCampaignLedger.campaigns.filter((campaign) => campaign.saleStatus !== "ended").length;
   const payload: FinalArbitragePayload = {
-    ...result.payload,
+    ...legacyPayload,
     phase: "final",
     publicationStatus: "final",
     runId,
+    saleCampaignLedger,
+    saleLifecycleSummary: {
+      active,
+      byStatus,
+      total: saleCampaignLedger.campaigns.length,
+    },
     schemaVersion: ARBITRAGE_PAYLOAD_SCHEMA_VERSION,
+    ...(sourceReports ? { sourceReports } : {}),
   };
   return {
     payload,
@@ -668,30 +808,172 @@ function storedPublicationFromLegacy(
 function withoutNonRecordFinds(
   result: Extract<LatestArbitrageFindsResult, { status: "available" }>,
 ): LatestArbitrageFindsResult {
+  const productFinds = result.payload.finds.filter((find) => {
+    if (find.opportunityType === "sitewide_sale") return false;
+    if (find.purchasePrice <= 0) return false;
+    if (!find.title.trim() || isSourceCopyTitle(find.title)) return false;
+    return assessRecordCandidate({
+      context: `${find.artist} ${find.sourceListingTitle ?? ""}`,
+      source: {
+        id: find.sourceId,
+        name: find.sourceName,
+        url: find.sourceUrl,
+      },
+      title:
+        find.shopifyVariantTitle ||
+        find.sourceListingTitle ||
+        `${find.artist} - ${find.title}`,
+      url: find.sourceUrl,
+    }).accepted;
+  });
+  const sourceSaleFinds = result.payload.finds.filter(
+    (find) => find.opportunityType === "sitewide_sale",
+  ) as SaleObservation[];
+  const normalizedSaleFinds = stableActiveSaleFinds(
+    normalizeSaleCampaigns(sourceSaleFinds).campaigns,
+  );
+  const finds = uniqueFindsById([...normalizedSaleFinds, ...productFinds]);
   return {
     ...result,
-    payload: {
+    payload: withConsistentFindSummary({
       ...result.payload,
-      finds: result.payload.finds.filter((find) => {
-        if (find.opportunityType === "sitewide_sale") return true;
-        if (find.purchasePrice <= 0) return false;
-        if (!find.title.trim() || isSourceCopyTitle(find.title)) return false;
-        return assessRecordCandidate({
-          context: `${find.artist} ${find.sourceListingTitle ?? ""}`,
-          source: {
-            id: find.sourceId,
-            name: find.sourceName,
-            url: find.sourceUrl,
-          },
-          title:
-            find.shopifyVariantTitle ||
-            find.sourceListingTitle ||
-            `${find.artist} - ${find.title}`,
-          url: find.sourceUrl,
-        }).accepted;
-      }),
+      finds,
+      saleEvents: normalizedSaleFinds,
+    }),
+  };
+}
+
+function normalizeLifecycleForPublication(lifecycle: {
+  ledger: SaleCampaignLedger;
+}) {
+  const normalizedCampaigns = normalizeSaleCampaigns(
+    lifecycle.ledger.campaigns as unknown as SaleObservation[],
+  ).campaigns;
+  const campaigns = normalizedCampaigns.map(stableSaleFind);
+  const campaignIdAliases = new Map<string, string>();
+  normalizedCampaigns.forEach((campaign, index) => {
+    const retainedId = cleanText(campaigns[index]?.saleCampaignId);
+    if (!retainedId) return;
+    for (const mergedId of campaign.mergedCampaignIds) {
+      campaignIdAliases.set(mergedId, retainedId);
+    }
+  });
+  const history = lifecycle.ledger.history.map((event) => {
+    const retainedId = campaignIdAliases.get(event.campaignId);
+    return retainedId && retainedId !== event.campaignId
+      ? { ...event, campaignId: retainedId }
+      : event;
+  });
+  const activeSaleEvents = stableActiveSaleFinds(campaigns);
+  return {
+    activeSaleEvents,
+    ledger: {
+      ...lifecycle.ledger,
+      campaigns: campaigns as unknown as SaleCampaignLedger["campaigns"],
+      history,
+    },
+    summary: {
+      active: activeSaleEvents.length,
+      byStatus: campaignStatusSummary(campaigns as unknown as SaleCampaignLedger["campaigns"]),
+      total: campaigns.length,
     },
   };
+}
+
+function stableActiveSaleFinds(campaigns: SaleObservation[]): ArbitrageFind[] {
+  return campaigns
+    .filter((campaign) => ["changed", "evergreen", "new", "ongoing"].includes(campaign.saleStatus ?? "ongoing"))
+    .map(stableSaleFind) as ArbitrageFind[];
+}
+
+function stableSaleFind<T extends SaleObservation>(campaign: T): T {
+  const saleCampaignId = cleanText(campaign.saleCampaignId) || `campaign-${hashJson({
+    sourceId: campaign.sourceId,
+    sourceUrl: campaign.sourceUrl,
+    title: campaign.title,
+  }).slice(0, 20)}`;
+  return {
+    ...campaign,
+    id: saleCampaignId,
+    saleCampaignId,
+  };
+}
+
+function uniqueFindsById(finds: ArbitrageFind[]): ArbitrageFind[] {
+  const unique = new Map<string, ArbitrageFind>();
+  for (const find of finds) {
+    const id = cleanText(find.id);
+    if (!id || unique.has(id)) continue;
+    unique.set(id, find);
+  }
+  return [...unique.values()];
+}
+
+function withConsistentFindSummary<T extends ArbitrageImportPayload>(payload: T): T {
+  const finds = uniqueFindsById(payload.finds);
+  const productFinds = finds.filter((find) => find.opportunityType !== "sitewide_sale");
+  const saleFinds = finds.filter((find) => find.opportunityType === "sitewide_sale");
+  const byDecision: Record<string, number> = { BUY: 0, REVIEW: 0, REJECT: 0, WATCH: 0 };
+  for (const find of finds) {
+    const evaluatedFind = find as ArbitrageFind & { decision?: string };
+    const stated = cleanText(evaluatedFind.decision ?? find.status).toUpperCase();
+    const decision = ["BUY", "REVIEW", "REJECT", "WATCH"].includes(stated)
+      ? stated
+      : find.opportunityType === "sitewide_sale"
+        ? "WATCH"
+        : "REVIEW";
+    byDecision[decision] += 1;
+  }
+  const sourceCounts = new Map<string, number>();
+  for (const find of productFinds) {
+    const sourceId = cleanText(find.sourceId) || cleanText(find.sourceName) || "unknown";
+    sourceCounts.set(sourceId, (sourceCounts.get(sourceId) ?? 0) + 1);
+  }
+  const largestProductSourceCount = Math.max(0, ...sourceCounts.values());
+  const largestProductSourceShare = productFinds.length
+    ? roundSummaryMetric(largestProductSourceCount / productFinds.length)
+    : 0;
+  const productSourceConcentrationHhi = productFinds.length
+    ? roundSummaryMetric(
+        [...sourceCounts.values()].reduce(
+          (total, count) => total + (count / productFinds.length) ** 2,
+          0,
+        ),
+      )
+    : 0;
+  const priorResearch = payload.summary?.productResearch;
+  const productResearch = {
+    ...(priorResearch && typeof priorResearch === "object" ? priorResearch : {}),
+    failed: productFinds.filter((find) => find.ebayResearchStatus === "failed").length,
+    no_rows: productFinds.filter((find) => find.ebayResearchStatus === "no_rows").length,
+    pending: productFinds.filter(
+      (find) => !find.ebayResearchStatus || find.ebayResearchStatus === "pending",
+    ).length,
+    validated: productFinds.filter((find) => find.ebayResearchStatus === "validated").length,
+    velocityValidated: productFinds.filter(
+      (find) => (find as ArbitrageFind & { gates?: { soldEvidence?: boolean } }).gates?.soldEvidence,
+    ).length,
+  };
+  return {
+    ...payload,
+    finds,
+    summary: {
+      ...(payload.summary ?? {}),
+      byDecision,
+      findCount: finds.length,
+      includedProductFindCount: productFinds.length,
+      largestProductSourceCount,
+      largestProductSourceShare,
+      productResearch,
+      productSourceConcentrationHhi,
+      representedProductSourceCount: sourceCounts.size,
+      saleEventCount: saleFinds.length,
+    },
+  };
+}
+
+function roundSummaryMetric(value: number): number {
+  return Math.round(value * 10_000) / 10_000;
 }
 
 function isSourceCopyTitle(title: string): boolean {

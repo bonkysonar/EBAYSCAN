@@ -25,7 +25,18 @@ export function discoverSaleLinks(
 ): string[];
 export function httpFailureKind(status: number): "blocked" | "http_error" | "not_found" | "server_error";
 export function hasCouponSignal(text: unknown): boolean;
+export function hasCoherentSaleClaim(
+  text: unknown,
+  scope?: "any" | "sitewide" | "vinyl-wide",
+): boolean;
 export function extractPromoCode(text: unknown): string | null;
+export function verifiedSalePathOffer(value: unknown): {
+  discountPercent: number;
+  evidence: string;
+  purchaseOfferVerification: "campaign_advertised";
+  saleVerification: "discovery-lead";
+  scope: "collection";
+} | null;
 export function hasBogoOfferSignal(text: unknown): boolean;
 export function dedupeSaleCampaigns<T extends {
   fingerprint?: string;

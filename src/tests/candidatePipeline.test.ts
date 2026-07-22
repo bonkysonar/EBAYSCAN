@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyVerifiedSaleCampaigns,
   assessRecordCandidate,
   candidateQualityScore,
   isHighSignalProductFind,
   rankAndSelectCandidates,
+  rankAndSelectCandidatesWithDiagnostics,
 } from "../../scripts/lib/candidatePipeline.mjs";
 
 describe("retail candidate pipeline", () => {
@@ -59,12 +61,10 @@ describe("retail candidate pipeline", () => {
     ).toMatchObject({ accepted: false, reasons: ["deal_aggregator_requires_record_title"] });
     for (const title of [
       "Artist Vinyl T-Shirt",
-      "Vinyl Record Tote Bag",
       "Artist Album Vinyl + CD Bundle",
       "Heated Rivalry Soundtrack (2CD)",
       "Miami Connection Guitar Picks",
       "Vinyl Record Pizza Cutter",
-      "12\" Chocolate Donut Slip Mat",
       "Wayne's World [New 4K UHD Steelbook]",
       "Crosley Vinyl Record Player with Speakers",
     ]) {
@@ -75,6 +75,23 @@ describe("retail candidate pipeline", () => {
           url: "https://shop.example/products/merch",
         }),
       ).toMatchObject({ accepted: false, reasons: ["non_vinyl_format"] });
+    }
+    for (const title of [
+      "12\" Chocolate Donut Slip Mat",
+      "Vinyl Record Tote Bag",
+      "M Bird Vinyl Record Paper Label Decal 4-inch",
+      "The Beatles - Sgt Pepper Vinyl LP Platter Mat New",
+      "The Beatles - Sgt Pepper Vinyl LP Wall Clock New",
+      "Miles Davis Kind of Blue Vinyl LP Coasters Set New",
+      "Decorative Jazz Vinyl Record Bowl New",
+    ]) {
+      expect(
+        assessRecordCandidate({
+          source,
+          title,
+          url: "https://shop.example/products/accessory",
+        }),
+      ).toMatchObject({ accepted: false, reasons: ["record_accessory"] });
     }
     expect(
       assessRecordCandidate({
@@ -672,6 +689,228 @@ describe("retail candidate pipeline", () => {
     }));
 
     expect(rankAndSelectCandidates(candidates, { limit: 5 })).toHaveLength(5);
+  });
+
+  it("represents Sound of Vinyl, retains the strongest finds, and reports source concentration", () => {
+    const dominant = Array.from({ length: 120 }, (_, index) => ({
+      artist: `Dominant Artist ${index}`,
+      candidateQualityScore: 500 - index,
+      id: `dominant-${index}`,
+      purchasePrice: 10,
+      sourceId: "dominant-store",
+      sourceName: "Dominant Store",
+      title: `Dominant Album ${index}`,
+    }));
+    const soundOfVinyl = Array.from({ length: 40 }, (_, index) => ({
+      artist: `Sound Artist ${index}`,
+      candidateQualityScore: 300 - index,
+      id: `sound-${index}`,
+      purchasePrice: 15,
+      sourceId: "sound-of-vinyl",
+      sourceName: "The Sound of Vinyl",
+      title: `Sound Album ${index}`,
+    }));
+    const otherStores = Array.from({ length: 8 }, (_, sourceIndex) =>
+      Array.from({ length: 10 }, (_, index) => ({
+        artist: `Other Artist ${sourceIndex}-${index}`,
+        candidateQualityScore: 200 - sourceIndex - index / 100,
+        id: `other-${sourceIndex}-${index}`,
+        purchasePrice: 15,
+        sourceId: `other-store-${sourceIndex}`,
+        sourceName: `Other Store ${sourceIndex}`,
+        title: `Other Album ${sourceIndex}-${index}`,
+      })),
+    ).flat();
+
+    const { diagnostics, selected } = rankAndSelectCandidatesWithDiagnostics(
+      [...dominant, ...soundOfVinyl, ...otherStores],
+      { limit: 80 },
+    );
+
+    expect(selected).toHaveLength(80);
+    expect(selected.some((candidate) => candidate.id === "dominant-0")).toBe(true);
+    expect(selected.some((candidate) => candidate.sourceId === "sound-of-vinyl")).toBe(true);
+    expect(selected.filter((candidate) => candidate.sourceId === "dominant-store")).toHaveLength(16);
+    expect(diagnostics).toMatchObject({
+      eligibleSourceCount: 10,
+      largestSourceSelectedCount: 16,
+      largestSourceShare: 0.2,
+      maxPerSource: 16,
+      representedSourceCount: 10,
+      selectedCandidateCount: 80,
+      unrepresentedEligibleSourceCount: 0,
+    });
+    expect(
+      diagnostics.sources.find((source) => source.sourceId === "sound-of-vinyl"),
+    ).toMatchObject({
+      eligibleCandidateCount: 40,
+      selectedCandidateCount: 16,
+      selectionStatus: "selected",
+    });
+    expect(
+      diagnostics.sources.find((source) => source.sourceId === "dominant-store")
+        ?.excludedByReason.source_cap,
+    ).toBeGreaterThan(0);
+  });
+
+  it("uses the caller's evaluated ranking for the protected opportunity tranche", () => {
+    const candidates = [
+      {
+        candidateQualityScore: 10,
+        id: "validated-buy",
+        purchasePrice: 15,
+        priorityScore: 85,
+        sourceId: "store-a",
+        sourceName: "Store A",
+        status: "BUY",
+        title: "Validated Buy",
+      },
+      {
+        candidateQualityScore: 100,
+        id: "unvalidated-reject",
+        purchasePrice: 5,
+        priorityScore: 10,
+        sourceId: "store-b",
+        sourceName: "Store B",
+        status: "REJECT",
+        title: "Unvalidated Reject",
+      },
+    ];
+
+    const { selected } = rankAndSelectCandidatesWithDiagnostics(candidates, {
+      compareCandidates: (left, right) =>
+        Number(right.status === "BUY") - Number(left.status === "BUY") ||
+        right.priorityScore - left.priorityScore,
+      limit: 1,
+      preserveTopShare: 1,
+    });
+
+    expect(selected.map((candidate) => candidate.id)).toEqual(["validated-buy"]);
+  });
+
+  it("applies an exact Sound of Vinyl collection discount before ranking", () => {
+    const [adjusted] = applyVerifiedSaleCampaigns(
+      [
+        {
+          artist: "Artist",
+          collectionContext: "deep-cuts-40-off-select-items",
+          collectionContexts: [
+            "deep-cuts-40-off-select-items",
+            "50-off-select-vinyl",
+          ],
+          discoveryUrl: "https://thesoundofvinyl.us/collections/deep-cuts-40-off-select-items",
+          discoveryUrls: [
+            "https://thesoundofvinyl.us/collections/deep-cuts-40-off-select-items",
+            "https://thesoundofvinyl.us/collections/50-off-select-vinyl",
+          ],
+          id: "sound-sale-record",
+          purchasePrice: 29.99,
+          sourceId: "sound-of-vinyl",
+          sourceName: "The Sound of Vinyl",
+          title: "Album",
+        },
+      ],
+      [
+        {
+          discountPercent: 50,
+          evidence: "50% off select vinyl",
+          saleCampaignId: "campaign-sound-50",
+          scope: "deal-source",
+          sourceId: "sound-of-vinyl",
+          sourceUrl: "https://thesoundofvinyl.us/collections/50-off-select-vinyl",
+          verification: "retailer-page",
+        },
+      ],
+    );
+
+    expect(adjusted).toMatchObject({
+      appliedSaleCampaignId: "campaign-sound-50",
+      appliedSaleDiscountPercent: 50,
+      appliedSaleEvidence: "50% off select vinyl",
+      listPrice: 29.99,
+      purchasePrice: 15,
+      purchaseOfferVerification: "campaign_advertised",
+      sourceDiscountPercent: 50,
+      sourceOriginalPrice: 29.99,
+    });
+  });
+
+  it("does not spread conditional or up-to sales, collection sales, or existing markdowns beyond verified scope", () => {
+    const campaign = {
+      discountPercent: 50,
+      evidence: "50% off select vinyl",
+      id: "sound-50",
+      scope: "deal-source",
+      sourceId: "sound-of-vinyl",
+      sourceUrl: "https://thesoundofvinyl.us/collections/50-off-select-vinyl",
+      verification: "retailer-page",
+    };
+    const [otherCollection, alreadyMarkedDown, upTo, membersOnly, spendThreshold] = applyVerifiedSaleCampaigns(
+      [
+        {
+          collectionContext: "vinyl",
+          id: "other-collection",
+          purchasePrice: 30,
+          sourceId: "sound-of-vinyl",
+        },
+        {
+          collectionContext: "50-off-select-vinyl",
+          id: "already-marked-down",
+          purchasePrice: 15,
+          sourceId: "sound-of-vinyl",
+          sourceOriginalPrice: 30,
+        },
+        {
+          collectionContext: "up-to-sale",
+          id: "up-to",
+          purchasePrice: 30,
+          sourceId: "sound-of-vinyl",
+        },
+        {
+          collectionContext: "members-only",
+          id: "members-only",
+          purchasePrice: 30,
+          sourceId: "sound-of-vinyl",
+        },
+        {
+          collectionContext: "spend-threshold",
+          id: "spend-threshold",
+          purchasePrice: 30,
+          sourceId: "sound-of-vinyl",
+        },
+      ],
+      [
+        campaign,
+        {
+          ...campaign,
+          evidence: "Up to 60% off select vinyl",
+          id: "up-to-60",
+          sourceUrl: "https://thesoundofvinyl.us/collections/up-to-sale",
+        },
+        {
+          ...campaign,
+          evidence: "Members only: 50% off select vinyl",
+          id: "members-only-50",
+          sourceUrl: "https://thesoundofvinyl.us/collections/members-only",
+        },
+        {
+          ...campaign,
+          evidence: "Spend $100 and save 50% on select vinyl",
+          id: "spend-threshold-50",
+          sourceUrl: "https://thesoundofvinyl.us/collections/spend-threshold",
+        },
+      ],
+    );
+
+    expect(otherCollection.purchasePrice).toBe(30);
+    expect(alreadyMarkedDown).toMatchObject({
+      purchasePrice: 15,
+      sourceOriginalPrice: 30,
+    });
+    expect(alreadyMarkedDown.appliedSaleCampaignId).toBeUndefined();
+    expect(upTo.purchasePrice).toBe(30);
+    expect(membersOnly.purchasePrice).toBe(30);
+    expect(spendThreshold.purchasePrice).toBe(30);
   });
 });
 

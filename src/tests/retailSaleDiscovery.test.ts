@@ -4,10 +4,12 @@ import {
   discoverSaleLinks,
   extractPromoCode,
   hasBogoOfferSignal,
+  hasCoherentSaleClaim,
   hasCouponSignal,
   httpFailureKind,
   isSaleSpecificUrl,
   sourceEntryUrls,
+  verifiedSalePathOffer,
 } from "../../scripts/lib/retailSaleDiscovery.mjs";
 
 describe("retail sale discovery", () => {
@@ -36,16 +38,45 @@ describe("retail sale discovery", () => {
     ]);
   });
 
-  it("does not probe generic sale guesses when the configured page is already sale-specific", () => {
+  it("keeps distinct configured sale hints when the configured page is already sale-specific", () => {
     const source = {
-      salePathHints: ["/sale", "/sales", "/clearance"],
-      url: "https://example.com/c/695/vinyl-clearance",
+      salePathHints: [
+        "/collections/deep-cuts-40-off-select-items",
+        "/collections/sale",
+        "/collections/50-off-select-vinyl",
+      ],
+      url: "https://example.com/collections/deep-cuts-40-off-select-items",
     };
 
     expect(isSaleSpecificUrl(source.url, source)).toBe(true);
     expect(sourceEntryUrls(source, { maxHintUrls: 3 })).toEqual([
-      "https://example.com/c/695/vinyl-clearance",
+      "https://example.com/collections/deep-cuts-40-off-select-items",
       "https://example.com/",
+      "https://example.com/collections/sale",
+      "https://example.com/collections/50-off-select-vinyl",
+    ]);
+  });
+
+  it("does not let exact duplicate or off-site hints consume the distinct hint budget", () => {
+    expect(
+      sourceEntryUrls(
+        {
+          salePathHints: [
+            "/collections/sale",
+            "https://other.example/collections/clearance",
+            "/collections/sale",
+            "/collections/outlet",
+            "/collections/last-chance",
+          ],
+          url: "https://example.com/collections/sale",
+        },
+        { maxHintUrls: 2 },
+      ),
+    ).toEqual([
+      "https://example.com/collections/sale",
+      "https://example.com/",
+      "https://example.com/collections/outlet",
+      "https://example.com/collections/last-chance",
     ]);
   });
 
@@ -92,6 +123,29 @@ describe("retail sale discovery", () => {
     expect(hasBogoOfferSignal("Oog Bogo - Plastic LP on Drag City Records")).toBe(false);
     expect(hasBogoOfferSignal("BOGO weekend sale on all vinyl")).toBe(true);
     expect(hasBogoOfferSignal("Buy one get one free")).toBe(true);
+  });
+
+  it("requires the discount and vinyl scope to form one coherent claim", () => {
+    expect(hasCoherentSaleClaim("Banner: 40% off all vinyl this weekend", "vinyl-wide")).toBe(true);
+    expect(hasCoherentSaleClaim("Shop all vinyl apparel 40% off", "vinyl-wide")).toBe(false);
+    expect(hasCoherentSaleClaim("All vinyl new releases and featured artists browse more apparel 40% off", "vinyl-wide")).toBe(false);
+  });
+
+  it("recognizes an exact percent-off retailer collection path without trusting up-to claims", () => {
+    expect(
+      verifiedSalePathOffer(
+        "https://thesoundofvinyl.us/collections/deep-cuts-40-off-select-items?page=2",
+      ),
+    ).toMatchObject({
+      discountPercent: 40,
+      purchaseOfferVerification: "campaign_advertised",
+      saleVerification: "discovery-lead",
+      scope: "collection",
+    });
+    expect(
+      verifiedSalePathOffer("https://shop.example/collections/up-to-70-off-select-items"),
+    ).toBeNull();
+    expect(verifiedSalePathOffer("https://shop.example/collections/vinyl")).toBeNull();
   });
 
   it("keeps multiple distinct campaigns from the same retailer", () => {

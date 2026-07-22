@@ -2,10 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   assessWalmartAbsolutePrice,
   extractWalmartStructuredPayloads,
+  isFirstPartyWalmartOffer,
   parseWalmartCatalogPage,
 } from "../../scripts/lib/walmartCatalog.mjs";
 
 describe("Walmart structured catalog ingestion", () => {
+  it("requires affirmative Walmart first-party seller evidence", () => {
+    expect(isFirstPartyWalmartOffer({ soldByWalmart: true })).toBe(true);
+    expect(isFirstPartyWalmartOffer({ soldByWalmart: false })).toBe(false);
+    expect(isFirstPartyWalmartOffer({ soldByWalmart: null })).toBe(false);
+  });
+
   it("parses search-result __NEXT_DATA__, deduplicates items, and exposes pagination", () => {
     const payload = {
       props: {

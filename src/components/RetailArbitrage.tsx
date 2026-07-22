@@ -74,9 +74,16 @@ type SourceReport = {
   status: string;
   usableCoverage?: UsableCoverage;
 };
-type PayloadWithDiagnostics = ArbitrageImportPayload & {
+type PayloadWithDiagnostics = Omit<ArbitrageImportPayload, "sourceReports"> & {
   phase?: string;
   runId?: string;
+  selectionDiagnostics?: {
+    eligibleSourceCount?: number;
+    largestSourceShare?: number;
+    representedSourceCount?: number;
+    sourceConcentrationHhi?: number;
+    unrepresentedEligibleSourceCount?: number;
+  };
   sourceReports?: SourceReport[];
   summary?: Record<string, unknown>;
 };
@@ -164,9 +171,11 @@ export function RetailArbitrage() {
     visibleFinds.find((find) => find.id === selectedId) ?? visibleFinds[0] ?? null;
   const stats = summarizeFinds(scoredFinds, feedback);
   const coverage = summarizeCoverage(latestPayload);
+  const runQuality = latestPayload?.runQuality;
+  const selectionDiagnostics = latestPayload?.selectionDiagnostics;
   const sourceOptions = useMemo(
     () =>
-      [...new Map(scoredFinds.map((find) => [find.sourceId, find.sourceName])).entries()].sort((left, right) =>
+      [...new Map(scoredFinds.map((find) => [purchaseRetailerKey(find), purchaseRetailerLabel(find)])).entries()].sort((left, right) =>
         left[1].localeCompare(right[1]),
       ),
     [scoredFinds],
@@ -368,6 +377,28 @@ export function RetailArbitrage() {
               : `Legacy coverage report; rerun required for product-yield diagnostics. Phase ${latestPayload?.phase ?? "unknown"}`}
           </span>
         </div>
+        {runQuality || selectionDiagnostics ? (
+          <div>
+            <strong>
+              {runQuality
+                ? `${humanize(runQuality.status)} run · catalog reach ${runQuality.directCatalogCoverageCount}/${runQuality.directSourceCount}`
+                : "Selection breadth"}
+            </strong>
+            <span>
+              {[
+                runQuality
+                  ? `${runQuality.directProductiveSourceCount}/${runQuality.directSourceCount} direct sources produced candidates`
+                  : null,
+                selectionDiagnostics
+                  ? `Selected from ${selectionDiagnostics.representedSourceCount ?? 0}/${selectionDiagnostics.eligibleSourceCount ?? 0} eligible sources; largest source ${percent(selectionDiagnostics.largestSourceShare)}`
+                  : null,
+                runQuality?.reasons?.[0] ?? null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          </div>
+        ) : null}
       </section>
 
       <SourceCoveragePanel reports={latestPayload?.sourceReports ?? []} />
@@ -394,7 +425,7 @@ export function RetailArbitrage() {
                 </select>
               </label>
               <label>
-                Source
+                Buy at
                 <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
                   <option value="ALL">All sources</option>
                   {sourceOptions.map(([id, name]) => (
@@ -490,7 +521,7 @@ export function RetailArbitrage() {
                     </span>
                     <span className="arbitrage-evidence-cell">
                       <strong>{evidenceStatusLabel(find)}</strong>
-                      <small>{find.sourceName}</small>
+                      <small>{purchaseSourceAttribution(find)}</small>
                     </span>
                   </button>
                 );
@@ -593,7 +624,7 @@ function FindDetail({
     <>
       <div className="section-heading arbitrage-detail-heading">
         <div>
-          <span className="eyebrow">{find.sourceName}</span>
+          <span className="eyebrow">{purchaseSourceAttribution(find)}</span>
           <h2>{displayRecordTitle(find)}</h2>
         </div>
         <div className="arbitrage-detail-badges">
@@ -673,6 +704,14 @@ function FindDetail({
 
       <section className="arbitrage-detail-section">
         <h3>Profit ledger</h3>
+        {find.appliedSaleDiscountPercent ? (
+          <div className="warning-box arbitrage-sale-price-warning">
+            Using a verified {find.appliedSaleDiscountPercent}% {find.appliedSaleScope === "collection" ? "collection" : find.appliedSaleScope ?? "retailer"} campaign
+            {find.appliedSaleCode ? ` with code ${find.appliedSaleCode}` : ""}
+            {find.listPrice ? `: ${sourceMoney(find.listPrice, find.sourceCurrency)} list becomes ${sourceMoney(find.purchasePrice, find.sourceCurrency)}` : ""}.
+            {" "}Confirm the discount and availability at checkout before purchasing.
+          </div>
+        ) : null}
         {find.currencyConversionRequired ? (
           <div className="warning-box arbitrage-fx-warning">
             Source price: {sourceMoney(find.purchasePrice, find.sourceCurrency)}.{" "}
@@ -687,6 +726,7 @@ function FindDetail({
               <Metric label="Source purchase" value={sourceMoney(find.purchasePrice, find.sourceCurrency)} />
             ) : null}
             <Metric label="USD purchase" value={money(ledger.purchasePrice)} />
+            <Metric label="Purchase retailer" value={purchaseRetailerLabel(find)} />
             <Metric label="Sales tax" value={money(ledger.salesTax)} />
             <Metric label="Inbound shipping" value={money(ledger.inboundShipping)} />
             <Metric label="Marketplace fee" value={money(ledger.marketplaceFee)} />
@@ -748,7 +788,7 @@ function FindDetail({
       </section>
 
       <div className="seller-detail-actions arbitrage-links">
-        <a href={find.sourceUrl} target="_blank" rel="noreferrer">Open source</a>
+        <a href={find.sourceUrl} target="_blank" rel="noreferrer">Open {purchaseRetailerLabel(find)}</a>
         <a href={cleanEbayResearchUrl(find)} target="_blank" rel="noreferrer">Open sold research</a>
         {find.ebayActiveSearchUrl ? (
           <a href={find.ebayActiveSearchUrl} target="_blank" rel="noreferrer">Open active search</a>
@@ -1002,7 +1042,7 @@ function filterAndSortFinds(
 ): ArbitrageScoredFind[] {
   return finds
     .filter((find) => {
-      if (sourceFilter !== "ALL" && find.sourceId !== sourceFilter) return false;
+      if (sourceFilter !== "ALL" && purchaseRetailerKey(find) !== sourceFilter) return false;
       const outcome = recordOutcomeForFind(feedback, find);
       const hidden = Boolean(find.dismissedAt) || isNegativeRecordOutcome(outcome);
       const tracked = Boolean(outcome && !isNegativeRecordOutcome(outcome));
@@ -1041,7 +1081,7 @@ function sortValue(find: ArbitrageScoredFind, sortKey: SortKey): number | string
   if (sortKey === "long_term_supply") {
     return find.longTermSupplyMonths ?? find.activeSupplyMonths ?? Number.POSITIVE_INFINITY;
   }
-  if (sortKey === "source") return find.sourceName.toLowerCase();
+  if (sortKey === "source") return purchaseRetailerLabel(find).toLowerCase();
   if (sortKey === "title") return displayRecordTitle(find).toLowerCase();
   return Number.NEGATIVE_INFINITY;
 }
@@ -1200,6 +1240,21 @@ function isSourceCopyTitle(title: string): boolean {
   return /^(?:cheap|deals?|home|facebook page|filter amazon(?: by price)?|click here|continue shopping|sign up|sign in|order history|premium membership|time|under|\d+% off)$/i.test(
     title.replace(/&nbsp;/g, " ").trim(),
   );
+}
+
+function purchaseRetailerKey(find: ArbitrageFind): string {
+  return find.purchaseRetailerDomain?.trim().toLowerCase() || find.sourceId;
+}
+
+function purchaseRetailerLabel(find: ArbitrageFind): string {
+  return find.purchaseRetailerName?.trim() || find.sourceName;
+}
+
+function purchaseSourceAttribution(find: ArbitrageFind): string {
+  const retailer = purchaseRetailerLabel(find);
+  return retailer.toLowerCase() === find.sourceName.trim().toLowerCase()
+    ? retailer
+    : `${retailer} via ${find.sourceName}`;
 }
 
 function displayRecordTitle(find: ArbitrageFind): string {

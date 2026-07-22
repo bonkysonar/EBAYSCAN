@@ -16,12 +16,8 @@ export function sourceEntryTargets(sourceOrUrl, options = {}) {
   const parsed = new URL(configured);
   const homepage = `${parsed.origin}/`;
   const maxHintUrls = Number.isFinite(options.maxHintUrls) ? Math.max(0, Math.floor(options.maxHintUrls)) : 4;
-  const configuredIsSaleSpecific = isSaleSpecificUrl(configured, source);
-  const targets = [
-    { purpose: "configured", url: configured },
-    { purpose: "homepage", url: homepage },
-    ...(configuredIsSaleSpecific ? [] : source.salePathHints ?? [])
-      .slice(0, maxHintUrls)
+  const hintTargets = uniqueTargets(
+    (source.salePathHints ?? [])
       .map((hint) => normalizeHttpUrl(hint, homepage))
       .filter(
         (url) =>
@@ -29,6 +25,13 @@ export function sourceEntryTargets(sourceOrUrl, options = {}) {
           new URL(url).hostname.replace(/^www\./i, "") === parsed.hostname.replace(/^www\./i, ""),
       )
       .map((url) => ({ purpose: "configured-sale-hint", url })),
+  )
+    .filter((target) => target.url !== configured && target.url !== homepage)
+    .slice(0, maxHintUrls);
+  const targets = [
+    { purpose: "configured", url: configured },
+    { purpose: "homepage", url: homepage },
+    ...hintTargets,
   ];
   return uniqueTargets(targets);
 }
@@ -106,6 +109,67 @@ export function extractPromoCode(text) {
     /\b(?:(?:promo|coupon|discount)\s+code|use\s+(?:promo\s+)?code)\s*[:\-]?\s*([A-Z0-9][A-Z0-9_-]{2,})\b|\bcode\s*[:\-]\s*([A-Z0-9][A-Z0-9_-]{2,})\b/i,
   );
   return (match?.[1] ?? match?.[2])?.toUpperCase() ?? null;
+}
+
+export function hasCoherentSaleClaim(text, scope = "any") {
+  const value = cleanText(text);
+  if (!value) return false;
+  const economicPattern = /\b(?:[1-9]\d?\s*(?:%|percent)\s*off|bogo|buy\s+(?:one|1)\s+get\s+(?:one|1)|promo\s+code|coupon\s+code|use\s+code)\b/gi;
+  const claimPattern =
+    scope === "sitewide"
+      ? /\b(?:sitewide|site-wide|storewide|store-wide|entire\s+(?:site|store)|everything)\b/gi
+      : scope === "vinyl-wide"
+        ? /\b(?:all\s+(?:vinyl|records|lps|music)|vinyl\s+(?:sale|discount|deals?))\b/gi
+        : /\b(?:sitewide|site-wide|storewide|store-wide|entire\s+(?:site|store)|everything|all\s+(?:vinyl|records|lps|music)|vinyl\s+(?:sale|discount|deals?))\b/gi;
+  const nonVinylContext = /\b(?:apparel|clothing|t-?shirts?|hoodies?|merch(?:andise)?|accessories|cds?|cassettes?|tapes?|books?|posters?|homeware)\b/i;
+  const offers = [...value.matchAll(economicPattern)];
+  const claims = [...value.matchAll(claimPattern)];
+
+  for (const offer of offers) {
+    for (const claim of claims) {
+      const offerStart = offer.index ?? 0;
+      const claimStart = claim.index ?? 0;
+      const offerEnd = offerStart + offer[0].length;
+      const claimEnd = claimStart + claim[0].length;
+      const gap = Math.max(0, Math.max(offerStart, claimStart) - Math.min(offerEnd, claimEnd));
+      if (gap > 64) continue;
+      const span = value.slice(Math.min(offerStart, claimStart), Math.max(offerEnd, claimEnd));
+      if (!nonVinylContext.test(span)) return true;
+    }
+  }
+  return false;
+}
+
+export function verifiedSalePathOffer(value) {
+  let url;
+  try {
+    url = new URL(String(value));
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(url.protocol)) return null;
+
+  let path;
+  try {
+    path = decodeURIComponent(url.pathname).toLowerCase();
+  } catch {
+    path = url.pathname.toLowerCase();
+  }
+  const normalizedPath = path.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  if (/\b(?:up-to|as-much-as)-?\d{2}(?:-percent)?-off\b/.test(normalizedPath)) return null;
+
+  const match = normalizedPath.match(/(?:^|-)([3-8]\d)(?:-(?:percent|pct))?-off(?:-|$)/);
+  if (!match) return null;
+  const discountPercent = Number(match[1]);
+  if (!Number.isFinite(discountPercent)) return null;
+
+  return {
+    discountPercent,
+    evidence: `Retailer URL slug advertises ${discountPercent}% off select items, but the current discount is not confirmed: ${url.pathname}`,
+    purchaseOfferVerification: "campaign_advertised",
+    saleVerification: "discovery-lead",
+    scope: "collection",
+  };
 }
 
 function saleLinkScore(label, url) {

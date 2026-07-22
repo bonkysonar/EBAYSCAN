@@ -1357,7 +1357,7 @@ input[type="radio"] {
   gap: 0.12rem;
 }
 
-.arbitrage-run-strip div:last-child {
+.arbitrage-run-strip div:not(:first-child) {
   text-align: right;
 }
 
@@ -2674,7 +2674,7 @@ input[type="radio"] {
     flex-direction: column;
   }
 
-  .arbitrage-run-strip div:last-child,
+  .arbitrage-run-strip div:not(:first-child),
   .site-sale-run-strip div:last-child {
     text-align: left;
   }

@@ -52,6 +52,7 @@ export type WalmartParserInput = {
 };
 
 export function extractWalmartStructuredPayloads(html: unknown): unknown[];
+export function isFirstPartyWalmartOffer(item: { soldByWalmart?: boolean | null } | null | undefined): boolean;
 export function parseWalmartCatalogPage(
   input: string | object | WalmartParserInput | null | undefined,
   fallbackPageUrl?: string | null,

@@ -9,6 +9,10 @@ import {
   scoreArbitrageFind,
 } from "../lib/arbitrage/rules";
 import type { ArbitrageFind } from "../lib/arbitrage/types";
+import {
+  applyVerifiedSaleCampaigns,
+  purchaseOfferVerificationForSource,
+} from "../../scripts/lib/candidatePipeline.mjs";
 
 const NOW = "2026-07-15T12:00:00.000Z";
 const evaluateOpportunity = evaluateNodeOpportunity;
@@ -32,6 +36,7 @@ function validatedFind(overrides: Partial<ArbitrageFind> = {}): ArbitrageFind {
     ebayResearchStatus: "validated",
     id: "validated-test",
     purchasePrice: 10,
+    purchaseOfferVerification: "direct_retailer",
     sourceCurrency: "USD",
     soldEvidence: {
       capturedAt: "2026-07-15T10:00:00.000Z",
@@ -71,6 +76,7 @@ describe("canonical arbitrage evaluation", () => {
       evidenceFreshness: true,
       matchConfidence: true,
       offerFreshness: true,
+      purchaseOffer: true,
       soldEvidence: true,
       supply: true,
     });
@@ -79,6 +85,85 @@ describe("canonical arbitrage evaluation", () => {
     expect(result.sellThroughRate).toBe(0.8);
     expect(result.activeSupplyMonths).toBe(0.75);
     expect(result.status).toBe("BUY");
+  });
+
+  it.each(["campaign_advertised", "discovery_lead"] as const)(
+    "keeps an otherwise qualified %s acquisition offer in review until its live price is confirmed",
+    (purchaseOfferVerification) => {
+      const result = evaluateOpportunity(
+        validatedFind({ purchaseOfferVerification }),
+        defaultArbitrageSettings,
+        NOW,
+      );
+
+      expect(result.decision).toBe("REVIEW");
+      expect(result.gates.purchaseOffer).toBe(false);
+      expect(result.reasonCodes).toContain("ACQUISITION_OFFER_UNVERIFIED");
+      expect(result.reasons.join(" ")).toContain("confirm the live retailer price");
+    },
+  );
+
+  it.each([undefined, "shipping_unverified", "direct-retailer"])(
+    "fails closed for missing or unknown acquisition provenance (%s)",
+    (purchaseOfferVerification) => {
+      const result = evaluateOpportunity(
+        {
+          ...validatedFind(),
+          purchaseOfferVerification,
+        } as unknown as ArbitrageFind,
+        defaultArbitrageSettings,
+        NOW,
+      );
+
+      expect(result.decision).toBe("REVIEW");
+      expect(result.reasonCodes).toContain("ACQUISITION_OFFER_UNVERIFIED");
+    },
+  );
+
+  it("keeps campaign-adjusted and discovery-pipeline prices out of automatic BUY", () => {
+    const [campaignCandidate] = applyVerifiedSaleCampaigns(
+      [
+        {
+          ...validatedFind(),
+          collectionContext: "summer-sale",
+          purchasePrice: 20,
+        },
+      ],
+      [
+        {
+          discountPercent: 50,
+          evidence: "50% off all vinyl",
+          scope: "vinyl-wide",
+          sourceId: "test",
+          sourceUrl: "https://example.test/collections/summer-sale",
+          verification: "retailer-page",
+        },
+      ],
+    );
+    const discoveryCandidate = {
+      ...validatedFind(),
+      purchaseOfferVerification: purchaseOfferVerificationForSource(
+        {},
+        { crawlType: "deal-aggregator", id: "deal-feed" },
+      ),
+    };
+    const unverifiedTargetMarketplaceCandidate = {
+      ...validatedFind(),
+      purchaseOfferVerification: purchaseOfferVerificationForSource(
+        { retailerSoldBySource: null },
+        { id: "target", retailSourceType: "marketplace_retailer" },
+      ),
+    };
+
+    for (const candidate of [
+      campaignCandidate,
+      discoveryCandidate,
+      unverifiedTargetMarketplaceCandidate,
+    ]) {
+      const result = evaluateOpportunity(candidate, defaultArbitrageSettings, NOW);
+      expect(result.decision).toBe("REVIEW");
+      expect(result.reasonCodes).toContain("ACQUISITION_OFFER_UNVERIFIED");
+    }
   });
 
   it("allows a smaller margin when the record qualifies for the fast-turn option", () => {

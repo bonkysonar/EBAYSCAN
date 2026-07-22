@@ -4,17 +4,18 @@ import { evaluateOpportunity } from "../src/lib/arbitrage/evaluateOpportunity.mj
 import { curateResearchForFind } from "./lib/productResearchCuration.mjs";
 
 const [sourceArgument, rawResearchArgument, requestedDateStamp] = process.argv.slice(2);
+const pendingOnly = rawResearchArgument === "--pending";
 if (!sourceArgument || !rawResearchArgument) {
   throw new Error(
-    "Usage: node scripts/curateRetailArbitrageRun.mjs <scan-json> <raw-research-json> [YYYY-MM-DD]",
+    "Usage: node scripts/curateRetailArbitrageRun.mjs <scan-json> <raw-research-json|--pending> [YYYY-MM-DD]",
   );
 }
 
 const workspace = process.cwd();
 const sourcePath = resolve(workspace, sourceArgument);
-const rawResearchPath = resolve(workspace, rawResearchArgument);
+const rawResearchPath = pendingOnly ? null : resolve(workspace, rawResearchArgument);
 const payload = JSON.parse(readFileSync(sourcePath, "utf8"));
-const rawResearch = JSON.parse(readFileSync(rawResearchPath, "utf8"));
+const rawResearch = pendingOnly ? {} : JSON.parse(readFileSync(rawResearchPath, "utf8"));
 const scanCreatedAt = validIsoTimestamp(payload.createdAt)
   ? payload.createdAt
   : new Date().toISOString();
@@ -60,9 +61,10 @@ const finalPayload = {
 writeJsonAtomically(sidecarPath, {
   createdAt: curatedAt,
   evidenceByFindId,
+  pendingOnly,
   runId,
   sourcePayload: relative(workspace, finalPath),
-  sourceResearch: relative(workspace, rawResearchPath),
+  sourceResearch: rawResearchPath ? relative(workspace, rawResearchPath) : null,
 });
 writeJsonAtomically(finalPath, finalPayload);
 

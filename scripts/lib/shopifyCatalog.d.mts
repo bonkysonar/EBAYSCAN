@@ -8,11 +8,19 @@ export type ShopifyCatalogDescriptor = {
 export type ShopifyCollectionLaneSelection = {
   candidateCount: number;
   configuredExcluded: boolean;
+  eligibleCount: number;
   excludedCount: number;
+  omitted: Array<{
+    context: string;
+    reason: "excluded_non_record_collection" | "lane_limit_reached" | "not_sale_relevant";
+    url: string;
+  }>;
+  omittedCount: number;
   selected: Array<{
     context: string;
     url: string;
   }>;
+  stopReason: "configured_collection_excluded" | "lane_limit_reached" | "no_sale_relevant_collections" | null;
 };
 
 export type NormalizedShopifyProduct = {

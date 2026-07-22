@@ -21,15 +21,62 @@ function sourceFind(): ArbitrageFind {
 function ebayItem(id: string, title: string, price: number) {
   return {
     condition: "Brand New",
+    conditionId: "1000",
     itemId: id,
+    itemLocation: { country: "US" },
     itemWebUrl: `https://www.ebay.com/itm/${id}`,
     price: { currency: "USD", value: String(price) },
-    shippingOptions: [{ shippingCost: { currency: "USD", value: "5" } }],
+    shippingOptions: [
+      {
+        shippingCost: { currency: "USD", value: "5" },
+        shippingCostType: "FIXED",
+      },
+    ],
     title,
   };
 }
 
 describe("active eBay enrichment", () => {
+  it("excludes the source eBay purchase listing from its own active comparisons", async () => {
+    const find = {
+      ...sourceFind(),
+      ebayItemId: "v1|own-item|0",
+      sourceId: "ebay-purchase",
+      sourceUrl: "https://www.ebay.com/itm/own-item",
+    } as ArbitrageFind & { ebayItemId: string };
+    const profile = buildActiveSearchProfile(find)!;
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          itemSummaries: [
+            ebayItem("v1|own-item|0", "Artist Great Escape Vinyl LP New Sealed", 10),
+            ebayItem("v1|real-comp|0", "Artist Great Escape Vinyl LP New Sealed", 20),
+          ],
+          total: 2,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await searchVariantPages("Artist Great Escape", profile, {
+      env: { EBAY_DELIVERY_POSTAL_CODE: "19406", EBAY_ENV: "production", EBAY_MARKETPLACE_ID: "EBAY_US" },
+      fetchImpl,
+      maxPages: 1,
+      pageLimit: 2,
+      token: "test-token",
+    });
+
+    expect(result.excludedSourceListingCount).toBe(1);
+    expect(result.listings.map((listing) => listing.id)).toEqual(["v1|real-comp|0"]);
+    const [requestedUrl, requestInit] = fetchImpl.mock.calls[0];
+    expect(new URL(String(requestedUrl)).searchParams.get("filter")).toContain(
+      "conditionIds:{1000}",
+    );
+    expect(new Headers(requestInit?.headers).get("X-EBAY-C-ENDUSERCTX")).toBe(
+      "contextualLocation=country%3DUS%2Czip%3D19406",
+    );
+  });
+
   it("paginates beyond ten results and counts only exact matched listings", async () => {
     const profile = buildActiveSearchProfile(sourceFind())!;
     const fetchImpl = vi
@@ -61,7 +108,7 @@ describe("active eBay enrichment", () => {
       );
 
     const result = await searchVariantPages("Artist Great Escape", profile, {
-      env: { EBAY_ENV: "production", EBAY_MARKETPLACE_ID: "EBAY_US" },
+      env: { EBAY_DELIVERY_POSTAL_CODE: "19406", EBAY_ENV: "production", EBAY_MARKETPLACE_ID: "EBAY_US" },
       fetchImpl,
       maxPages: 2,
       pageLimit: 2,
@@ -92,7 +139,7 @@ describe("active eBay enrichment", () => {
     );
 
     const result = await searchVariantPages("Artist Great Escape", profile, {
-      env: { EBAY_ENV: "production", EBAY_MARKETPLACE_ID: "EBAY_US" },
+      env: { EBAY_DELIVERY_POSTAL_CODE: "19406", EBAY_ENV: "production", EBAY_MARKETPLACE_ID: "EBAY_US" },
       fetchImpl,
       maxPages: 1,
       pageLimit: 1,
@@ -100,6 +147,56 @@ describe("active eBay enrichment", () => {
     });
 
     expect(result.searchComplete).toBe(false);
+  });
+
+  it("makes active evidence incomplete when matching listings lack trustworthy landed shipping", async () => {
+    const profile = buildActiveSearchProfile(sourceFind())!;
+    const valid = ebayItem("valid", "Artist Great Escape Vinyl LP New Sealed", 20);
+    const calculated = {
+      ...ebayItem("calculated", "Artist Great Escape Vinyl LP New Sealed", 19),
+      shippingOptions: [
+        {
+          shippingCost: { currency: "USD", value: "3" },
+          shippingCostType: "CALCULATED",
+          shipToLocationUsedForEstimate: { country: "US", postalCode: "19406" },
+        },
+      ],
+    };
+    const mixedCurrency = {
+      ...ebayItem("mixed-currency", "Artist Great Escape Vinyl LP New Sealed", 18),
+      shippingOptions: [
+        {
+          shippingCost: { currency: "CAD", value: "1" },
+          shippingCostType: "FIXED",
+          shipToLocationUsedForEstimate: { country: "US", postalCode: "19406" },
+        },
+      ],
+    };
+    const missingShipping = {
+      ...ebayItem("missing-shipping", "Artist Great Escape Vinyl LP New Sealed", 17),
+      shippingOptions: [],
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          itemSummaries: [valid, calculated, mixedCurrency, missingShipping],
+          total: 4,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await searchVariantPages("Artist Great Escape", profile, {
+      env: { EBAY_DELIVERY_POSTAL_CODE: "19406", EBAY_ENV: "production", EBAY_MARKETPLACE_ID: "EBAY_US" },
+      fetchImpl,
+      maxPages: 1,
+      pageLimit: 4,
+      token: "test-token",
+    });
+
+    expect(result.listings.map((listing) => listing.id)).toEqual(["valid"]);
+    expect(result.searchComplete).toBe(false);
+    expect(result.untrustedMatchedListingCount).toBe(3);
   });
 
   it("aborts a stalled Browse API request after the configured timeout", async () => {
@@ -116,7 +213,7 @@ describe("active eBay enrichment", () => {
 
     await expect(
       searchVariantPages("Artist Great Escape", profile, {
-        env: { EBAY_ENV: "production", EBAY_MARKETPLACE_ID: "EBAY_US" },
+        env: { EBAY_DELIVERY_POSTAL_CODE: "19406", EBAY_ENV: "production", EBAY_MARKETPLACE_ID: "EBAY_US" },
         fetchImpl: fetchImpl as typeof fetch,
         maxPages: 1,
         pageLimit: 1,
@@ -204,5 +301,37 @@ describe("active eBay enrichment", () => {
       matchConfidence: "high",
       searchComplete: true,
     });
+  });
+
+  it("stops subsequent variants on a non-JSON 429 response", async () => {
+    const profile = buildActiveSearchProfile(sourceFind())!;
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response("<html>rate limited</html>", {
+        headers: { "Retry-After": "5" },
+        status: 429,
+        statusText: "Too Many Requests",
+      }),
+    );
+
+    const result = await enrichActiveEntry(
+      {
+        key: profile.key,
+        primary: profile.primary,
+        profile,
+        variants: ["Artist Great Escape", "Great Escape LP"],
+      },
+      {
+        searchOptions: {
+          env: { EBAY_DELIVERY_POSTAL_CODE: "19406", EBAY_ENV: "production", EBAY_MARKETPLACE_ID: "EBAY_US" },
+          fetchImpl,
+          maxPages: 1,
+          token: "test-token",
+        },
+      },
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("Stopped the batch");
   });
 });

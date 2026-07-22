@@ -144,6 +144,45 @@ describe("arbitrage pages", () => {
     expect(container?.textContent).toContain("Runtime Test Album");
   });
 
+  it("labels the actual purchase retailer separately from a discovery feed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          fileName: "retail-arbitrage-test.json",
+          payload: {
+            createdAt: now(),
+            finds: [
+              {
+                ...validatedBuyFind(),
+                purchaseRetailerDomain: "amazon.com",
+                purchaseRetailerName: "Amazon",
+                sourceId: "deal-feed",
+                sourceName: "Deal Feed",
+                sourceUrl: "https://www.amazon.com/dp/example",
+              },
+            ],
+            phase: "final",
+            runId: "retailer-attribution-run",
+            sourceReports: [],
+          },
+          status: "available",
+        }),
+      ),
+    );
+
+    await render(<RetailArbitrage />);
+
+    expect(container?.textContent).toContain("Amazon via Deal Feed");
+    expect(container?.textContent).toContain("Purchase retailerAmazon");
+    expect(container?.textContent).toContain("Open Amazon");
+    expect(
+      Array.from(container?.querySelectorAll("select") ?? []).some((select) =>
+        select.textContent?.includes("Amazon"),
+      ),
+    ).toBe(true);
+  });
+
   it("shows adaptive priority, turnover, and buy-profile evidence", async () => {
     vi.stubGlobal(
       "fetch",
@@ -309,6 +348,19 @@ describe("arbitrage pages", () => {
             finds: [validatedBuyFind()],
             phase: "final",
             runId: "coverage-run",
+            runQuality: {
+              directCatalogCoverageCount: 2,
+              directProductiveSourceCount: 1,
+              directSourceCount: 2,
+              publishable: true,
+              reasons: ["Only 50% of direct retailers produced parsed products; target is 40%."],
+              status: "degraded",
+            },
+            selectionDiagnostics: {
+              eligibleSourceCount: 2,
+              largestSourceShare: 1,
+              representedSourceCount: 1,
+            },
             sourceReports: [
               {
                 candidateCount: 1,
@@ -353,6 +405,8 @@ describe("arbitrage pages", () => {
     expect(productCoverage?.textContent).toContain("1/2");
     expect(container?.textContent).toContain("1 healthy · 1 degraded · 0 blocked");
     expect(container?.textContent).toContain("Product yield 1/2; 1 parser-empty, 0 unavailable.");
+    expect(container?.textContent).toContain("Degraded run · catalog reach 2/2");
+    expect(container?.textContent).toContain("Selected from 1/2 eligible sources; largest source 100%");
     expect(container?.textContent).toContain("What the scanner actually checked");
     expect(container?.textContent).toContain("Runtime Records");
     expect(container?.textContent).toContain("HTTP Healthy Empty Store");
@@ -402,6 +456,82 @@ describe("arbitrage pages", () => {
     expect(card?.textContent).toContain("Discount changed");
     expect(card?.textContent).not.toContain("First seen ·");
   });
+
+  it("shows every active offer by default and separates raw observations from offers and retailers", async () => {
+    const changed = {
+      ...saleCampaign(),
+      saleCampaignId: "campaign-changed",
+      sourceUrl: "https://sale-store.example/collections/summer-sale",
+    };
+    const changedPageFragment = {
+      ...changed,
+      id: "sale-store-page-two",
+      saleCampaignId: "campaign-changed-page-two",
+      sourceUrl: "https://sale-store.example/collections/summer-sale/format_tape?page=2&sort_by=best-selling",
+    };
+    const ongoing = {
+      ...saleCampaign(),
+      id: "ongoing-store",
+      saleCampaignId: "campaign-ongoing",
+      saleStatus: "ongoing",
+      sourceId: "ongoing-store",
+      sourceName: "Ongoing Store",
+      sourceUrl: "https://ongoing.example/clearance",
+    };
+    const evergreen = {
+      ...saleCampaign(),
+      id: "evergreen-store",
+      saleCampaignId: "campaign-evergreen",
+      saleStatus: "evergreen",
+      sourceId: "evergreen-store",
+      sourceName: "Evergreen Store",
+      sourceUrl: "https://evergreen.example/sale",
+    };
+    const campaigns = [changed, changedPageFragment, ongoing, evergreen];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          fileName: "retail-arbitrage-sales.json",
+          payload: {
+            createdAt: "2026-07-15T12:00:00.000Z",
+            finds: [],
+            phase: "final",
+            saleCampaignLedger: { campaigns, history: [] },
+            saleEvents: campaigns,
+            saleObservations: campaigns,
+            sourceReports: [
+              { id: "healthy", name: "Healthy", productParseHealth: "productive", status: "candidates" },
+              {
+                catalogHealth: "healthy",
+                catalogPageAttemptCount: 2,
+                id: "empty",
+                name: "Empty",
+                productParseHealth: "empty",
+                status: "empty",
+              },
+              { catalogHealth: "failed", id: "blocked", name: "Blocked", status: "error" },
+            ],
+          },
+          status: "available",
+        }),
+      ),
+    );
+
+    await render(<SiteWideSales />);
+
+    expect(container?.querySelectorAll(".site-sale-card")).toHaveLength(3);
+    expect(siteSaleStat("Active retailers")).toBe("3");
+    expect(siteSaleStat("Unique offers")).toBe("3");
+    expect(siteSaleStat("Raw observations")).toBe("4");
+    expect(siteSaleStat("Healthy")).toBe("1");
+    expect(siteSaleStat("Empty")).toBe("1");
+    expect(siteSaleStat("Blocked")).toBe("1");
+    const shelves = Array.from(container?.querySelectorAll<HTMLDetailsElement>("details.site-sale-shelf") ?? []);
+    expect(shelves.find((shelf) => shelf.querySelector("summary")?.textContent?.includes("Ongoing"))?.open).toBe(true);
+    expect(shelves.find((shelf) => shelf.querySelector("summary")?.textContent?.includes("Evergreen"))?.open).toBe(true);
+  });
+
   it("returns a changed sale campaign to the priority queue despite older review feedback", async () => {
     const campaign = {
       ...saleCampaign(),
@@ -809,6 +939,13 @@ function saleCampaign() {
     sourceUrl: "https://sale-store.example/sale",
     title: "40% sale",
   };
+}
+
+function siteSaleStat(label: string): string | undefined {
+  return Array.from(container?.querySelectorAll<HTMLElement>(".site-sale-stats .seller-stat") ?? [])
+    .find((stat) => stat.querySelector("span")?.textContent === label)
+    ?.querySelector("strong")
+    ?.textContent ?? undefined;
 }
 
 function transition(id: string, reason: string, at: string) {

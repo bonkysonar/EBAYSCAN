@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   hashSaleContent,
   reconcileSaleCampaigns,
+  saleCampaignIdFor,
   saleCampaignLedgerFromPayload,
   sourceSaleObservationHealth,
 } from "../../scripts/lib/saleCampaignLifecycle.mjs";
@@ -118,6 +119,136 @@ describe("sale campaign lifecycle", () => {
     });
 
     expect(first.ledger.campaigns).toHaveLength(1);
+  });
+
+  it("canonicalizes pagination, sort, and collection-tag observations without losing raw counts", () => {
+    const urls = [
+      "https://www.store.example/collections/super-sale-lps",
+      "https://store.example/collections/super-sale-lps?sort_by=best-selling&page=2",
+      "https://store.example/collections/super-sale-lps/format_tape?utm_source=email",
+    ];
+    const events = urls.map((sourceUrl, index) =>
+      saleEvent({
+        id: `sale-${index}`,
+        saleDiscountPercent: 50,
+        saleEvidence: "Super Sale: 50% off LPs",
+        saleFingerprint: `page-fragment-${index}`,
+        sourceUrl,
+      }),
+    );
+
+    expect(new Set(events.map(saleCampaignIdFor)).size).toBe(1);
+    const result = reconcileSaleCampaigns({
+      observedAt: DAY_1,
+      runId: "run-url-noise",
+      saleEvents: events,
+      sourceReports: [healthyReport()],
+    });
+
+    expect(result.ledger.campaigns).toHaveLength(1);
+    expect(result.ledger.campaigns[0]).toMatchObject({
+      saleObservationCount: 3,
+      saleObservationPageCount: 1,
+    });
+  });
+
+  it("merges a discovery lead into retailer-confirmed evidence for the same offer", () => {
+    const result = reconcileSaleCampaigns({
+      observedAt: DAY_1,
+      runId: "run-verification-upgrade",
+      saleEvents: [
+        saleEvent({
+          id: "lead",
+          saleDiscountPercent: 50,
+          saleFingerprint: "lead-fingerprint",
+          saleScope: "collection",
+          saleVerification: "discovery-lead",
+        }),
+        saleEvent({
+          id: "confirmed",
+          saleDiscountPercent: 50,
+          saleEvidence: "Retailer banner: 50% off select vinyl",
+          saleFingerprint: "confirmed-fingerprint",
+          saleScope: "deal-source",
+          saleVerification: "retailer-page",
+        }),
+      ],
+      sourceReports: [healthyReport()],
+    });
+
+    expect(result.ledger.campaigns).toHaveLength(1);
+    expect(result.ledger.campaigns[0]).toMatchObject({
+      saleDiscountPercent: 50,
+      saleObservationCount: 2,
+      saleVerification: "retailer-page",
+    });
+  });
+
+  it("suppresses a conflicting URL-only discount when the retailer confirms that page", () => {
+    const result = reconcileSaleCampaigns({
+      observedAt: DAY_1,
+      runId: "run-conflicting-lead",
+      saleEvents: [
+        saleEvent({
+          id: "lead-40",
+          saleDiscountPercent: 40,
+          saleFingerprint: "lead-40",
+          saleVerification: "discovery-lead",
+        }),
+        saleEvent({
+          id: "confirmed-50",
+          saleDiscountPercent: 50,
+          saleEvidence: "Retailer banner: 50% off select vinyl",
+          saleFingerprint: "confirmed-50",
+          saleVerification: "retailer-page",
+        }),
+      ],
+      sourceReports: [healthyReport()],
+    });
+
+    expect(result.ledger.campaigns).toHaveLength(1);
+    expect(result.ledger.campaigns[0]).toMatchObject({
+      saleDiscountPercent: 50,
+      saleVerification: "retailer-page",
+    });
+  });
+
+  it("downgrades navigation-only broad scope instead of presenting it as vinyl-wide", () => {
+    const result = reconcileSaleCampaigns({
+      observedAt: DAY_1,
+      runId: "run-nav-scope",
+      saleEvents: [
+        saleEvent({
+          saleDiscountPercent: null,
+          saleEvidence: "Store Shop All Products Pre-Orders New Releases Shop All Music Vinyl CDs Tapes Digital Shop All Merch",
+          saleScope: "vinyl-wide",
+          saleSignal: "Store has a vinyl wide vinyl sale signal.",
+          sourceUrl: "https://store.example/collections/music",
+          title: "Broad sale: Store",
+        }),
+      ],
+      sourceReports: [healthyReport()],
+    });
+
+    expect(result.activeSaleEvents[0].saleScope).toBe("unknown");
+  });
+
+  it("does not bind an apparel discount to adjacent all-vinyl navigation", () => {
+    const result = reconcileSaleCampaigns({
+      observedAt: DAY_1,
+      runId: "run-mixed-context",
+      saleEvents: [
+        saleEvent({
+          saleDiscountPercent: 40,
+          saleEvidence: "Shop all vinyl apparel 40% off",
+          saleScope: "vinyl-wide",
+          saleSignal: "Store has 40% off all vinyl.",
+        }),
+      ],
+      sourceReports: [healthyReport()],
+    });
+
+    expect(result.activeSaleEvents[0].saleScope).toBe("unknown");
   });
 
   it("does not treat evidence-only wording changes as a changed campaign", () => {

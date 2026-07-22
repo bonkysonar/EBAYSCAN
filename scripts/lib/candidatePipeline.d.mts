@@ -1,17 +1,18 @@
 export type RecordCandidateSource = {
-  crawlType?: string;
-  displayName?: string;
-  group?: string;
-  id?: string;
-  name?: string;
-  noiseLevel?: string;
-  priority?: number;
-  saleLikelihood?: string;
-  sourceNoiseLevel?: string;
-  sourcePriority?: number;
-  sourceSaleLikelihood?: string;
-  sourceType?: string;
-  url?: string;
+  crawlType?: string | null;
+  displayName?: string | null;
+  group?: string | null;
+  id?: string | null;
+  name?: string | null;
+  noiseLevel?: string | null;
+  priority?: number | null;
+  retailSourceType?: string | null;
+  saleLikelihood?: string | null;
+  sourceNoiseLevel?: string | null;
+  sourcePriority?: number | null;
+  sourceSaleLikelihood?: string | null;
+  sourceType?: string | null;
+  url?: string | null;
 };
 
 export type RecordCandidateAssessment = {
@@ -22,6 +23,12 @@ export type RecordCandidateAssessment = {
 
 export type RankableCandidate = RecordCandidateSource & {
   activeListingCount?: number | null;
+  appliedSaleCampaignId?: string | null;
+  appliedSaleCode?: string | null;
+  appliedSaleDiscountPercent?: number | null;
+  appliedSaleEvidence?: string | null;
+  appliedSaleScope?: string | null;
+  appliedSaleUrl?: string | null;
   artist?: string | null;
   artistSoldUnits365Days?: number | null;
   available?: boolean | null;
@@ -31,9 +38,14 @@ export type RankableCandidate = RecordCandidateSource & {
   barcode?: string | null;
   candidateQualityScore?: number;
   condition?: string | null;
+  collectionContext?: string | null;
+  collectionContexts?: string[];
   discoveryUrl?: string | null;
+  discoveryUrls?: string[];
   id?: string;
+  listPrice?: number | null;
   purchasePrice?: number;
+  purchaseOfferVerification?: "campaign_advertised" | "direct_retailer" | "discovery_lead" | "official_api";
   retailerBestSeller?: boolean;
   retailerCustomerPick?: boolean;
   retailerReviewCount?: number | null;
@@ -62,6 +74,98 @@ export type RankableCandidate = RecordCandidateSource & {
   gtin13?: string | null;
   gtin14?: string | null;
   variantTitle?: string | null;
+};
+
+export type VerifiedSaleCampaign = {
+  campaignId?: string | null;
+  code?: string | null;
+  couponCode?: string | null;
+  discountPercent?: number | null;
+  evidence?: string | null;
+  fingerprint?: string | null;
+  id?: string | null;
+  promoCode?: string | null;
+  saleCampaignId?: string | null;
+  saleCode?: string | null;
+  saleDiscountPercent?: number | null;
+  saleEvidence?: string | null;
+  saleScope?: string | null;
+  saleSignal?: string | null;
+  saleVerification?: string | null;
+  scope?: string | null;
+  signal?: string | null;
+  sourceId?: string | null;
+  sourceListingTitle?: string | null;
+  sourceUrl?: string | null;
+  title?: string | null;
+  verification?: string | null;
+};
+
+export type CandidateSelectionPhase =
+  | "protected_quality"
+  | "family_representation"
+  | "source_representation"
+  | "ranked_fill"
+  | "family_cap_relaxation";
+
+export type CandidateSelectionExclusionReason =
+  | "duplicate_pressing"
+  | "duplicate_candidate_identity"
+  | "source_cap"
+  | "family_cap"
+  | "selection_limit";
+
+export type CandidateSourceSelectionDiagnostics = {
+  bestCandidateRank: number | null;
+  bestCandidateScore: number | null;
+  bestSelectedRank: number | null;
+  eligibleCandidateCount: number;
+  excludedByReason: Record<CandidateSelectionExclusionReason, number>;
+  excludedCandidateCount: number;
+  inputCandidateCount: number;
+  primaryExclusionReason: CandidateSelectionExclusionReason | null;
+  selectedByPhase: Record<CandidateSelectionPhase, number>;
+  selectedCandidateCount: number;
+  selectedShare: number;
+  selectionStatus: "selected" | "not_selected" | CandidateSelectionExclusionReason;
+  sourceId: string;
+};
+
+export type CandidateSelectionDiagnostics = {
+  duplicatePressingCandidateCount: number;
+  effectiveLimit: number;
+  eligibleCandidateCount: number;
+  eligibleSourceCount: number;
+  excludedByReason: Record<CandidateSelectionExclusionReason, number>;
+  inputCandidateCount: number;
+  largestSourceSelectedCount: number;
+  largestSourceShare: number;
+  limitApplied: boolean;
+  maxPerFamily: number | null;
+  maxPerSource: number | null;
+  representedSourceCount: number;
+  requestedLimit: number | null;
+  selectedByPhase: Record<CandidateSelectionPhase, number>;
+  selectedCandidateCount: number;
+  sourceConcentrationHhi: number;
+  sources: CandidateSourceSelectionDiagnostics[];
+  unrepresentedEligibleSourceCount: number;
+};
+
+export type CandidateSelectionOptions<T extends RankableCandidate> = {
+  compareCandidates?: (left: T, right: T) => number;
+  dedupePressings?: boolean;
+  explorationShare?: number;
+  familyExploration?: boolean;
+  familyKey?: (candidate: T) => string | null | undefined;
+  limit?: number;
+  maxPerFamily?: number;
+  maxPerSource?: number;
+  perFamilyShare?: number;
+  perSourceShare?: number;
+  preserveTopCount?: number;
+  preserveTopShare?: number;
+  scoreCandidate?: (candidate: T) => number;
 };
 
 export type HighSignalProductFind = {
@@ -106,19 +210,21 @@ export function assessRecordCandidate(input?: {
   url?: string;
 }): RecordCandidateAssessment;
 export function candidateQualityScore(candidate: RankableCandidate): number;
+export function applyVerifiedSaleCampaigns<T extends RankableCandidate>(
+  candidates: T[],
+  campaigns: VerifiedSaleCampaign[],
+): Array<T & RankableCandidate>;
+export function purchaseOfferVerificationForSource(
+  candidate?: Pick<RankableCandidate, "purchaseOfferVerification" | "retailerSoldBySource">,
+  source?: RecordCandidateSource,
+): "campaign_advertised" | "direct_retailer" | "discovery_lead" | "official_api";
 export function isHighSignalProductFind(find: HighSignalProductFind): boolean;
 export function rankAndSelectCandidates<T extends RankableCandidate>(
   candidates: T[],
-  options?: {
-    dedupePressings?: boolean;
-    explorationShare?: number;
-    familyExploration?: boolean;
-    familyKey?: (candidate: T) => string | null | undefined;
-    limit?: number;
-    maxPerFamily?: number;
-    maxPerSource?: number;
-    perFamilyShare?: number;
-    perSourceShare?: number;
-  },
+  options?: CandidateSelectionOptions<T>,
 ): T[];
+export function rankAndSelectCandidatesWithDiagnostics<T extends RankableCandidate>(
+  candidates: T[],
+  options?: CandidateSelectionOptions<T>,
+): { diagnostics: CandidateSelectionDiagnostics; selected: T[] };
 export function sourceMetadataScore(source: RecordCandidateSource): number;

@@ -11,6 +11,7 @@ export type ActiveEditionIdentity = {
 export type ActiveSearchProfile = {
   artist: string;
   edition: ActiveEditionIdentity;
+  excludedItemIdentityTokens: string[];
   key: string;
   primary: string;
   title: string;
@@ -28,5 +29,7 @@ export type ActiveListingMatch = {
 export function activeSearchKey(find: ArbitrageFind): string | null;
 export function buildActiveSearchProfile(find: ArbitrageFind): ActiveSearchProfile | null;
 export function cleanActiveSearchText(value: unknown): string;
+export function ebayItemIdentityTokens(...values: unknown[]): string[];
 export function extractEditionIdentity(value: unknown, releaseTitle?: string): ActiveEditionIdentity;
+export function isExcludedEbayActiveListing(item: unknown, profile: ActiveSearchProfile): boolean;
 export function matchActiveListing(title: string, profile: ActiveSearchProfile): ActiveListingMatch;

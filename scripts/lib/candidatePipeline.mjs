@@ -12,7 +12,7 @@ const DIGITAL_NON_RECORD = /\b(?:digital|download|flac|mp3|streaming|wav)\b/i;
 const RETAIL_NOISE =
   /\b(?:air\s+fryer|apparel|automotive|baby|bathing\s+suits?|beauty|bedding|bicycles?|bikinis?|bra(?:lette)?|bucket|cable|car\s+wash|cat\s+treats?|charger|cleaning|clothing|coffee|comforter|coolers?|cosmetics|decorations?|dish\s+soap|electronics?|eyeshadow|fitness\s+tracker|food|gimmicks?|goggles|granola|grocery|groceries|hair|handbags?|headphones?|ice\s+packs?|kitchen|knife|laundry|laptop|makeup|manicure|mattress|nail\s+colou?r|ornament|pants|paprika|pencils?|pens?|phone|protein|purse|sauce|screwdrivers?|shampoo|shoes?|shorts|skin\s*care|smart\s*watch|smartwatch|snacks?|speaker|supplement|swimdress|swimsuits?|swimwear|tablet|toothpaste|toys?|tuna|underwear|webcam|wipes?)\b/i;
 const RECORD_ACCESSORY =
-  /\b(?:45\s+adapter|cartridge|cleaning\s+(?:brush|fluid|kit)|display\s+frame|inner\s+sleeves?|needle|outer\s+sleeves?|record\s+cleaner|replacement\s+stylus|stylus|storage\s+crate)\b/i;
+  /\b(?:45\s+adapter|cartridge|cleaning\s+(?:brush|fluid|kit)|coasters?|decal|display\s+frame|inner\s+sleeves?|label\s+decal|needle|non[- ]?adhesive\s+label|outer\s+sleeves?|paper\s+label|platter\s+mat|record\s+bowl|record\s+cleaner|replacement\s+(?:cover|jacket|sleeve|stylus)|slip\s*mat|stylus|storage\s+crate|turntable\s+(?:platter\s+)?mat|wall\s+clock)\b/i;
 const PROMOTION_LABEL =
   /^(?:bogo|buy\s+(?:one|1)|extra\s+\d|free\s+shipping|get\s+(?:one|1)|members?\s+only|prime\s+members?|save\s+\d|select\s+(?:accounts?|items?|titles?)|up\s+to\s+\d|\d+\s*%\s*off)\b/i;
 const NON_NEW_PRODUCT =
@@ -30,6 +30,7 @@ export function assessRecordCandidate({ context = "", productType = "", source =
   if (NAVIGATION_LABEL.test(cleanTitle)) return rejected("navigation_label");
   if (isExpiredDealUrl(url)) return rejected("expired_deal");
   if (NON_NEW_PRODUCT.test(`${directEvidence} ${urlEvidence}`)) return rejected("non_new_condition");
+  if (isMarketplaceNonRecordTitle(negativeEvidence)) return rejected("record_accessory");
   if (RECORD_ACCESSORY.test(negativeEvidence)) return rejected("record_accessory");
 
   const explicitVinyl = VINYL_FORMAT.test(directEvidence);
@@ -252,27 +253,223 @@ export function isHighSignalProductFind(find) {
   return find.purchasePrice <= exploratoryPriceCeiling && (trustedFinalDealSource || productSaleSignal);
 }
 
-export function rankAndSelectCandidates(candidates, options = {}) {
-  const deduped =
-    options.dedupePressings === false
-      ? [...candidates]
-      : dedupePressingOffers(candidates);
-  const ranked = deduped.sort(compareRankedCandidates);
-  const requestedLimit = options.limit ?? ranked.length;
-  if (!Number.isFinite(requestedLimit) || requestedLimit >= ranked.length) return ranked;
-  const limit = Math.max(0, Math.floor(requestedLimit));
-  if (limit <= 0 || ranked.length === 0) return [];
+export function applyVerifiedSaleCampaigns(candidates, campaigns) {
+  const campaignsBySource = new Map();
+  for (const campaign of campaigns ?? []) {
+    const sourceId = cleanText(campaign?.sourceId);
+    const discountPercent = Number(
+      campaign?.discountPercent ?? campaign?.saleDiscountPercent,
+    );
+    const verification = cleanText(
+      campaign?.verification ?? campaign?.saleVerification,
+    ).toLowerCase();
+    const evidence = campaignEvidence(campaign);
+    if (!sourceId || verification !== "retailer-page") continue;
+    if (!Number.isFinite(discountPercent) || discountPercent <= 0 || discountPercent >= 90) continue;
+    if (/\b(?:up\s+to|as\s+much\s+as)\s+\d+\s*(?:%|percent\b)/i.test(evidence)) continue;
+    if (/\b(?:bogo|buy\s+(?:one|1|2)\s+get|buy\s+more\s+save\s+more)\b/i.test(evidence)) continue;
+    if (hasConditionalDiscountRequirement(evidence)) continue;
 
+    const sourceCampaigns = campaignsBySource.get(sourceId) ?? [];
+    sourceCampaigns.push({
+      campaign,
+      collectionId: collectionIdFromUrl(campaign?.sourceUrl),
+      discountPercent,
+      evidence,
+      scope: cleanText(campaign?.scope ?? campaign?.saleScope).toLowerCase(),
+    });
+    campaignsBySource.set(sourceId, sourceCampaigns);
+  }
+
+  return (candidates ?? []).map((candidate) => {
+    if (candidate?.appliedSaleCampaignId) return candidate;
+    const currentPrice = finitePositive(candidate?.purchasePrice);
+    if (currentPrice === null) return candidate;
+    const existingListPrice = finitePositive(
+      candidate?.sourceOriginalPrice ?? candidate?.listPrice,
+    );
+    const alreadyMarkedDown =
+      (existingListPrice !== null && existingListPrice > currentPrice) ||
+      Number(candidate?.sourceDiscountPercent) > 0;
+    if (alreadyMarkedDown) return candidate;
+
+    const candidateCollectionIds = new Set(
+      [
+        candidate?.collectionContext,
+        ...(candidate?.collectionContexts ?? []),
+        collectionIdFromUrl(candidate?.discoveryUrl),
+        ...(candidate?.discoveryUrls ?? []).map(collectionIdFromUrl),
+      ]
+        .map(normalizedCollectionId)
+        .filter(Boolean),
+    );
+    const applicable = (campaignsBySource.get(candidateSourceId(candidate)) ?? [])
+      .map((entry) => ({
+        ...entry,
+        exactCollectionMatch:
+          Boolean(entry.collectionId) && candidateCollectionIds.has(entry.collectionId),
+      }))
+      .filter(
+        (entry) =>
+          entry.exactCollectionMatch ||
+          entry.scope === "sitewide" ||
+          entry.scope === "vinyl-wide",
+      )
+      .sort(
+        (left, right) =>
+          Number(right.exactCollectionMatch) - Number(left.exactCollectionMatch) ||
+          right.discountPercent - left.discountPercent,
+      );
+    const applied = applicable[0];
+    if (!applied) return candidate;
+
+    const listPrice = finitePositive(candidate?.listPrice) ?? currentPrice;
+    const effectivePrice = roundMoney(listPrice * (1 - applied.discountPercent / 100));
+    if (effectivePrice <= 0 || effectivePrice >= currentPrice) return candidate;
+    const campaign = applied.campaign;
+
+    return {
+      ...candidate,
+      appliedSaleCampaignId:
+        cleanText(campaign.saleCampaignId ?? campaign.campaignId ?? campaign.id ?? campaign.fingerprint) ||
+        null,
+      appliedSaleCode: campaignPromoCode(campaign),
+      appliedSaleDiscountPercent: applied.discountPercent,
+      appliedSaleEvidence: applied.evidence,
+      appliedSaleScope: applied.scope || null,
+      appliedSaleUrl: campaign.sourceUrl ?? null,
+      listPrice,
+      purchasePrice: effectivePrice,
+      purchaseOfferVerification: "campaign_advertised",
+      sourceDiscountPercent: applied.discountPercent,
+      sourceOriginalPrice: listPrice,
+    };
+  });
+}
+
+export function purchaseOfferVerificationForSource(candidate = {}, source = {}) {
+  const explicit = cleanText(candidate?.purchaseOfferVerification).toLowerCase();
+  if (["campaign_advertised", "direct_retailer", "discovery_lead", "official_api"].includes(explicit)) {
+    return explicit;
+  }
+  const crawlType = cleanText(source?.crawlType ?? source?.sourceType).toLowerCase();
+  const group = cleanText(source?.group).toLowerCase();
+  const retailSourceType = cleanText(source?.retailSourceType ?? source?.sourceType).toLowerCase();
+  if (crawlType === "deal-aggregator" || crawlType === "social-feed" || group === "discovery sources") {
+    return "discovery_lead";
+  }
+  if (
+    retailSourceType === "marketplace_retailer" &&
+    cleanText(source?.id).toLowerCase() !== "ebay-purchase" &&
+    candidate?.retailerSoldBySource !== true
+  ) {
+    return "discovery_lead";
+  }
+  return cleanText(source?.id).toLowerCase() === "ebay-purchase" ? "official_api" : "direct_retailer";
+}
+
+function hasConditionalDiscountRequirement(value) {
+  return /\b(?:members?\s+only|membership\s+(?:only|required)|(?:rewards?|loyalty|club)\s+members?|prime\s+members?|app(?:-?only|\s+exclusive)|mobile\s+app|first\s+(?:order|purchase)|new\s+customers?|subscribe(?:rs?|\s+and\s+save)?|subscription\s+(?:only|required)|cardholders?|with\s+(?:the\s+)?(?:store|credit)\s+card|spend\s+\$?\d+|orders?\s+(?:over|above|of)\s+\$?\d+|minimum\s+(?:order|purchase|spend)|when\s+you\s+(?:buy|purchase)\s+\d+|(?:buy|purchase)\s+\d+\s+(?:or\s+more|items?|titles?)|tiered\s+(?:sale|discount|savings?))\b/i.test(
+    String(value ?? ""),
+  );
+}
+
+function campaignEvidence(campaign) {
+  return cleanText(
+    `${campaign?.evidence ?? campaign?.saleEvidence ?? ""} ${campaign?.signal ?? campaign?.saleSignal ?? ""} ${campaign?.title ?? campaign?.sourceListingTitle ?? ""}`,
+  );
+}
+
+function campaignPromoCode(campaign) {
+  const explicit = cleanText(
+    campaign?.promoCode ?? campaign?.saleCode ?? campaign?.couponCode ?? campaign?.code,
+  );
+  if (explicit) return explicit;
+  const match = campaignEvidence(campaign).match(
+    /\b(?:promo(?:tional)?\s+code|discount\s+code|coupon\s+code|use\s+code|code)\s*[:\-]?\s*([a-z0-9][a-z0-9_-]{2,19})\b/i,
+  );
+  return match?.[1] ?? null;
+}
+
+function collectionIdFromUrl(value) {
+  if (!value) return null;
+  try {
+    const match = new URL(String(value)).pathname.match(/\/collections\/([^/?#]+)/i);
+    return normalizedCollectionId(match?.[1]);
+  } catch {
+    const match = String(value).match(/\/collections\/([^/?#]+)/i);
+    return normalizedCollectionId(match?.[1]);
+  }
+}
+
+function normalizedCollectionId(value) {
+  if (!value) return null;
+  try {
+    return decodeURIComponent(String(value)).trim().toLowerCase() || null;
+  } catch {
+    return String(value).trim().toLowerCase() || null;
+  }
+}
+
+function roundMoney(value) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+export function rankAndSelectCandidates(candidates, options = {}) {
+  return rankAndSelectCandidatesWithDiagnostics(candidates, options).selected;
+}
+
+export function rankAndSelectCandidatesWithDiagnostics(candidates, options = {}) {
+  const inputCandidates = [...candidates];
+  const dedupeResult =
+    options.dedupePressings === false
+      ? { candidates: inputCandidates, excluded: [] }
+      : dedupePressingOffersWithDiagnostics(inputCandidates);
+  const compareCandidates = options.compareCandidates ?? compareRankedCandidates;
+  const ranked = dedupeResult.candidates.sort(compareCandidates);
+  const requestedLimit = options.limit ?? ranked.length;
+  const finiteRequestedLimit = Number.isFinite(requestedLimit)
+    ? Math.max(0, Math.floor(requestedLimit))
+    : null;
+  const limit = Math.min(ranked.length, finiteRequestedLimit ?? ranked.length);
+  const limitApplied = finiteRequestedLimit !== null && finiteRequestedLimit < ranked.length;
+  const familyKey = (candidate) =>
+    cleanText(options.familyKey?.(candidate)) || candidateSourceFamily(candidate);
+
+  if (!limitApplied || limit <= 0 || ranked.length === 0) {
+    const selected = limit <= 0 ? [] : ranked.slice(0, limit);
+    const selectionPhases = new Map(selected.map((candidate) => [candidate, "ranked_fill"]));
+    return {
+      diagnostics: buildCandidateSelectionDiagnostics({
+        dedupeExcluded: dedupeResult.excluded,
+        familyKey,
+        inputCandidates,
+        limit,
+        limitApplied,
+        maxPerFamily: Number.POSITIVE_INFINITY,
+        maxPerSource: Number.POSITIVE_INFINITY,
+        options,
+        ranked,
+        requestedLimit: finiteRequestedLimit,
+        selected,
+        selectionPhases,
+      }),
+      selected,
+    };
+  }
+
+  const sourceCount = new Set(ranked.map(candidateSourceId)).size;
   const maxPerSource =
     options.maxPerSource !== undefined
       ? Math.max(1, Math.floor(options.maxPerSource))
       : options.perSourceShare !== undefined
         ? Math.max(1, Math.ceil(limit * options.perSourceShare))
-        : Math.max(Math.min(5, limit), Math.ceil(limit * 0.2));
-  const explorationSlots = Math.min(limit, Math.ceil(limit * (options.explorationShare ?? 0.2)));
+        : Math.max(
+            Math.min(5, limit),
+            Math.ceil(limit * 0.2),
+            Math.ceil(limit / Math.max(1, sourceCount)),
+          );
   const useFamilyExploration = options.familyExploration !== false;
-  const familyKey = (candidate) =>
-    cleanText(options.familyKey?.(candidate)) || candidateSourceFamily(candidate);
   const familyCount = new Set(ranked.map(familyKey)).size;
   const maxPerFamily = useFamilyExploration
     ? Math.max(
@@ -282,94 +479,305 @@ export function rankAndSelectCandidates(candidates, options = {}) {
         Math.ceil(limit / Math.max(1, familyCount)),
       )
     : Number.POSITIVE_INFINITY;
+  const preserveTopCount = Math.min(
+    limit,
+    Math.max(
+      0,
+      options.preserveTopCount !== undefined
+        ? Math.floor(options.preserveTopCount)
+        : Math.ceil(limit * (options.preserveTopShare ?? 0.2)),
+    ),
+  );
   const selected = [];
   const selectedIds = new Set();
+  const selectionPhases = new Map();
   const perSource = new Map();
   const perFamily = new Map();
-  const exploredSources = new Set();
-  const exploredFamilies = new Set();
+
+  // Keep a tranche of the globally strongest opportunities before adding
+  // diversity picks. Source and family caps still apply to this protected set.
+  for (const candidate of ranked.slice(0, preserveTopCount)) {
+    if (selected.length >= limit) break;
+    add(candidate, "protected_quality", true);
+  }
 
   if (useFamilyExploration) {
+    const representedFamilies = new Set(perFamily.keys());
     for (const candidate of ranked) {
-      if (selected.length >= explorationSlots) break;
-      const sourceId = candidateSourceId(candidate);
+      if (selected.length >= limit) break;
       const familyId = familyKey(candidate);
-      if (exploredFamilies.has(familyId) || exploredSources.has(sourceId)) continue;
-      if (!canAdd(candidate, sourceId, familyId, false)) continue;
-      if (add(candidate, sourceId, familyId)) {
-        exploredFamilies.add(familyId);
-        exploredSources.add(sourceId);
-      }
+      if (representedFamilies.has(familyId)) continue;
+      if (add(candidate, "family_representation", true)) representedFamilies.add(familyId);
     }
+  }
 
-    while (selected.length < explorationSlots) {
-      let nextCandidate = null;
-      let nextSourceId = null;
-      let nextFamilyId = null;
-      let lowestFamilyCount = Number.POSITIVE_INFINITY;
-      for (const candidate of ranked) {
-        const sourceId = candidateSourceId(candidate);
-        if (exploredSources.has(sourceId)) continue;
-        const familyId = familyKey(candidate);
-        if (!canAdd(candidate, sourceId, familyId, false)) continue;
-        const familySelectionCount = perFamily.get(familyId) ?? 0;
-        if (familySelectionCount >= lowestFamilyCount) continue;
-        nextCandidate = candidate;
-        nextSourceId = sourceId;
-        nextFamilyId = familyId;
-        lowestFamilyCount = familySelectionCount;
-      }
-      if (!nextCandidate) break;
-      if (add(nextCandidate, nextSourceId, nextFamilyId)) {
-        exploredSources.add(nextSourceId);
-      }
-    }
-  } else {
-    for (const candidate of ranked) {
-      const sourceId = candidateSourceId(candidate);
-      if (exploredSources.has(sourceId)) continue;
-      const familyId = familyKey(candidate);
-      if (!canAdd(candidate, sourceId, familyId, false)) continue;
-      if (add(candidate, sourceId, familyId)) exploredSources.add(sourceId);
-      if (selected.length >= explorationSlots) break;
-    }
+  // Give every eligible source its best remaining candidate when the visible
+  // budget allows it. This is intentionally not limited to a small exploration
+  // tranche: a source with many strong finds should not silently end at 0.
+  addUnrepresentedSources(true);
+  // If a family cap is the only thing preventing a source from appearing,
+  // represent the source before using the remaining slots for repeated sources.
+  addUnrepresentedSources(false);
+
+  for (const candidate of ranked) {
+    if (selected.length >= limit) break;
+    add(candidate, "ranked_fill", true);
   }
 
   for (const candidate of ranked) {
     if (selected.length >= limit) break;
-    const sourceId = candidateSourceId(candidate);
-    const familyId = familyKey(candidate);
-    if (!canAdd(candidate, sourceId, familyId, true)) continue;
-    add(candidate, sourceId, familyId);
+    add(candidate, "family_cap_relaxation", false);
   }
 
-  for (const candidate of ranked) {
-    if (selected.length >= limit) break;
-    const sourceId = candidateSourceId(candidate);
-    const familyId = familyKey(candidate);
-    if (!canAdd(candidate, sourceId, familyId, false)) continue;
-    add(candidate, sourceId, familyId);
+  selected.sort(compareCandidates);
+  return {
+    diagnostics: buildCandidateSelectionDiagnostics({
+      dedupeExcluded: dedupeResult.excluded,
+      familyKey,
+      inputCandidates,
+      limit,
+      limitApplied,
+      maxPerFamily,
+      maxPerSource,
+      options,
+      ranked,
+      requestedLimit: finiteRequestedLimit,
+      selected,
+      selectionPhases,
+    }),
+    selected,
+  };
+
+  function addUnrepresentedSources(enforceFamilyCap) {
+    const representedSources = new Set(perSource.keys());
+    for (const candidate of ranked) {
+      if (selected.length >= limit) break;
+      const sourceId = candidateSourceId(candidate);
+      if (representedSources.has(sourceId)) continue;
+      if (add(candidate, "source_representation", enforceFamilyCap)) {
+        representedSources.add(sourceId);
+      }
+    }
   }
 
-  return selected.sort(compareRankedCandidates);
-
-  function canAdd(candidate, sourceId, familyId, enforceFamilyCap) {
+  function add(candidate, phase, enforceFamilyCap) {
+    const sourceId = candidateSourceId(candidate);
+    const familyId = familyKey(candidate);
     const identity = candidateSelectionIdentity(candidate, sourceId);
     if (selectedIds.has(identity)) return false;
     if ((perSource.get(sourceId) ?? 0) >= maxPerSource) return false;
     if (enforceFamilyCap && (perFamily.get(familyId) ?? 0) >= maxPerFamily) return false;
-    return true;
-  }
-
-  function add(candidate, sourceId, familyId) {
-    const identity = candidateSelectionIdentity(candidate, sourceId);
-    if (selectedIds.has(identity)) return false;
     selectedIds.add(identity);
     selected.push(candidate);
+    selectionPhases.set(candidate, phase);
     perSource.set(sourceId, (perSource.get(sourceId) ?? 0) + 1);
     perFamily.set(familyId, (perFamily.get(familyId) ?? 0) + 1);
     return true;
   }
+}
+
+const CANDIDATE_SELECTION_PHASES = [
+  "protected_quality",
+  "family_representation",
+  "source_representation",
+  "ranked_fill",
+  "family_cap_relaxation",
+];
+const CANDIDATE_EXCLUSION_REASONS = [
+  "duplicate_pressing",
+  "duplicate_candidate_identity",
+  "source_cap",
+  "family_cap",
+  "selection_limit",
+];
+
+function buildCandidateSelectionDiagnostics({
+  dedupeExcluded,
+  familyKey,
+  inputCandidates,
+  limit,
+  limitApplied,
+  maxPerFamily,
+  maxPerSource,
+  options,
+  ranked,
+  requestedLimit,
+  selected,
+  selectionPhases,
+}) {
+  const rankByCandidate = new Map(ranked.map((candidate, index) => [candidate, index + 1]));
+  const selectedSet = new Set(selected);
+  const selectedIdentities = new Set(
+    selected.map((candidate) =>
+      candidateSelectionIdentity(candidate, candidateSourceId(candidate)),
+    ),
+  );
+  const selectedPerSource = countBy(selected, candidateSourceId);
+  const selectedPerFamily = countBy(selected, familyKey);
+  const sourceDiagnostics = new Map();
+  const excludedByReason = emptyCountRecord(CANDIDATE_EXCLUSION_REASONS);
+  const selectedByPhase = emptyCountRecord(CANDIDATE_SELECTION_PHASES);
+  const scoreCandidate = options.scoreCandidate ?? candidateQualityScore;
+
+  for (const candidate of inputCandidates) {
+    sourceDiagnostic(candidateSourceId(candidate)).inputCandidateCount += 1;
+  }
+
+  for (const { candidate } of dedupeExcluded) {
+    recordExclusion(candidate, "duplicate_pressing");
+  }
+
+  for (const candidate of ranked) {
+    const diagnostic = sourceDiagnostic(candidateSourceId(candidate));
+    const rank = rankByCandidate.get(candidate) ?? null;
+    diagnostic.eligibleCandidateCount += 1;
+    if (diagnostic.bestCandidateRank === null || rank < diagnostic.bestCandidateRank) {
+      diagnostic.bestCandidateRank = rank;
+      const score = Number(scoreCandidate(candidate));
+      diagnostic.bestCandidateScore = Number.isFinite(score) ? roundSelectionMetric(score) : null;
+    }
+
+    if (selectedSet.has(candidate)) {
+      const phase = selectionPhases.get(candidate) ?? "ranked_fill";
+      diagnostic.selectedCandidateCount += 1;
+      diagnostic.selectedByPhase[phase] += 1;
+      selectedByPhase[phase] += 1;
+      if (diagnostic.bestSelectedRank === null || rank < diagnostic.bestSelectedRank) {
+        diagnostic.bestSelectedRank = rank;
+      }
+      continue;
+    }
+
+    const sourceId = candidateSourceId(candidate);
+    const familyId = familyKey(candidate);
+    const identity = candidateSelectionIdentity(candidate, sourceId);
+    const reason =
+      selectedIdentities.has(identity)
+        ? "duplicate_candidate_identity"
+        : (selectedPerSource.get(sourceId) ?? 0) >= maxPerSource
+          ? "source_cap"
+          : selected.length >= limit
+            ? "selection_limit"
+            : (selectedPerFamily.get(familyId) ?? 0) >= maxPerFamily
+              ? "family_cap"
+              : "selection_limit";
+    recordExclusion(candidate, reason);
+  }
+
+  const sources = [...sourceDiagnostics.values()]
+    .map((diagnostic) => {
+      const primaryExclusionReason = highestCountKey(diagnostic.excludedByReason);
+      return {
+        ...diagnostic,
+        excludedCandidateCount:
+          diagnostic.inputCandidateCount - diagnostic.selectedCandidateCount,
+        primaryExclusionReason,
+        selectedShare:
+          selected.length > 0
+            ? roundSelectionMetric(diagnostic.selectedCandidateCount / selected.length)
+            : 0,
+        selectionStatus:
+          diagnostic.selectedCandidateCount > 0
+            ? "selected"
+            : primaryExclusionReason ?? "not_selected",
+      };
+    })
+    .sort(
+      (left, right) =>
+        (left.bestCandidateRank ?? Number.POSITIVE_INFINITY) -
+          (right.bestCandidateRank ?? Number.POSITIVE_INFINITY) ||
+        left.sourceId.localeCompare(right.sourceId),
+    );
+  const representedSourceCount = sources.filter(
+    (source) => source.selectedCandidateCount > 0,
+  ).length;
+  const eligibleSourceCount = sources.filter((source) => source.eligibleCandidateCount > 0).length;
+  const largestSourceSelectedCount = Math.max(
+    0,
+    ...sources.map((source) => source.selectedCandidateCount),
+  );
+  const largestSourceShare =
+    selected.length > 0
+      ? roundSelectionMetric(largestSourceSelectedCount / selected.length)
+      : 0;
+  const sourceConcentrationHhi =
+    selected.length > 0
+      ? roundSelectionMetric(
+          sources.reduce(
+            (total, source) =>
+              total + (source.selectedCandidateCount / selected.length) ** 2,
+            0,
+          ),
+        )
+      : 0;
+
+  return {
+    duplicatePressingCandidateCount: dedupeExcluded.length,
+    effectiveLimit: limit,
+    eligibleCandidateCount: ranked.length,
+    eligibleSourceCount,
+    excludedByReason,
+    inputCandidateCount: inputCandidates.length,
+    largestSourceSelectedCount,
+    largestSourceShare,
+    limitApplied,
+    maxPerFamily: Number.isFinite(maxPerFamily) ? maxPerFamily : null,
+    maxPerSource: Number.isFinite(maxPerSource) ? maxPerSource : null,
+    representedSourceCount,
+    requestedLimit,
+    selectedByPhase,
+    selectedCandidateCount: selected.length,
+    sourceConcentrationHhi,
+    sources,
+    unrepresentedEligibleSourceCount: eligibleSourceCount - representedSourceCount,
+  };
+
+  function sourceDiagnostic(sourceId) {
+    let diagnostic = sourceDiagnostics.get(sourceId);
+    if (!diagnostic) {
+      diagnostic = {
+        bestCandidateRank: null,
+        bestCandidateScore: null,
+        bestSelectedRank: null,
+        eligibleCandidateCount: 0,
+        excludedByReason: emptyCountRecord(CANDIDATE_EXCLUSION_REASONS),
+        inputCandidateCount: 0,
+        selectedByPhase: emptyCountRecord(CANDIDATE_SELECTION_PHASES),
+        selectedCandidateCount: 0,
+        sourceId,
+      };
+      sourceDiagnostics.set(sourceId, diagnostic);
+    }
+    return diagnostic;
+  }
+
+  function recordExclusion(candidate, reason) {
+    sourceDiagnostic(candidateSourceId(candidate)).excludedByReason[reason] += 1;
+    excludedByReason[reason] += 1;
+  }
+}
+
+function countBy(items, keyForItem) {
+  const counts = new Map();
+  for (const item of items) {
+    const key = keyForItem(item);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function emptyCountRecord(keys) {
+  return Object.fromEntries(keys.map((key) => [key, 0]));
+}
+
+function highestCountKey(counts) {
+  return Object.entries(counts)
+    .filter(([, count]) => count > 0)
+    .sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+}
+
+function roundSelectionMetric(value) {
+  return Math.round(value * 10_000) / 10_000;
 }
 
 export function sourceMetadataScore(source) {
@@ -404,18 +812,29 @@ function isFinalDealSource(sourceId, sourceName, sourceUrl) {
   );
 }
 
-function dedupePressingOffers(candidates) {
+function dedupePressingOffersWithDiagnostics(candidates) {
   const offersByPressing = new Map();
+  const excluded = [];
   for (const [index, candidate] of candidates.entries()) {
     const identity =
       candidatePressingIdentity(candidate) ??
       `candidate:${candidateSelectionIdentity(candidate, candidateSourceId(candidate))}:${index}`;
     const current = offersByPressing.get(identity);
-    if (!current || compareDuplicateOffers(candidate, current) < 0) {
-      offersByPressing.set(identity, candidate);
+    if (!current) {
+      offersByPressing.set(identity, { candidate, index });
+      continue;
+    }
+    if (compareDuplicateOffers(candidate, current.candidate) < 0) {
+      excluded.push(current);
+      offersByPressing.set(identity, { candidate, index });
+    } else {
+      excluded.push({ candidate, index });
     }
   }
-  return [...offersByPressing.values()];
+  return {
+    candidates: [...offersByPressing.values()].map(({ candidate }) => candidate),
+    excluded,
+  };
 }
 
 function candidatePressingIdentity(candidate) {
@@ -773,3 +1192,4 @@ function cleanText(value) {
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
+import { isMarketplaceNonRecordTitle } from "../../src/lib/arbitrage/marketplaceProductClassification.mjs";

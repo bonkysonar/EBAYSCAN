@@ -4,8 +4,10 @@ import { pathToFileURL } from "node:url";
 import {
   activeSearchKey,
   buildActiveSearchProfile,
+  isExcludedEbayActiveListing,
   matchActiveListing,
 } from "../src/lib/arbitrage/activeEbayMatching.mjs";
+import { getEbayApplicationToken } from "./lib/ebayPurchaseDiscovery.mjs";
 
 const WORKSPACE = process.cwd();
 const FINDS_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
@@ -39,7 +41,10 @@ if (isMain) await main();
 
 async function main() {
   const latestPath = args.get("file") ? join(WORKSPACE, args.get("file")) : latestFindsPath();
-  token = await getApplicationToken(env);
+  const endpointRoot = env.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+  const tokenResult = await getEbayApplicationToken({ endpointRoot, env, fetchImpl: fetch });
+  if (!tokenResult.available) throw new Error(tokenResult.reason);
+  token = tokenResult.token;
   const payload = JSON.parse(readFileSync(latestPath, "utf8"));
   const queue = buildQueue(payload.finds).slice(0, maxQueries);
   const startedAt = new Date().toISOString();
@@ -117,40 +122,18 @@ function readLocalEnv() {
   }
 
   return {
+    EBAY_APPLICATION_ACCESS_TOKEN:
+      process.env.EBAY_APPLICATION_ACCESS_TOKEN ?? parsed.EBAY_APPLICATION_ACCESS_TOKEN,
+    EBAY_APP_ACCESS_TOKEN: process.env.EBAY_APP_ACCESS_TOKEN ?? parsed.EBAY_APP_ACCESS_TOKEN,
+    EBAY_BROWSE_ACCESS_TOKEN:
+      process.env.EBAY_BROWSE_ACCESS_TOKEN ?? parsed.EBAY_BROWSE_ACCESS_TOKEN,
     EBAY_CLIENT_ID: process.env.EBAY_CLIENT_ID ?? parsed.EBAY_CLIENT_ID,
     EBAY_CLIENT_SECRET: process.env.EBAY_CLIENT_SECRET ?? parsed.EBAY_CLIENT_SECRET,
     EBAY_ENV: process.env.EBAY_ENV ?? parsed.EBAY_ENV ?? "production",
+    EBAY_DELIVERY_POSTAL_CODE:
+      process.env.EBAY_DELIVERY_POSTAL_CODE ?? parsed.EBAY_DELIVERY_POSTAL_CODE,
     EBAY_MARKETPLACE_ID: process.env.EBAY_MARKETPLACE_ID ?? parsed.EBAY_MARKETPLACE_ID ?? EBAY_MARKETPLACE_ID,
   };
-}
-
-async function getApplicationToken(env) {
-  if (!env.EBAY_CLIENT_ID || !env.EBAY_CLIENT_SECRET) {
-    throw new Error("Missing EBAY_CLIENT_ID or EBAY_CLIENT_SECRET.");
-  }
-
-  const endpointRoot = env.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
-  const credentials = Buffer.from(`${env.EBAY_CLIENT_ID}:${env.EBAY_CLIENT_SECRET}`).toString("base64");
-  const response = await fetchWithTimeout(fetch, `${endpointRoot}/identity/v1/oauth2/token`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Basic ${credentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      scope: "https://api.ebay.com/oauth/api_scope",
-    }),
-  }, DEFAULT_REQUEST_TIMEOUT_MS);
-
-  const payloadText = await response.text();
-  const payload = payloadText ? JSON.parse(payloadText) : {};
-  if (!response.ok || !payload.access_token) {
-    throw new Error(`eBay token request failed (${response.status}): ${payload.error_description ?? response.statusText}`);
-  }
-
-  return payload.access_token;
 }
 
 function buildQueue(finds) {
@@ -185,6 +168,7 @@ export async function enrichActiveEntry(entry, options = {}) {
   const errors = [];
   const variantResults = [];
   let rawListingsInspected = 0;
+  let excludedSourceListingCount = 0;
   let searchComplete = true;
   let successfulVariants = 0;
 
@@ -195,9 +179,11 @@ export async function enrichActiveEntry(entry, options = {}) {
         : await searchVariantPages(variant, entry.profile, options.searchOptions);
       successfulVariants += 1;
       rawListingsInspected += result.rawListingsInspected;
+      excludedSourceListingCount += Number(result.excludedSourceListingCount) || 0;
       searchComplete = searchComplete && result.searchComplete;
       variantResults.push({
         keyword: variant,
+        excludedSourceListingCount: result.excludedSourceListingCount ?? 0,
         matchedListings: result.listings.length,
         pagesFetched: result.pagesFetched,
         rawListingsInspected: result.rawListingsInspected,
@@ -213,6 +199,7 @@ export async function enrichActiveEntry(entry, options = {}) {
         haltedByRateLimit = true;
         return {
           error: `${message}. Stopped the batch to protect the shared eBay API quota.`,
+          excludedSourceListingCount,
           rawListingsInspected,
           searchComplete: false,
           searchedVariants: entry.variants,
@@ -228,6 +215,7 @@ export async function enrichActiveEntry(entry, options = {}) {
   if (successfulVariants === 0) {
     return {
       error: errors.join("; ") || "Active eBay search failed without a response.",
+      excludedSourceListingCount,
       rawListingsInspected,
       searchComplete: false,
       searchedVariants: entry.variants,
@@ -242,6 +230,7 @@ export async function enrichActiveEntry(entry, options = {}) {
   return {
     activeListingCount: listings.length,
     error: errors.length > 0 ? errors.join("; ") : undefined,
+    excludedSourceListingCount,
     keyword: entry.primary,
     listings: listings.slice(0, 10),
     lowest,
@@ -263,9 +252,16 @@ export async function searchVariantPages(keyword, profile, options = {}) {
   const pageCountLimit = Math.max(1, options.maxPages ?? maxSearchPages);
   const requestTimeoutMs = positiveNumber(options.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
   const endpointRoot = environment.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+  const deliveryCountry = "US";
+  const deliveryPostalCode = String(environment.EBAY_DELIVERY_POSTAL_CODE ?? "").trim();
+  if (!deliveryPostalCode) {
+    throw new Error("EBAY_DELIVERY_POSTAL_CODE is required for trustworthy active eBay landed-price evidence.");
+  }
   const listingsById = new Map();
   let pagesFetched = 0;
+  let excludedSourceListingCount = 0;
   let rawListingsInspected = 0;
+  let untrustedMatchedListingCount = 0;
   let searchComplete = false;
 
   for (let page = 0; page < pageCountLimit; page += 1) {
@@ -273,7 +269,10 @@ export async function searchVariantPages(keyword, profile, options = {}) {
     const url = new URL("/buy/browse/v1/item_summary/search", endpointRoot);
     url.searchParams.set("q", keyword);
     url.searchParams.set("category_ids", EBAY_VINYL_CATEGORY_ID);
-    url.searchParams.set("filter", "conditions:{NEW}");
+    url.searchParams.set(
+      "filter",
+      `conditionIds:{1000},buyingOptions:{FIXED_PRICE},deliveryCountry:${deliveryCountry},deliveryPostalCode:${deliveryPostalCode},itemLocationCountry:${deliveryCountry}`,
+    );
     url.searchParams.set("limit", String(pageLimit));
     url.searchParams.set("offset", String(offset));
     url.searchParams.set("sort", "price");
@@ -283,12 +282,22 @@ export async function searchVariantPages(keyword, profile, options = {}) {
         Accept: "application/json",
         Authorization: `Bearer ${tokenValue}`,
         "X-EBAY-C-MARKETPLACE-ID": environment.EBAY_MARKETPLACE_ID,
+        "X-EBAY-C-ENDUSERCTX": `contextualLocation=${encodeURIComponent(
+          `country=${deliveryCountry},zip=${deliveryPostalCode}`,
+        )}`,
       },
     }, requestTimeoutMs);
     const payloadText = await response.text();
-    const payload = payloadText ? JSON.parse(payloadText) : {};
+    let payload = {};
+    if (payloadText) {
+      try {
+        payload = JSON.parse(payloadText);
+      } catch {
+        if (response.ok) throw new Error("eBay Browse API returned invalid JSON.");
+      }
+    }
     if (!response.ok) {
-      const message = payload.errors?.map((error) => error.message).join("; ") || response.statusText;
+      const message = payload.errors?.map((error) => error.message).join("; ") || payloadText.slice(0, 180) || response.statusText;
       throw new Error(`eBay Browse API failed (${response.status}): ${message}`);
     }
 
@@ -296,10 +305,21 @@ export async function searchVariantPages(keyword, profile, options = {}) {
     pagesFetched += 1;
     rawListingsInspected += summaries.length;
     for (const item of summaries) {
-      const listing = mapItem(item);
-      if (!listing || listing.currency !== "USD") continue;
-      const match = matchActiveListing(listing.title, profile);
+      if (isExcludedEbayActiveListing(item, profile)) {
+        excludedSourceListingCount += 1;
+        continue;
+      }
+      const match = matchActiveListing(item.title ?? "", profile);
       if (!match.matched) continue;
+      const listing = mapItem(item, {
+        currency: "USD",
+        deliveryCountry,
+        deliveryPostalCode,
+      });
+      if (!listing) {
+        untrustedMatchedListingCount += 1;
+        continue;
+      }
       const matchedListing = {
         ...listing,
         editionSignals: match.editionSignals,
@@ -315,29 +335,40 @@ export async function searchVariantPages(keyword, profile, options = {}) {
     const hasMoreByTotal = total !== null && offset + summaries.length < total;
     const hasMore = Boolean(payload.next) || hasMoreByTotal || (total === null && summaries.length === pageLimit);
     if (!hasMore) {
-      searchComplete = true;
+      searchComplete = untrustedMatchedListingCount === 0;
       break;
     }
   }
 
   return {
+    excludedSourceListingCount,
     listings: [...listingsById.values()].sort((left, right) => left.totalPrice - right.totalPrice),
     pagesFetched,
     rawListingsInspected,
     searchComplete,
+    untrustedMatchedListingCount,
   };
 }
 
-function mapItem(item) {
+function mapItem(item, destination) {
+  if (String(item.conditionId ?? "") !== "1000") return null;
+  if (String(item.itemLocation?.country ?? "").toUpperCase() !== destination.deliveryCountry) return null;
   const price = parseMoney(item.price?.value);
-  if (price === null) return null;
+  if (price === null || String(item.price?.currency ?? "").toUpperCase() !== destination.currency) return null;
   const shippingPrices = (item.shippingOptions ?? [])
+    .filter((option) => {
+      return (
+        String(option.shippingCostType ?? "").toUpperCase() === "FIXED" &&
+        String(option.shippingCost?.currency ?? "").toUpperCase() === destination.currency
+      );
+    })
     .map((option) => parseMoney(option.shippingCost?.value))
     .filter((value) => value !== null);
-  const shippingPrice = shippingPrices.length > 0 ? Math.min(...shippingPrices) : 0;
+  if (shippingPrices.length === 0) return null;
+  const shippingPrice = Math.min(...shippingPrices);
   return {
     condition: item.condition ?? "Unknown",
-    currency: item.price?.currency ?? item.shippingOptions?.[0]?.shippingCost?.currency ?? "USD",
+    currency: destination.currency,
     id: item.itemId ?? item.itemWebUrl ?? item.title,
     itemUrl: item.itemWebUrl,
     price,
@@ -364,6 +395,7 @@ function applyResult(finds, key, result) {
     find.activeEvidence = {
       capturedAt: now,
       exactMatchedListingCount: result.activeListingCount ?? null,
+      excludedSourceListingCount: result.excludedSourceListingCount ?? 0,
       matchConfidence: result.matchConfidence ?? "unknown",
       rawListingsInspected: result.rawListingsInspected ?? 0,
       searchComplete: result.searchComplete === true,
@@ -377,6 +409,7 @@ function applyResult(finds, key, result) {
       signals: profile.edition.signals,
     };
     find.ebayActiveMatchConfidence = result.matchConfidence ?? "unknown";
+    find.ebayActiveExcludedSourceListingCount = result.excludedSourceListingCount ?? 0;
     find.ebayActiveRawListingsInspected = result.rawListingsInspected ?? 0;
     find.ebayActiveSearchComplete = result.searchComplete === true;
     find.exactActiveListingCount = result.activeListingCount ?? null;

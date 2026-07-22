@@ -1,7 +1,11 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../lib/arbitrage/vinylShopSources", () => ({
+  getActiveRetailSources: () => [{ id: "store" }],
+}));
 import {
   readArbitrageFindsHistory,
   readLatestArbitrageFinds,
@@ -98,6 +102,288 @@ describe("arbitrage finds publication", () => {
         "test-upload-token",
       ),
     ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("rejects a final run when direct-retailer coverage is below the publication floor", async () => {
+    const sourceReports = Array.from({ length: 10 }, (_, index) => ({
+      candidateCount: index < 6 ? 2 : 0,
+      catalogHealth: index < 6 ? "healthy" : "failed",
+      catalogPageAvailableCount: index < 6 ? 1 : 0,
+      crawlType: "retailer",
+      id: `source-${index}`,
+      productParseHealth: index < 6 ? "productive" : "failed",
+      salePageAvailableCount: index < 6 ? 1 : 0,
+      salePageHealth: index < 6 ? "healthy" : "failed",
+      status: index < 6 ? "candidates" : "error",
+    }));
+
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({ runId: "low-coverage-run", sourceReports }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("stores a server-assessed quality summary for an authoritative complete run", async () => {
+    const sourceReports = [{
+      candidateCount: 2,
+      catalogHealth: "healthy",
+      catalogPageAvailableCount: 1,
+      crawlType: "retailer",
+      id: "store",
+      productParseHealth: "productive",
+      salePageAvailableCount: 1,
+      salePageHealth: "healthy",
+      status: "candidates",
+    }];
+
+    await uploadArbitrageFinds(
+      workspace,
+      finalPayload({ runId: "degraded-coverage-run", sourceReports }),
+      "test-upload-token",
+    );
+    const latest = await readLatestArbitrageFinds(workspace);
+
+    expect(latest).toMatchObject({
+      payload: {
+        runQuality: {
+          directCatalogCoverageRate: 1,
+          directProductiveRate: 1,
+          publishable: true,
+          status: "healthy",
+        },
+      },
+      status: "available",
+    });
+  });
+
+  it("rejects targeted scans even when every selected source was reachable", async () => {
+    const sourceReports = Array.from({ length: 2 }, (_, index) => ({
+      candidateCount: 2,
+      catalogHealth: "healthy",
+      catalogPageAvailableCount: 1,
+      crawlType: "retailer",
+      id: `selected-source-${index}`,
+      productParseHealth: "productive",
+      status: "candidates",
+    }));
+
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({
+          runId: "targeted-scan-run",
+          runManifest: {
+            scannedSourceCount: 2,
+            sourceCatalogCount: 120,
+          },
+          sourceReports,
+        }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("rejects a targeted manifest even when its source counts self-report as complete", async () => {
+    const sourceReports = [sourceReport("healthy")];
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({
+          runId: "targeted-equal-count-run",
+          runManifest: {
+            requestedSourceIds: ["store"],
+            scannedSourceCount: 1,
+            sourceCatalogCount: 1,
+          },
+          sourceReports,
+        }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("rejects a self-attested complete run whose source IDs do not match the configured catalog", async () => {
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({
+          runId: "forged-catalog-run",
+          sourceReports: [{ ...sourceReport("healthy"), id: "not-the-configured-store" }],
+        }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("rejects runs whose manifest omits scanned source reports", async () => {
+    const sourceReports = Array.from({ length: 2 }, (_, index) => ({
+      candidateCount: 2,
+      catalogHealth: "healthy",
+      catalogPageAvailableCount: 1,
+      crawlType: "retailer",
+      id: `reported-source-${index}`,
+      productParseHealth: "productive",
+      status: "candidates",
+    }));
+
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({
+          runId: "missing-report-run",
+          runManifest: {
+            scannedSourceCount: 3,
+            sourceCatalogCount: 3,
+          },
+          sourceReports,
+        }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("rejects schema-v2 publications that omit source reports, manifest counts, or per-source diagnostics", async () => {
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({ runId: "missing-source-reports", sourceReports: [] }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({ runId: "missing-manifest-counts", runManifest: {} }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({
+          runId: "missing-source-diagnostics",
+          sourceReports: [{ id: "opaque-source" }],
+        }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("rejects a reachable run when every direct-retailer parser is empty", async () => {
+    const sourceReports = Array.from({ length: 10 }, (_, index) => ({
+      candidateCount: 0,
+      catalogHealth: "healthy",
+      catalogPageAvailableCount: 1,
+      crawlType: "retailer",
+      id: `empty-source-${index}`,
+      productParseHealth: "empty",
+      status: "empty",
+    }));
+
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({ runId: "all-parsers-empty", sourceReports }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("rejects duplicate source report IDs", async () => {
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({
+          runId: "duplicate-source-reports",
+          sourceReports: [sourceReport("healthy"), sourceReport("healthy")],
+        }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("leaves the latest pointer unchanged after targeted, malformed, and parser-empty uploads", async () => {
+    await uploadArbitrageFinds(
+      workspace,
+      finalPayload({ runId: "known-good-baseline" }),
+      "test-upload-token",
+    );
+
+    const attempts = [
+      finalPayload({
+        createdAt: "2026-07-14T12:45:44.923Z",
+        runId: "bad-targeted",
+        runManifest: {
+          requestedSourceIds: ["store"],
+          scannedSourceCount: 1,
+          sourceCatalogCount: 1,
+        },
+      }),
+      finalPayload({
+        createdAt: "2026-07-14T12:45:44.923Z",
+        runId: "bad-malformed",
+        runManifest: {},
+      }),
+      finalPayload({
+        createdAt: "2026-07-14T12:45:44.923Z",
+        runId: "bad-empty-parsers",
+        sourceReports: Array.from({ length: 10 }, (_, index) => ({
+          candidateCount: 0,
+          catalogHealth: "healthy",
+          catalogPageAvailableCount: 1,
+          crawlType: "retailer",
+          id: `empty-${index}`,
+          productParseHealth: "empty",
+          status: "empty",
+        })),
+      }),
+    ];
+
+    for (const attempt of attempts) {
+      await expect(
+        uploadArbitrageFinds(workspace, attempt, "test-upload-token"),
+      ).rejects.toMatchObject({ statusCode: 422 });
+      expect(await readLatestArbitrageFinds(workspace)).toMatchObject({
+        payload: { runId: "known-good-baseline" },
+        status: "available",
+      });
+    }
+  });
+
+  it("rejects a fabricated BUY whose acquisition offer is not verified and preserves latest", async () => {
+    await uploadArbitrageFinds(
+      workspace,
+      finalPayload({ runId: "buy-safety-baseline" }),
+      "test-upload-token",
+    );
+
+    await expect(
+      uploadArbitrageFinds(
+        workspace,
+        finalPayload({
+          createdAt: "2026-07-14T12:45:44.923Z",
+          finds: [
+            productFind({
+              decision: "BUY",
+              purchaseOfferVerification: "campaign_advertised",
+              status: "BUY",
+            }),
+          ],
+          runId: "fabricated-unverified-buy",
+        }),
+        "test-upload-token",
+      ),
+    ).rejects.toMatchObject({ statusCode: 422 });
+
+    expect(await readLatestArbitrageFinds(workspace)).toMatchObject({
+      payload: { runId: "buy-safety-baseline" },
+      status: "available",
+    });
   });
 
   it("makes retries idempotent and rejects conflicting content for one runId", async () => {
@@ -235,6 +521,46 @@ describe("arbitrage finds publication", () => {
     });
   });
 
+  it("deduplicates legacy sale-page variants and rebuilds summary counts from returned rows", async () => {
+    const directory = join(workspace, "exports", "arbitrage-finds");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      join(directory, "retail-arbitrage-2026-07-13.json"),
+      JSON.stringify({
+        createdAt: "2026-07-13T12:00:00.000Z",
+        finds: [
+          saleEvent(),
+          saleEvent({
+            id: "sale-store-page-2",
+            sourceUrl: "https://store.example/collections/sale?page=2&sort_by=best-selling",
+          }),
+          productFind({ id: "album" }),
+          productFind({ id: "navigation", sourceListingTitle: "Home", title: "Home" }),
+        ],
+        source: "daily-vinyl-retail-arbitrage-scan",
+        summary: {
+          byDecision: { BUY: 50, REVIEW: 50, REJECT: 0, WATCH: 50 },
+          findCount: 150,
+          includedProductFindCount: 100,
+          saleEventCount: 50,
+        },
+      }),
+    );
+
+    const latest = await readLatestArbitrageFinds(workspace);
+    expect(latest.status).toBe("available");
+    if (latest.status !== "available") return;
+    expect(latest.payload.finds).toHaveLength(2);
+    expect(new Set(latest.payload.finds.map((find) => find.id)).size).toBe(2);
+    expect(latest.payload.finds.filter((find) => find.opportunityType === "sitewide_sale")).toHaveLength(1);
+    expect(latest.payload.summary).toMatchObject({
+      byDecision: { BUY: 0, REVIEW: 1, REJECT: 0, WATCH: 1 },
+      findCount: 2,
+      includedProductFindCount: 1,
+      saleEventCount: 1,
+    });
+  });
+
   it("orders pointerless legacy finals by observation time instead of file modification time", async () => {
     const directory = join(workspace, "exports", "arbitrage-finds");
     mkdirSync(directory, { recursive: true });
@@ -288,6 +614,12 @@ describe("arbitrage finds publication", () => {
         runId: "migrated-legacy-run",
         saleObservations: [],
         schemaVersion: 2,
+        runManifest: {
+          requestedSourceIds: [],
+          scannedSourceCount: 1,
+          sourceCatalogCount: 1,
+        },
+        sourceReports: [sourceReport("healthy")],
       },
       "test-upload-token",
     );
@@ -413,6 +745,9 @@ describe("arbitrage finds publication", () => {
 });
 
 function finalPayload(overrides: Record<string, unknown> = {}) {
+  const sourceReports = Array.isArray(overrides.sourceReports)
+    ? overrides.sourceReports
+    : [sourceReport("healthy")];
   return {
     createdAt: "2026-07-13T12:45:44.923Z",
     finds: [],
@@ -423,7 +758,12 @@ function finalPayload(overrides: Record<string, unknown> = {}) {
     saleObservations: [],
     schemaVersion: 2,
     source: "daily-vinyl-retail-arbitrage-scan",
-    sourceReports: [],
+    runManifest: {
+      requestedSourceIds: [],
+      scannedSourceCount: sourceReports.length,
+      sourceCatalogCount: sourceReports.length,
+    },
+    sourceReports,
     ...overrides,
   };
 }
@@ -443,7 +783,7 @@ function productFind(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function saleEvent() {
+function saleEvent(overrides: Record<string, unknown> = {}) {
   return {
     artist: "Sale alert",
     capturedAt: "2026-07-13T12:00:00.000Z",
@@ -460,12 +800,18 @@ function saleEvent() {
     sourceName: "Store",
     sourceUrl: "https://store.example/collections/sale",
     title: "40%+ sale: Store",
+    ...overrides,
   };
 }
 
 function sourceReport(status: string) {
   return {
+    candidateCount: 1,
+    catalogHealth: "healthy",
+    catalogPageAvailableCount: 1,
+    crawlType: "retailer",
     id: "store",
+    productParseHealth: "productive",
     salePageHealth: { status },
     status: status === "healthy" ? "empty" : "partial",
   };

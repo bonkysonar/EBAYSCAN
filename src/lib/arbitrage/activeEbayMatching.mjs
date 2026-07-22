@@ -1,3 +1,5 @@
+import { isMarketplaceNonRecordTitle } from "./marketplaceProductClassification.mjs";
+
 const BLOCKED_PRODUCT_PATTERN =
   /\b(?:(?:\d+\s*)?cd|compact\s+disc|hoodie|shirt|t-shirt|tee\b|sweatshirt|trading\s+card|cassette|dvd|blu-ray|book|poster|slipmat|koozie|pizza\s+cutter|turntable|speaker|stylus|cartridge|tote|handbag|purse|shoulder\s+bag|messenger\s+bag|charger|cable|shampoo|conditioner|grocery|snack|food|hat|socks|pin|patch|sticker|gift\s+card|coupon|digital\s+download|bundle|lot of)\b/i;
 
@@ -162,14 +164,35 @@ export function buildActiveSearchProfile(find) {
   const variantList = [...variants];
   const primary = variantList[0];
   if (!primary) return null;
+  const excludedItemIdentityTokens = ebayItemIdentityTokens(
+    find.ebayItemId,
+    find.sourceEbayItemId,
+    find.sourceUrl,
+  );
+  const exclusionKey = excludedItemIdentityTokens.length
+    ? `::exclude=${excludedItemIdentityTokens.join(",")}`
+    : "";
   return {
     artist,
     edition,
-    key: `${primary.toLowerCase()}::${edition.key}`,
+    excludedItemIdentityTokens,
+    key: `${primary.toLowerCase()}::${edition.key}${exclusionKey}`,
     primary,
     title,
     variants: variantList,
   };
+}
+
+export function ebayItemIdentityTokens(...values) {
+  const tokens = new Set();
+  for (const value of values) collectEbayItemIdentityTokens(value, tokens);
+  return [...tokens].sort();
+}
+
+export function isExcludedEbayActiveListing(item, profile) {
+  const excluded = new Set(profile?.excludedItemIdentityTokens ?? []);
+  if (excluded.size === 0) return false;
+  return ebayItemIdentityTokens(item).some((token) => excluded.has(token));
 }
 
 export function activeSearchKey(find) {
@@ -178,7 +201,11 @@ export function activeSearchKey(find) {
 
 export function matchActiveListing(title, profile) {
   const listingTitle = cleanActiveSearchText(title);
-  if (!listingTitle || BLOCKED_PRODUCT_PATTERN.test(listingTitle)) {
+  if (
+    !listingTitle ||
+    BLOCKED_PRODUCT_PATTERN.test(listingTitle) ||
+    isMarketplaceNonRecordTitle(listingTitle)
+  ) {
     return {
       confidence: "low",
       editionSignals: [],
@@ -275,6 +302,46 @@ function normalizeMojibakePunctuation(value) {
     .replace(/\u00e2\u20ac[\u0153\u009d\ufffd]/g, '"')
     .replace(/\u00e2\u20ac[\u201c\u201d]/g, " - ")
     .replace(/\u00e2\u20ac\u00a6/g, "...");
+}
+
+function collectEbayItemIdentityTokens(value, tokens) {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectEbayItemIdentityTokens(entry, tokens);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const key of ["itemId", "legacyItemId", "itemWebUrl", "sourceUrl"]) {
+      collectEbayItemIdentityTokens(value[key], tokens);
+    }
+    return;
+  }
+  const cleaned = String(value ?? "").trim();
+  if (!cleaned) return;
+
+  let decoded = cleaned;
+  try {
+    decoded = decodeURIComponent(cleaned);
+  } catch {
+    // Keep the original value when it is not URI encoded.
+  }
+  const normalized = decoded.toLowerCase().replace(/\s+/g, "");
+  if (!normalized) return;
+
+  try {
+    const url = new URL(decoded);
+    if (/(?:^|\.)ebay\.[a-z.]+$/i.test(url.hostname)) {
+      const legacyId = url.pathname.match(/\/itm\/(?:[^/]+\/)?([a-z0-9_-]+)/i)?.[1];
+      if (legacyId) tokens.add(`legacy:${legacyId.toLowerCase()}`);
+    }
+    return;
+  } catch {
+    // Non-URL item IDs are handled below.
+  }
+
+  tokens.add(`item:${normalized}`);
+  const parts = normalized.split("|");
+  if (/^v\d+$/.test(parts[0]) && parts[1]) tokens.add(`legacy:${parts[1]}`);
+  if (/^[0-9]{8,20}$/.test(normalized)) tokens.add(`legacy:${normalized}`);
 }
 
 function compareEditionIdentity(expected, actual) {

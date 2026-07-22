@@ -22,7 +22,26 @@ describe("Shopify retail catalog ingestion", () => {
     ).toEqual({
       candidateCount: 5,
       configuredExcluded: false,
+      eligibleCount: 2,
       excludedCount: 2,
+      omitted: [
+        {
+          context: "accessories",
+          reason: "excluded_non_record_collection",
+          url: "https://shop.example/collections/accessories",
+        },
+        {
+          context: "used-lps",
+          reason: "excluded_non_record_collection",
+          url: "https://shop.example/collections/used-lps",
+        },
+        {
+          context: "new-vinyl",
+          reason: "not_sale_relevant",
+          url: "https://shop.example/collections/new-vinyl",
+        },
+      ],
+      omittedCount: 3,
       selected: [
         {
           context: "sale-vinyl",
@@ -33,6 +52,7 @@ describe("Shopify retail catalog ingestion", () => {
           url: "https://shop.example/collections/discounted",
         },
       ],
+      stopReason: null,
     });
   });
 
@@ -86,9 +106,55 @@ describe("Shopify retail catalog ingestion", () => {
     ).toEqual({
       candidateCount: 2,
       configuredExcluded: true,
+      eligibleCount: 0,
       excludedCount: 1,
+      omitted: [
+        {
+          context: "used-lps",
+          reason: "excluded_non_record_collection",
+          url: "https://shop.example/collections/used-lps",
+        },
+        {
+          context: "new-vinyl",
+          reason: "not_sale_relevant",
+          url: "https://shop.example/collections/new-vinyl",
+        },
+      ],
+      omittedCount: 2,
       selected: [],
+      stopReason: "configured_collection_excluded",
     });
+  });
+
+  it("uses six collection lanes by default and reports concrete lanes omitted by the cap", () => {
+    const selection = selectShopifyCollectionLanes(
+      [
+        "https://shop.example/collections/sale",
+        "https://shop.example/collections/clearance",
+        "https://shop.example/collections/outlet",
+        "https://shop.example/collections/deals",
+        "https://shop.example/collections/discounted",
+        "https://shop.example/collections/last-chance",
+        "https://shop.example/collections/warehouse-sale",
+      ],
+      "https://shop.example/collections/vinyl",
+    );
+
+    expect(selection.selected).toHaveLength(6);
+    expect(selection.eligibleCount).toBe(8);
+    expect(selection.stopReason).toBe("lane_limit_reached");
+    expect(selection.omitted.filter((lane) => lane.reason === "lane_limit_reached")).toEqual([
+      {
+        context: "sale",
+        reason: "lane_limit_reached",
+        url: "https://shop.example/collections/sale",
+      },
+      {
+        context: "warehouse-sale",
+        reason: "lane_limit_reached",
+        url: "https://shop.example/collections/warehouse-sale",
+      },
+    ]);
   });
 
   it("paginates configured collections and the full catalog", () => {

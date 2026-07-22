@@ -3,7 +3,7 @@ const SHOPIFY_COLLECTION_EXCLUSION =
 const SHOPIFY_SALE_COLLECTION =
   /\b(?:(?:[2-9]\d)\s*(?:off|percent)|bargains?|black\s*friday|boxing\s*day|clearance|closeouts?|deals?|deep\s*cuts?|discount(?:ed|s)?|final\s*sale|last\s*chance|markdowns?|offers?|on\s*sale|outlet|overstock|price\s*drops?|promotions?|reduced|sale|special\s*offers?|special\s*prices?|specials|warehouse)\b/i;
 
-export function selectShopifyCollectionLanes(values, configuredUrl, limit = 2) {
+export function selectShopifyCollectionLanes(values, configuredUrl, limit = 6) {
   const configured = shopifyCollection(configuredUrl);
   const expectedOrigin = configured?.origin ?? validOrigin(configuredUrl);
   const byContext = new Map();
@@ -16,13 +16,14 @@ export function selectShopifyCollectionLanes(values, configuredUrl, limit = 2) {
   }
 
   const configuredKey = configured?.context.toLowerCase() ?? null;
-  const ranked = [...byContext.entries()]
+  const assessed = [...byContext.entries()]
     .map(([key, collection]) => ({
       ...collection,
       configured: key === configuredKey,
       excluded: SHOPIFY_COLLECTION_EXCLUSION.test(collection.evidence),
       score: shopifyCollectionScore(collection.evidence),
-    }))
+    }));
+  const ranked = assessed
     .filter(
       (collection) =>
         !collection.excluded &&
@@ -38,6 +39,23 @@ export function selectShopifyCollectionLanes(values, configuredUrl, limit = 2) {
     ? Math.max(0, Math.floor(limit))
     : ranked.length;
   const selected = ranked.slice(0, normalizedLimit);
+  const selectedContexts = new Set(selected.map((collection) => collection.context.toLowerCase()));
+  const eligibleContexts = new Set(ranked.map((collection) => collection.context.toLowerCase()));
+  const omitted = assessed
+    .filter((collection) => !selectedContexts.has(collection.context.toLowerCase()))
+    .map((collection) => ({
+      context: collection.context,
+      reason: collection.excluded
+        ? "excluded_non_record_collection"
+        : eligibleContexts.has(collection.context.toLowerCase())
+          ? "lane_limit_reached"
+          : "not_sale_relevant",
+      url: collection.url,
+    }))
+    .sort(
+      (left, right) =>
+        left.reason.localeCompare(right.reason) || left.url.localeCompare(right.url),
+    );
 
   return {
     candidateCount: byContext.size,
@@ -47,7 +65,19 @@ export function selectShopifyCollectionLanes(values, configuredUrl, limit = 2) {
     configuredExcluded:
       configuredKey !== null &&
       SHOPIFY_COLLECTION_EXCLUSION.test(byContext.get(configuredKey)?.evidence ?? ""),
+    eligibleCount: ranked.length,
+    omitted,
+    omittedCount: omitted.length,
     selected: selected.map(({ context, url }) => ({ context, url })),
+    stopReason:
+      ranked.length > normalizedLimit
+        ? "lane_limit_reached"
+        : ranked.length === 0
+          ? configuredKey !== null &&
+            SHOPIFY_COLLECTION_EXCLUSION.test(byContext.get(configuredKey)?.evidence ?? "")
+            ? "configured_collection_excluded"
+            : "no_sale_relevant_collections"
+          : null,
   };
 }
 

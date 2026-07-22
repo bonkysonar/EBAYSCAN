@@ -9,6 +9,10 @@ const PRODUCT_URL_KEYS = [
   "url",
 ];
 
+export function isFirstPartyWalmartOffer(item) {
+  return item?.soldByWalmart === true;
+}
+
 export function extractWalmartStructuredPayloads(html) {
   const source = String(html ?? "");
   const payloads = [];

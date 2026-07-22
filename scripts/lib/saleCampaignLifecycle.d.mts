@@ -14,6 +14,9 @@ export type SaleCampaign = Record<string, unknown> & {
   saleFingerprint: string;
   saleLastCheckedAt: string;
   saleMissCount: number;
+  saleObservationCount: number;
+  saleObservationPageCount: number;
+  saleObservationUrls: string[];
   saleObservedThisRun: boolean;
   saleScanCount: number;
   saleStatus: SaleCampaignStatus;

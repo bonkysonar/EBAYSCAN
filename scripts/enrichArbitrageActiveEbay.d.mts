@@ -17,10 +17,12 @@ export type MatchedActiveListing = {
 };
 
 export type ActiveVariantResult = {
+  excludedSourceListingCount?: number;
   listings: MatchedActiveListing[];
   pagesFetched: number;
   rawListingsInspected: number;
   searchComplete: boolean;
+  untrustedMatchedListingCount?: number;
 };
 
 export function searchVariantPages(
@@ -29,6 +31,7 @@ export function searchVariantPages(
   options?: {
     env?: {
       EBAY_ENV?: string;
+      EBAY_DELIVERY_POSTAL_CODE?: string;
       EBAY_MARKETPLACE_ID: string;
     };
     fetchImpl?: typeof fetch;
@@ -53,6 +56,7 @@ export function enrichActiveEntry(
 ): Promise<{
   activeListingCount?: number;
   error?: string;
+  excludedSourceListingCount: number;
   keyword?: string;
   listings?: MatchedActiveListing[];
   lowest?: MatchedActiveListing;

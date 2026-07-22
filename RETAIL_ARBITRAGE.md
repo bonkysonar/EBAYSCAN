@@ -13,7 +13,7 @@ A source check, a promising price, or an active eBay asking price is not a buy r
 
 ## Source Catalog and Coverage
 
-The source inventory lives in `src/lib/arbitrage/vinylShopSources.ts`. Each source can carry operational metadata such as priority, retailer type, sale likelihood, noise level, crawl type, default discount threshold, and source-specific minimum profit or ROI.
+The source inventory lives in `src/lib/arbitrage/vinylShopSources.ts`. Each source can carry operational metadata such as priority, retailer type, sale likelihood, noise level, crawl type, default discount threshold, and source-specific minimum profit or ROI. The latest bounded live audit, repaired storefront routes, and known external limitations are recorded in `RETAIL_SOURCE_COVERAGE.md`.
 
 Every scan preserves source and page health in `sourceReports`:
 
@@ -23,7 +23,7 @@ Every scan preserves source and page health in `sourceReports`:
 - A failed source check produces unknown coverage; it does not prove that a sale ended or that the retailer had no useful records.
 - Discovery feeds and aggregators remain labeled as leads until a retailer page confirms the offer.
 
-The UI reports attempted, sale-page-capable, degraded, blocked, and priority-source coverage. Counts describe what the scanner actually reached, not the total configured list.
+The UI reports attempted, sale-page-capable, productive, parser-empty, blocked, and priority-source coverage. It also shows the server-assessed run-quality status and final-selection concentration. Counts describe what the scanner actually reached, not what it hoped to reach.
 
 Requests use bounded concurrency, per-host pacing, timeouts, retries, and backoff. Active eBay token/Browse calls also have request deadlines, and the parent scan will stop a stuck enrichment subprocess instead of hanging indefinitely. Diagnostic runs can limit the source set without changing the catalog:
 
@@ -31,9 +31,17 @@ Requests use bounded concurrency, per-host pacing, timeouts, retries, and backof
 node scripts/runRetailArbitrageScan.mjs --sources=source-id-1,source-id-2 --skipUpload
 ```
 
-Useful scan controls include `--sourceConcurrency`, `--fetchRetries`, `--hostDelayMs`, `--fetchTimeoutMs`, `--maxDiscoveredSalePages`, `--discoveryDetailLimit`, and `--discoveryConcurrency`.
+Source-limited runs are diagnostics only. New run manifests distinguish the full configured catalog from the sources actually scanned, and the publication API rejects a targeted/partial run as the new site-wide latest result.
 
-Walmart has a dedicated structured-data adapter. It scans first-party vinyl across `$10`, `$15`, and `$20` price bands with price-low, best-match, and best-seller lanes, follows up to `--walmartMaxPages` per lane, deduplicates by Walmart item/UPC, and admits useful absolute prices without requiring a markdown badge. Because Walmart search results can report stale default-location inventory, the scanner rechecks up to `--walmartAvailabilityDetailLimit` promising low-price records on their product pages before discarding them as unavailable. Seller, stock, fulfillment, badges, ratings, reviews, SKU, UPC, current price, and was price remain visible in the evidence.
+Useful scan controls include `--sourceConcurrency`, `--fetchRetries`, `--fetchRetryDelayMs`, `--hostDelayMs`, `--fetchTimeoutMs`, `--maxDiscoveredSalePages`, `--discoveryDetailLimit`, `--discoveryConcurrency`, and `--ebayPurchaseMaxDetailRequests`. Defaults favor coverage over speed: four sources run concurrently, same-host requests are spaced by 650 ms, and retryable failures back off from one second.
+
+Walmart has a dedicated structured-data adapter. When Walmart permits access, it scans first-party vinyl across `$10`, `$15`, and `$20` price bands with price-low, best-match, and best-seller lanes, follows up to `--walmartMaxPages` per lane, deduplicates by Walmart item/UPC, and admits useful absolute prices without requiring a markdown badge. When Walmart returns a block such as HTTP 412, the run records blocked/unknown coverage and does not attempt to evade it.
+
+`ebay-purchase` uses the official eBay Browse API to discover new, fixed-price vinyl in bounded, paginated price and genre lanes. The acquisition price includes the item price plus the lowest explicit fixed USD shipping quote, so inbound shipping is not added twice. A lane-balanced item-detail pass must also confirm artist, release, format/type, and independent record-specific metadata before the offer is trusted (with a stricter multi-aspect fallback when eBay omits `Type`). Labels, decals, mats, clocks, bowls, coasters, sleeves, bags, jewelry, and other accessories are rejected in purchase and active-comparison paths. These are active purchase listings only: the candidate's own listing is excluded from active resale comps, and an asking price never counts as sold evidence.
+
+`EBAY_DELIVERY_POSTAL_CODE` is required before an eBay acquisition offer can be marked `official_api`, because the landed shipping quote must apply to a real destination. Without it—or when item-detail identity remains incomplete—the result stays a `discovery_lead` and cannot become an automatic `BUY`.
+
+Amazon is not claimed as a direct catalog while approved Amazon Creators API credentials are absent. A discovery feed can still surface an Amazon product URL; those results retain both identities and display as, for example, `Amazon via Vinyl Price Drop`.
 
 ## Product Discovery
 
@@ -50,8 +58,9 @@ Shopify sources use paginated JSON catalogs rather than silently stopping after 
 - Only available variants can become candidates.
 - Each available variant is assessed separately, so a mixed CD/LP product cannot use the CD price for the LP. Explicit variant formats such as `2LP`, `2xLP`, and `2-LP` override contradictory product-level CD taxonomy throughout ingestion, active-supply enrichment, publication filtering, and display.
 - Price, compare-at price, currency, SKU, barcode, variant identity, inventory quantity, and collection context are retained when present.
+- All observed collection memberships are retained. A fixed percentage from a verified retailer page can change the candidate price only when it is truly sitewide/vinyl-wide or the product was observed in that exact sale collection. `Up to`, BOGO, and already-marked-down offers are never uniformly discounted.
 
-Candidates from all sources are scored together before the daily limit is applied. Ranking considers record confidence, source quality, discount, sold evidence, identifiers, and deal context. Per-source caps and exploration slots prevent one high-volume feed from consuming the entire queue before other retailers are considered.
+Candidates from all sources are scored together before the daily limit is applied. Ranking considers record confidence, source quality, discount, sold evidence, identifiers, and deal context. The research pool and final post-evaluation queue both use source-diverse selection. Strong global candidates are protected, each eligible source receives representation when capacity permits, and source/family caps prevent one high-volume feed from consuming the queue. The payload retains exclusion reasons, largest-source share, represented-source count, and concentration HHI.
 
 The default sale-radar run caps the final candidate queue; `--mode=comprehensive` intentionally retains the broader set.
 
@@ -191,7 +200,7 @@ node scripts/uploadLatestArbitrageFinds.mjs --file=exports\arbitrage-finds\retai
 node scripts/uploadLatestArbitrageFinds.mjs --file=exports\arbitrage-finds\retail-arbitrage-2026-07-16.json
 ```
 
-Raw scan and enrichment artifacts cannot become latest. Final publication stores an immutable run artifact and advances the latest pointer atomically. Retrying identical content for the same `runId` is safe; conflicting content or an older observation cannot silently replace a newer run. Legacy payloads with explicit draft markers are rejected even when their filename resembles a daily final, and pointerless legacy fallback chooses the newest valid observation time rather than filesystem/upload time.
+Raw scan and enrichment artifacts cannot become latest. Final publication stores an immutable run artifact and advances the latest pointer atomically. Retrying identical content for the same `runId` is safe; conflicting content or an older observation cannot silently replace a newer run. The server re-runs the canonical evaluator for every claimed `BUY`, rejects incomplete source coverage, normalizes duplicate sale-page variants, guarantees unique returned find IDs, and rebuilds summary counts from the returned rows. Legacy payloads with explicit draft markers are rejected even when their filename resembles a daily final, and pointerless legacy fallback chooses the newest valid observation time rather than filesystem/upload time.
 
 Publishing requires `ARBITRAGE_UPLOAD_URL` and `ARBITRAGE_UPLOAD_TOKEN`. The scripts never purchase products, submit retailer forms, or mutate eBay listings.
 

@@ -1,4 +1,4 @@
-export const EVALUATION_VERSION = 5;
+export const EVALUATION_VERSION = 6;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -176,6 +176,9 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
   const offerFreshness =
     offerAge !== null &&
     offerAge <= settings.maxOfferAgeDays;
+  const purchaseOfferVerified = ["direct_retailer", "official_api"].includes(
+    String(find.purchaseOfferVerification ?? "").trim().toLowerCase(),
+  );
   const evidenceFreshness = marketEvidenceFreshness && offerFreshness;
   const soldConditionMatches = sold.condition === expectedSoldCondition(find.condition);
   const soldEvidence =
@@ -255,6 +258,7 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     evidenceFreshness,
     matchConfidence,
     offerFreshness,
+    purchaseOffer: purchaseOfferVerified,
     soldEvidence,
     supply,
   };
@@ -272,6 +276,7 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     marketEvidenceFreshness,
     matchConfidence,
     offerFreshness,
+    purchaseOfferVerified,
     recommendedMaxPurchasePrice,
     resalePrice,
     settings,
@@ -298,6 +303,7 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     marketEvidenceFreshness,
     offerAge,
     offerFreshness,
+    purchaseOfferVerified,
     reasonCodes,
     recommendedMaxPurchasePrice,
     resalePrice,
@@ -539,6 +545,7 @@ function decideOpportunity(context) {
     marketEvidenceFreshness,
     matchConfidence,
     offerFreshness,
+    purchaseOfferVerified,
     recommendedMaxPurchasePrice,
     resalePrice,
     settings,
@@ -601,6 +608,7 @@ function decideOpportunity(context) {
   if (!activeEvidence) missingEvidence.push("ACTIVE_EVIDENCE_INCOMPLETE");
   if (!marketEvidenceFreshness) missingEvidence.push("EVIDENCE_STALE_OR_UNDATED");
   if (!offerFreshness) missingEvidence.push("OFFER_STALE_OR_UNDATED");
+  if (!purchaseOfferVerified) missingEvidence.push("ACQUISITION_OFFER_UNVERIFIED");
   if (!soldConditionMatches) missingEvidence.push("SOLD_CONDITION_MISMATCH");
   if (sold.matchConfidence < settings.minBuyMatchConfidence) missingEvidence.push("SOLD_MATCH_CONFIDENCE_LOW");
   if (active.matchConfidence < settings.minBuyMatchConfidence) missingEvidence.push("ACTIVE_MATCH_CONFIDENCE_LOW");
@@ -680,6 +688,7 @@ function describeDecision(context) {
     marketEvidenceFreshness,
     offerAge,
     offerFreshness,
+    purchaseOfferVerified,
     priority,
     profitPer30Days,
     reasonCodes,
@@ -788,6 +797,11 @@ function describeDecision(context) {
       `The retailer offer must be dated within ${settings.maxOfferAgeDays} days (offer ${
         offerAge === null ? "undated or future-dated" : `${offerAge}d`
       }); refresh the source price and availability before buying.`,
+    );
+  }
+  if (!purchaseOfferVerified) {
+    reasons.push(
+      "The acquisition price is an advertised campaign estimate or discovery-feed lead; confirm the live retailer price and availability before buying.",
     );
   }
   if (reasonCodes.includes("SOLD_MATCH_CONFIDENCE_LOW")) reasons.push("Sold-listing match confidence is too low for an automatic buy.");
@@ -1474,6 +1488,7 @@ function emptyGates() {
     evidenceFreshness: false,
     matchConfidence: false,
     offerFreshness: false,
+    purchaseOffer: false,
     soldEvidence: false,
     supply: false,
   };

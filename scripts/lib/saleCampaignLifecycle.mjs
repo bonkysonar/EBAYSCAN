@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { hasCoherentSaleClaim } from "./retailSaleDiscovery.mjs";
 
 export const SALE_CAMPAIGN_LEDGER_SCHEMA_VERSION = 1;
 
@@ -6,7 +7,7 @@ const DEFAULT_END_AFTER_MISSES = 2;
 const DEFAULT_EVERGREEN_AFTER_SCANS = 5;
 const DEFAULT_MAX_HISTORY_ENTRIES = 2_000;
 const ACTIVE_SALE_STATUSES = new Set(["new", "changed", "ongoing", "evergreen"]);
-const TRACKING_QUERY_KEYS = /^(?:fbclid|gclid|mc_cid|mc_eid|ref|source|utm_.+)$/i;
+const TRACKING_QUERY_KEYS = /^(?:constraint|fbclid|filter(?:\..+)?|gclid|mc_cid|mc_eid|page|p|ref|section_id|sort|sort_by|source|tags?|utm_.+|view)$/i;
 
 export function reconcileSaleCampaigns({
   previousLedger = null,
@@ -56,9 +57,18 @@ export function reconcileSaleCampaigns({
   for (const rawEvent of observations) {
     const normalized = normalizeObservedEvent(rawEvent, timestamp);
     const fingerprintMatches = previousByFingerprint.get(fingerprintLookupKey(normalized.sourceId, normalized.saleFingerprint)) ?? [];
-    const exactPrevious = fingerprintMatches.find((candidate) => !matchedPreviousIds.has(candidate.saleCampaignId));
+    const normalizedIdentity = saleCampaignIdFor(normalized);
+    const exactPrevious =
+      fingerprintMatches.find(
+        (candidate) =>
+          saleCampaignIdFor(candidate) === normalizedIdentity &&
+          !matchedPreviousIds.has(candidate.saleCampaignId),
+      ) ??
+      (fingerprintMatches.length === 1
+        ? fingerprintMatches.find((candidate) => !matchedPreviousIds.has(candidate.saleCampaignId))
+        : null);
     const derivedPrevious = previousById.get(normalized.saleCampaignId);
-    const identityMatches = previousByIdentity.get(saleCampaignIdFor(normalized)) ?? [];
+    const identityMatches = previousByIdentity.get(normalizedIdentity) ?? [];
     const fallbackMatches = [derivedPrevious, ...identityMatches].filter(
       (candidate, index, candidates) =>
         candidate &&
@@ -244,20 +254,20 @@ export function saleCampaignLedgerFromPayload(payload) {
 export function saleCampaignIdFor(event) {
   const sourceId = cleanText(event?.sourceId) || "unknown-source";
   const url = canonicalSaleUrl(event?.sourceUrl);
-  const scope = cleanText(event?.saleScope) || "unknown";
-  const verification = cleanText(event?.saleVerification) || "unknown";
-  const offerType = saleOfferType(`${event?.saleSignal ?? ""} ${event?.saleEvidence ?? ""} ${event?.sourceListingTitle ?? ""}`);
-  return `campaign-${sha256(stableJson([sourceId, url, scope, verification, offerType])).slice(0, 20)}`;
+  const evidenceText = saleIdentityText(event);
+  const offerType = saleOfferType(evidenceText);
+  const promoCode = extractPromoCode(evidenceText);
+  return `campaign-${sha256(stableJson([sourceId, url, offerType, promoCode])).slice(0, 20)}`;
 }
 
 export function hashSaleContent(event) {
   const signal = normalizedContentText(event?.saleSignal ?? event?.sourceListingTitle ?? event?.title);
-  const evidenceText = `${event?.saleEvidence ?? ""} ${event?.saleSignal ?? ""} ${event?.sourceListingTitle ?? ""}`;
+  const evidenceText = saleIdentityText(event);
   const content = {
     discountPercent: finiteNumberOrNull(event?.saleDiscountPercent),
     offerType: saleOfferType(evidenceText),
     promoCode: extractPromoCode(evidenceText),
-    scope: cleanText(event?.saleScope).toLowerCase() || "unknown",
+    scope: normalizedSaleScope(event),
     signal,
     sourceUrl: canonicalSaleUrl(event?.sourceUrl),
     verification: cleanText(event?.saleVerification).toLowerCase() || "unknown",
@@ -356,6 +366,11 @@ function normalizeExistingCampaign(campaign) {
     ),
     saleLastCheckedAt: validIsoTimestamp(campaign?.saleLastCheckedAt) ? campaign.saleLastCheckedAt : capturedAt,
     saleMissCount: nonNegativeInteger(campaign?.saleMissCount, 0),
+    saleObservationCount: positiveInteger(campaign?.saleObservationCount, 1),
+    saleObservationPageCount: positiveInteger(campaign?.saleObservationPageCount, 1),
+    saleObservationUrls: Array.isArray(campaign?.saleObservationUrls)
+      ? [...new Set(campaign.saleObservationUrls.map(cleanText).filter(Boolean))]
+      : [cleanText(campaign?.sourceUrl)].filter(Boolean),
     saleObservedThisRun: campaign?.saleObservedThisRun === true,
     saleScanCount: positiveInteger(campaign?.saleScanCount, 1),
     saleStatus: normalizeStatus(campaign?.saleStatus),
@@ -370,6 +385,7 @@ function normalizeObservedEvent(event, capturedAt) {
   return {
     ...event,
     capturedAt,
+    saleScope: normalizedSaleScope(event),
     saleCampaignId,
     saleContentHash,
     saleEvidenceHash,
@@ -378,19 +394,60 @@ function normalizeObservedEvent(event, capturedAt) {
 }
 
 function dedupeObservations(events) {
-  const byObservation = new Map();
+  const byCampaignBase = new Map();
   for (const event of Array.isArray(events) ? events : []) {
     if (!event || typeof event !== "object" || !cleanText(event.sourceId)) continue;
-    const evidenceText = `${event?.saleEvidence ?? ""} ${event?.saleSignal ?? ""} ${event?.sourceListingTitle ?? ""}`;
+    const evidenceText = saleIdentityText(event);
     const key = [
       saleCampaignIdFor(event),
-      finiteNumberOrNull(event?.saleDiscountPercent) ?? "none",
       extractPromoCode(evidenceText) ?? "no-code",
     ].join("|");
-    const current = byObservation.get(key);
-    if (!current || observationPriority(event) > observationPriority(current)) byObservation.set(key, event);
+    const group = byCampaignBase.get(key) ?? [];
+    group.push(event);
+    byCampaignBase.set(key, group);
   }
-  return [...byObservation.values()];
+  const observationGroups = [];
+  for (const baseGroup of byCampaignBase.values()) {
+    const confirmed = baseGroup.filter((event) => event?.saleVerification === "retailer-page");
+    const confirmedDiscounts = new Set(confirmed.map(observationDiscountKey));
+    const eligible = confirmed.length
+      ? baseGroup.filter(
+          (event) =>
+            event?.saleVerification === "retailer-page" ||
+            confirmedDiscounts.has(observationDiscountKey(event)),
+        )
+      : baseGroup;
+    const byDiscount = new Map();
+    for (const event of eligible) {
+      const key = observationDiscountKey(event);
+      const group = byDiscount.get(key) ?? [];
+      group.push(event);
+      byDiscount.set(key, group);
+    }
+    observationGroups.push(...byDiscount.values());
+  }
+  return observationGroups.map((group) => {
+    const representative = [...group].sort((left, right) => observationPriority(right) - observationPriority(left))[0];
+    const urls = [...new Set(group.flatMap((event) =>
+      Array.isArray(event?.saleObservationUrls) && event.saleObservationUrls.length
+        ? event.saleObservationUrls.map(cleanText).filter(Boolean)
+        : [cleanText(event?.sourceUrl)].filter(Boolean),
+    ))];
+    const observationCount = group.reduce(
+      (total, event) => total + positiveInteger(event?.saleObservationCount, 1),
+      0,
+    );
+    return {
+      ...representative,
+      saleObservationCount: observationCount,
+      saleObservationPageCount: new Set(urls.map(canonicalSaleUrl)).size,
+      saleObservationUrls: urls,
+    };
+  });
+}
+
+function observationDiscountKey(event) {
+  return String(finiteNumberOrNull(event?.saleDiscountPercent) ?? "none");
 }
 
 function observationPriority(event) {
@@ -466,6 +523,25 @@ function saleOfferType(text) {
   return "sale";
 }
 
+function saleIdentityText(event) {
+  return `${event?.sourceUrl ?? ""} ${event?.saleEvidence ?? ""} ${event?.saleSignal ?? ""} ${event?.sourceListingTitle ?? ""} ${event?.title ?? ""}`;
+}
+
+function normalizedSaleScope(event) {
+  const scope = cleanText(event?.saleScope).toLowerCase() || "unknown";
+  if (scope !== "sitewide" && scope !== "vinyl-wide") return scope;
+
+  const evidence = event?.saleEvidence ?? event?.sourceListingTitle ?? event?.title ?? "";
+  if (scope === "sitewide" && hasCoherentSaleClaim(evidence, "sitewide")) return "sitewide";
+  if (scope === "vinyl-wide" && hasCoherentSaleClaim(evidence, "vinyl-wide")) return "vinyl-wide";
+
+  const pageAndEvidence = `${canonicalSaleUrl(event?.sourceUrl)} ${evidence}`;
+  if (/\b(?:clearance|closeout|garage[- ]sale|warehouse[- ](?:sale|overstock)|overstock[- ]sale)\b/i.test(pageAndEvidence)) {
+    return "clearance";
+  }
+  return "unknown";
+}
+
 function extractPromoCode(text) {
   const match = String(text ?? "").match(/\b(?:code|coupon)\s*[:\-]?\s*["']?([a-z0-9][a-z0-9_-]{2,20})\b/i);
   return match ? match[1].toUpperCase() : null;
@@ -493,7 +569,14 @@ function canonicalSaleUrl(value) {
       if (TRACKING_QUERY_KEYS.test(key)) url.searchParams.delete(key);
     }
     url.searchParams.sort();
-    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    url.pathname = decodeURIComponent(url.pathname).toLowerCase().replace(/\/+$/, "") || "/";
+    url.pathname = url.pathname
+      .replace(/\/products\.json$/, "")
+      .replace(/\/(?:page|p)\/\d+$/, "")
+      .replace(/\/page[-_]\d+$/, "");
+    const collection = url.pathname.match(/^(\/collections\/[^/]+)/);
+    if (collection) url.pathname = collection[1];
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
     return url.toString();
   } catch {
     return raw.replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase();
