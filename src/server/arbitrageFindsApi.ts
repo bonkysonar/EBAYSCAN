@@ -5,11 +5,11 @@ import { get, list, put } from "@vercel/blob";
 import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
 import { assessRunQuality } from "../../scripts/lib/runQuality.mjs";
 import { evaluateOpportunity } from "../lib/arbitrage/evaluateOpportunity.mjs";
-import { getActiveRetailSources } from "../lib/arbitrage/vinylShopSources";
+import { getActiveRetailSources } from "../lib/arbitrage/vinylShopSources.js";
 import {
   normalizeSaleCampaigns,
   type SaleObservation,
-} from "../lib/arbitrage/saleCampaigns";
+} from "../lib/arbitrage/saleCampaigns.js";
 import {
   reconcileSaleCampaigns,
   saleCampaignLedgerFromPayload,
