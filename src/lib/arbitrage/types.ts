@@ -1,6 +1,7 @@
 import type { VinylShopSource } from "./vinylShopSources";
 
 export type ArbitrageDecision = "BUY" | "WATCH" | "REVIEW" | "REJECT";
+export type ArbitrageCandidateTier = "A" | "B" | "C" | "WATCH" | "REJECT";
 export type ArbitrageOpportunityType = "product_deal" | "sitewide_sale";
 export type ArbitrageMatchConfidence = "high" | "medium" | "low" | "unknown";
 export type ArbitrageSoldCondition = "new_sealed" | "used" | "unknown";
@@ -104,9 +105,12 @@ export type ArbitrageSoldEvidence = {
 export type ArbitrageActiveEvidence = {
   capturedAt?: string | null;
   exactMatchedListingCount?: number | null;
+  landedPriceCoverageComplete?: boolean;
+  landedPriceListingCount?: number | null;
   matchConfidence?: ArbitrageMatchConfidence | number | null;
   rawListingsInspected?: number | null;
   searchComplete?: boolean;
+  shippingDestinationVerified?: boolean;
   status?: "available" | "failed" | "no_results";
 };
 
@@ -174,6 +178,9 @@ export type ArbitrageFind = {
   averageSoldPrice?: number | null;
   averageSoldShipping?: number | null;
   barcode?: string | null;
+  candidateReasons?: string[];
+  candidateScore?: number;
+  candidateTier?: ArbitrageCandidateTier;
   capturedAt: string;
   condition?: string;
   conservativeResalePrice?: number | null;
@@ -233,6 +240,7 @@ export type ArbitrageFind = {
   id: string;
   lowestActiveItemPrice?: number | null;
   lowestActivePrice?: number | null;
+  lowestActivePriceDestinationVerified?: boolean;
   lowestActiveShippingPrice?: number | null;
   lowestActiveTitle?: string;
   lowestActiveUrl?: string;
@@ -327,6 +335,9 @@ export type ArbitrageFind = {
 export type ArbitrageScoredFind = ArbitrageFind & {
   allInCost: number;
   cashReturnPer30Days: number | null;
+  candidateReasons: string[];
+  candidateScore: number;
+  candidateTier: ArbitrageCandidateTier;
   costLedger: ArbitrageCostLedger;
   decision: ArbitrageDecision;
   currencyConversionRequired?: boolean;

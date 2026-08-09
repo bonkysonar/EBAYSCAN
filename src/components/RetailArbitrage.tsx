@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
-import { buildNewVinylResearchUrl, buildResearchKeywords } from "../lib/arbitrage/normalizeResearch";
+import { buildSoldResearchLinks, type SoldResearchLink } from "../lib/arbitrage/soldResearchLinks.mjs";
 import {
   loadReviewFeedback,
   pruneStaleRecordFeedback,
@@ -11,7 +11,7 @@ import {
   type RecordOutcome,
   type ReviewFeedback,
 } from "../lib/arbitrage/reviewFeedback";
-import { evaluateOpportunity } from "../lib/arbitrage/rules";
+import { candidateTierRank, evaluateOpportunity } from "../lib/arbitrage/rules";
 import {
   loadArbitrageFinds,
   loadArbitrageSettings,
@@ -26,11 +26,15 @@ import type {
 } from "../lib/arbitrage/types";
 import { readJsonResponse } from "../lib/http/jsonResponse";
 
-type DecisionFilter =
+type CandidateQueueFilter =
+  | "A"
+  | "AUTOMATIC_BUY"
+  | "B"
+  | "C"
+  | "CANDIDATES"
   | "ALL"
-  | "BUY"
   | "DISMISSED"
-  | "NEEDS_VALIDATION"
+  | "EVIDENCE_REVIEW"
   | "REJECT"
   | "TRACKED"
   | "WATCH";
@@ -95,14 +99,18 @@ type LatestFindsErrorResponse = { error: string };
 const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const EVALUATION_CLOCK_INTERVAL_MS = 60 * 1000;
 
-const decisionOptions: Array<{ label: string; value: DecisionFilter }> = [
-  { label: "Buy now", value: "BUY" },
-  { label: "Needs validation", value: "NEEDS_VALIDATION" },
-  { label: "Watch", value: "WATCH" },
+const queueOptions: Array<{ label: string; value: CandidateQueueFilter }> = [
+  { label: "All candidates", value: "CANDIDATES" },
+  { label: "Tier A · verified", value: "A" },
+  { label: "Tier B · promising", value: "B" },
+  { label: "Tier C · research", value: "C" },
+  { label: "Price watch", value: "WATCH" },
+  { label: "Automatic BUY", value: "AUTOMATIC_BUY" },
+  { label: "Needs validation (evidence)", value: "EVIDENCE_REVIEW" },
   { label: "Reject", value: "REJECT" },
   { label: "Purchased / tracked", value: "TRACKED" },
   { label: "Rejected by me", value: "DISMISSED" },
-  { label: "All", value: "ALL" },
+  { label: "Everything", value: "ALL" },
 ];
 
 const outcomeOptions: Array<{ label: string; value: RecordOutcome }> = [
@@ -117,7 +125,7 @@ const outcomeOptions: Array<{ label: string; value: RecordOutcome }> = [
 ];
 
 const sortableColumns: Array<{ key: SortKey; label: string }> = [
-  { key: "priority", label: "Priority" },
+  { key: "priority", label: "Candidate" },
   { key: "title", label: "Record" },
   { key: "price", label: "Buy cost" },
   { key: "profit_rate", label: "Profit / 30d" },
@@ -132,7 +140,7 @@ export function RetailArbitrage() {
   const [settings, setSettings] = useState<ArbitrageSettings>(() => loadArbitrageSettings());
   const [feedback, setFeedback] = useState<ReviewFeedback>(() => loadReviewFeedback());
   const [latestPayload, setLatestPayload] = useState<PayloadWithDiagnostics | null>(null);
-  const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>("ALL");
+  const [queueFilter, setQueueFilter] = useState<CandidateQueueFilter>("CANDIDATES");
   const [sourceFilter, setSourceFilter] = useState("ALL");
   const [sortKey, setSortKey] = useState<SortKey>("priority");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -160,12 +168,12 @@ export function RetailArbitrage() {
       filterAndSortFinds(
         scoredFinds,
         feedback,
-        decisionFilter,
+        queueFilter,
         sourceFilter,
         sortKey,
         sortDirection,
       ),
-    [decisionFilter, feedback, scoredFinds, sortDirection, sortKey, sourceFilter],
+    [feedback, queueFilter, scoredFinds, sortDirection, sortKey, sourceFilter],
   );
   const selectedFind =
     visibleFinds.find((find) => find.id === selectedId) ?? visibleFinds[0] ?? null;
@@ -316,11 +324,11 @@ export function RetailArbitrage() {
     <section className="arbitrage-page">
       <div className="seller-hero panel compact-seller-hero arbitrage-hero">
         <div>
-          <span className="eyebrow">Validated retail arbitrage</span>
-          <h2>What is actually worth buying?</h2>
+          <span className="eyebrow">Retail candidate finder</span>
+          <h2>Viable records first. Evidence underneath.</h2>
           <p>
-            BUY requires fresh sold velocity, exact active supply, a confident title/edition match, and
-            profit after tax, fees, ads, shipping, packaging, and returns reserve.
+            Tier A is fully validated, Tier B is a promising product-level opportunity, and Tier C is a
+            real source-linked record worth researching. Automatic BUY remains the stricter proof badge.
           </p>
         </div>
         <div className="seller-actions">
@@ -340,10 +348,11 @@ export function RetailArbitrage() {
       {latestMessage ? <div className="warning-box">{latestMessage}</div> : null}
 
       <div className="seller-stats compact-seller-stats arbitrage-stats">
-        <Stat label="Buy now" value={stats.BUY} tone="buy" />
-        <Stat label="Needs validation" value={stats.REVIEW} tone="review" />
-        <Stat label="Watch" value={stats.WATCH} />
-        <Stat label="Rejected" value={stats.REJECT} />
+        <Stat label="Tier A · verified" value={stats.A} tone="buy" />
+        <Stat label="Tier B · promising" value={stats.B} tone="review" />
+        <Stat label="Tier C · research" value={stats.C} />
+        <Stat label="Price watch" value={stats.WATCH} />
+        <Stat label="Automatic BUY" value={stats.automaticBuy} tone="buy" />
         <Stat label="Sold evidence" value={`${stats.soldValidated}/${stats.total}`} />
         <Stat label="Exact supply" value={`${stats.activeValidated}/${stats.total}`} />
         <Stat
@@ -407,17 +416,17 @@ export function RetailArbitrage() {
         <section className="panel arbitrage-table-panel">
           <div className="section-heading seller-table-heading">
             <div>
-              <h2>{filterHeading(decisionFilter)}</h2>
+              <h2>{filterHeading(queueFilter)}</h2>
               <span>{visibleFinds.length} visible of {scoredFinds.length} record candidates</span>
             </div>
             <div className="seller-controls">
               <label>
                 Queue
                 <select
-                  value={decisionFilter}
-                  onChange={(event) => setDecisionFilter(event.target.value as DecisionFilter)}
+                  value={queueFilter}
+                  onChange={(event) => setQueueFilter(event.target.value as CandidateQueueFilter)}
                 >
-                  {decisionOptions.map((option) => (
+                  {queueOptions.map((option) => (
                     <option value={option.value} key={option.value}>
                       {option.label}
                     </option>
@@ -443,22 +452,24 @@ export function RetailArbitrage() {
               <h2>
                 {!hasAuthoritativeLatest && isLoadingLatest
                   ? "Checking the latest publication"
-                  : decisionFilter === "BUY"
-                    ? "No validated buys in this run"
-                    : decisionFilter === "ALL"
+                  : queueFilter === "A"
+                    ? "No Tier A verified candidates in this run"
+                    : queueFilter === "AUTOMATIC_BUY"
+                      ? "No automatic buys in this run"
+                      : queueFilter === "CANDIDATES" || queueFilter === "ALL"
                       ? "No record candidates in this run"
                       : "No records in this view"}
               </h2>
               <p>
                 {!hasAuthoritativeLatest && isLoadingLatest
                   ? "Cached recommendations stay hidden until the latest published scan is verified."
-                  : decisionFilter === "BUY"
-                  ? "Nothing currently clears every demand, supply, freshness, match, currency, and profit gate. Use Needs validation to see records that still require evidence or cost normalization."
+                  : queueFilter === "A" || queueFilter === "AUTOMATIC_BUY"
+                  ? "Nothing currently clears every demand, supply, freshness, match, currency, and profit gate. The candidate queue still shows promising and research-ready options."
                   : "Choose another queue or source."}
               </p>
-              {decisionFilter === "BUY" && stats.REVIEW > 0 ? (
-                <button type="button" onClick={() => setDecisionFilter("NEEDS_VALIDATION")}>
-                  Review {stats.REVIEW} candidates needing validation
+              {(queueFilter === "A" || queueFilter === "AUTOMATIC_BUY") && stats.B + stats.C > 0 ? (
+                <button type="button" onClick={() => setQueueFilter("CANDIDATES")}>
+                  Show {stats.B + stats.C} other candidates
                 </button>
               ) : null}
             </div>
@@ -481,21 +492,21 @@ export function RetailArbitrage() {
                 const outcome = recordOutcomeForFind(feedback, find);
                 return (
                   <button
-                    className={`arbitrage-find-row ${find.decision.toLowerCase()} ${
+                    className={`arbitrage-find-row ${find.decision.toLowerCase()} tier-${find.candidateTier.toLowerCase()} ${
                       find.id === selectedFind?.id ? "selected" : ""
                     }`}
                     type="button"
                     key={find.id}
                     onClick={() => setSelectedId(find.id)}
                   >
-                    <span className={`arbitrage-priority-cell band-${find.priorityBand.toLowerCase()}`}>
+                    <span className={`arbitrage-priority-cell band-${candidateBand(find).toLowerCase()}`}>
                       <strong>
-                        {outcome ? outcomeLabel(outcome) : `${priorityBandLabel(find)} · ${find.priorityScore}`}
+                        {outcome ? outcomeLabel(outcome) : `${candidateTierLabel(find.candidateTier)} · ${find.candidateScore}`}
                       </strong>
                       <small>
                         {outcome
-                          ? `${priorityBandLabel(find)} · ${find.priorityScore}`
-                          : strategyLabel(find.recommendedStrategy) ?? find.decision}
+                          ? `${candidateTierLabel(find.candidateTier)} · ${find.candidateScore}`
+                          : `Evidence: ${find.decision}`}
                       </small>
                     </span>
                     <span className="arbitrage-title">
@@ -620,6 +631,17 @@ function FindDetail({
   const recommendedOption = find.strategyOptions.find(
     (option) => option.id === find.recommendedStrategy,
   );
+  const soldResearchLinks = buildSoldResearchLinks(find);
+  const primarySoldResearch = soldResearchLinks[0] ?? null;
+  const alternateSoldResearch = soldResearchLinks.slice(1);
+  const currentResearchQueries = soldResearchLinks.map((link) => link.query);
+  const publishedResearchQueries = find.ebayResearchKeywordVariants?.length
+    ? find.ebayResearchKeywordVariants
+    : find.ebayResearchKeyword
+      ? [find.ebayResearchKeyword]
+      : [];
+  const publishedResearchDiffers =
+    publishedResearchQueries.join("|").toLowerCase() !== currentResearchQueries.join("|").toLowerCase();
   return (
     <>
       <div className="section-heading arbitrage-detail-heading">
@@ -628,12 +650,29 @@ function FindDetail({
           <h2>{displayRecordTitle(find)}</h2>
         </div>
         <div className="arbitrage-detail-badges">
-          <strong className={`arbitrage-priority-badge band-${find.priorityBand.toLowerCase()}`}>
-            {priorityBandLabel(find)} · {find.priorityScore}
+          <strong className={`arbitrage-priority-badge band-${candidateBand(find).toLowerCase()}`}>
+            {candidateTierLabel(find.candidateTier)} · {find.candidateScore}
           </strong>
-          <strong className={`arbitrage-decision ${find.decision.toLowerCase()}`}>{find.decision}</strong>
+          <strong className={`arbitrage-decision ${find.decision.toLowerCase()}`}>
+            Evidence: {find.decision}
+          </strong>
         </div>
       </div>
+
+      <section className="arbitrage-detail-section arbitrage-candidate-summary">
+        <h3>Why this candidate surfaced</h3>
+        <p className="muted">{candidateTierDescription(find.candidateTier)}</p>
+        <ul className="arbitrage-reasons">
+          {find.candidateReasons.map((reason) => (
+            <li key={reason}>{reason}</li>
+          ))}
+        </ul>
+        <div className="seller-detail-actions arbitrage-links">
+          <a href={find.sourceUrl} target="_blank" rel="noreferrer">
+            Open offer: {purchaseSourceAttribution(find)}
+          </a>
+        </div>
+      </section>
 
       <div className="arbitrage-buy-callout">
         <div>
@@ -761,7 +800,44 @@ function FindDetail({
       </section>
 
       <section className="arbitrage-detail-section">
-        <h3>Priority score</h3>
+        <h3>Check the sold market</h3>
+        <p className="muted">
+          Open eBay in your browser and confirm the exact pressing yourself. Product Research has the
+          deeper three-year view when your Seller Hub session is signed in; public sold listings are a
+          no-Seller-Hub fallback for eBay's recent public sold view.
+        </p>
+        {primarySoldResearch ? (
+          <>
+            <p>
+              <strong>{soldResearchKindLabel(primarySoldResearch)} query:</strong>{" "}
+              <code>{primarySoldResearch.query}</code>
+            </p>
+            <SoldResearchActions link={primarySoldResearch} />
+            {alternateSoldResearch.length ? (
+              <details className="arbitrage-research-detail">
+                <summary>Try {alternateSoldResearch.length} alternate sold-search {alternateSoldResearch.length === 1 ? "query" : "queries"}</summary>
+                {alternateSoldResearch.map((link) => (
+                  <div key={`${link.kind}-${link.query}`}>
+                    <p>
+                      <strong>{soldResearchKindLabel(link)} query:</strong> <code>{link.query}</code>
+                    </p>
+                    <SoldResearchActions link={link} />
+                  </div>
+                ))}
+              </details>
+            ) : null}
+            <p className="muted">
+              Public sold results can include related matches and may not reveal the actual accepted Best
+              Offer. Treat this as a manual confirmation link, not automatically validated evidence.
+            </p>
+          </>
+        ) : (
+          <p className="muted">This candidate does not have enough identity text to build a safe sold search.</p>
+        )}
+      </section>
+
+      <section className="arbitrage-detail-section">
+        <h3>Evidence priority score</h3>
         <div className="arbitrage-score-breakdown">
           <ScoreFactor label="Demand durability" maximum={30} value={find.priorityBreakdown.demandDurability} />
           <ScoreFactor label="Economics" maximum={30} value={find.priorityBreakdown.economics} />
@@ -788,8 +864,7 @@ function FindDetail({
       </section>
 
       <div className="seller-detail-actions arbitrage-links">
-        <a href={find.sourceUrl} target="_blank" rel="noreferrer">Open {purchaseRetailerLabel(find)}</a>
-        <a href={cleanEbayResearchUrl(find)} target="_blank" rel="noreferrer">Open sold research</a>
+        <a href={find.sourceUrl} target="_blank" rel="noreferrer">Open offer: {purchaseSourceAttribution(find)}</a>
         {find.ebayActiveSearchUrl ? (
           <a href={find.ebayActiveSearchUrl} target="_blank" rel="noreferrer">Open active search</a>
         ) : null}
@@ -819,15 +894,34 @@ function FindDetail({
 
       <details className="arbitrage-research-detail">
         <summary>Research trace</summary>
-        <p>{researchKeywordsForFind(find)}</p>
+        <p>Current handoff queries: {currentResearchQueries.join(" | ") || "none"}</p>
         <p>Sold evidence: {find.ebayResearchStatus ?? "pending"} · active evidence: {find.ebayActiveSearchStatus ?? "pending"}</p>
-        {find.ebayResearchKeywordVariants?.length ? (
-          <p>Queries: {find.ebayResearchKeywordVariants.join(" | ")}</p>
+        {publishedResearchDiffers && publishedResearchQueries.length ? (
+          <p>Published evidence queries: {publishedResearchQueries.join(" | ")}</p>
         ) : null}
         {find.notes?.length ? <ul>{find.notes.map((note) => <li key={note}>{note}</li>)}</ul> : null}
       </details>
     </>
   );
+}
+
+function SoldResearchActions({ link }: { link: SoldResearchLink }) {
+  return (
+    <div className="seller-detail-actions arbitrage-links">
+      <a href={link.productResearchUrl} target="_blank" rel="noreferrer">
+        eBay Product Research · 3 years · sign-in
+      </a>
+      <a href={link.publicSoldUrl} target="_blank" rel="noreferrer">
+        Public sold listings · recent view
+      </a>
+    </div>
+  );
+}
+
+function soldResearchKindLabel(link: SoldResearchLink): string {
+  if (link.kind === "barcode") return "Barcode";
+  if (link.kind === "exact") return "Exact edition";
+  return "Broader release";
 }
 
 function ProfileSettings({
@@ -1035,7 +1129,7 @@ function Metric({ label, value }: { label: string; value: number | string }) {
 function filterAndSortFinds(
   finds: ArbitrageScoredFind[],
   feedback: ReviewFeedback,
-  decisionFilter: DecisionFilter,
+  queueFilter: CandidateQueueFilter,
   sourceFilter: string,
   sortKey: SortKey,
   sortDirection: SortDirection,
@@ -1046,12 +1140,17 @@ function filterAndSortFinds(
       const outcome = recordOutcomeForFind(feedback, find);
       const hidden = Boolean(find.dismissedAt) || isNegativeRecordOutcome(outcome);
       const tracked = Boolean(outcome && !isNegativeRecordOutcome(outcome));
-      if (decisionFilter === "DISMISSED") return hidden;
-      if (decisionFilter === "TRACKED") return tracked;
+      if (queueFilter === "DISMISSED") return hidden;
+      if (queueFilter === "TRACKED") return tracked;
       if (hidden || tracked) return false;
-      if (decisionFilter === "ALL") return true;
-      if (decisionFilter === "NEEDS_VALIDATION") return find.decision === "REVIEW";
-      return find.decision === decisionFilter;
+      if (queueFilter === "ALL") return true;
+      if (queueFilter === "CANDIDATES") {
+        return find.candidateTier === "A" || find.candidateTier === "B" || find.candidateTier === "C";
+      }
+      if (queueFilter === "AUTOMATIC_BUY") return find.decision === "BUY";
+      if (queueFilter === "EVIDENCE_REVIEW") return find.decision === "REVIEW";
+      if (queueFilter === "REJECT") return find.candidateTier === "REJECT" || find.decision === "REJECT";
+      return find.candidateTier === queueFilter;
     })
     .sort((left, right) => compareFinds(left, right, sortKey, sortDirection));
 }
@@ -1099,22 +1198,40 @@ function defaultSortDirection(sortKey: SortKey): SortDirection {
 function priorityRank(find: ArbitrageScoredFind): number {
   const decisionRank =
     find.decision === "BUY" ? 4 : find.decision === "WATCH" ? 3 : find.decision === "REVIEW" ? 2 : 1;
-  const bandRank =
-    find.priorityBand === "A" ? 4 : find.priorityBand === "B" ? 3 : find.priorityBand === "C" ? 2 : 1;
-  return decisionRank * 1_000_000 + bandRank * 1_000 + find.priorityScore;
+  return (
+    candidateTierRank(find.candidateTier) * 1_000_000 +
+    Math.max(0, Math.min(100, find.candidateScore)) * 1_000 +
+    decisionRank * 100 +
+    find.priorityScore
+  );
 }
 
 function summarizeFinds(finds: ArbitrageScoredFind[], feedback: ReviewFeedback) {
   return finds.reduce(
     (summary, find) => {
       const outcome = recordOutcomeForFind(feedback, find);
-      if (!find.dismissedAt && !outcome) summary[find.decision] += 1;
+      if (!find.dismissedAt && !outcome) {
+        summary[find.candidateTier] += 1;
+        if (find.decision === "BUY") summary.automaticBuy += 1;
+        if (find.decision === "REVIEW") summary.evidenceReview += 1;
+      }
       summary.soldValidated += find.gates.soldEvidence ? 1 : 0;
       summary.activeValidated += find.gates.activeEvidence ? 1 : 0;
       summary.total += 1;
       return summary;
     },
-    { BUY: 0, REVIEW: 0, REJECT: 0, WATCH: 0, activeValidated: 0, soldValidated: 0, total: 0 },
+    {
+      A: 0,
+      B: 0,
+      C: 0,
+      REJECT: 0,
+      WATCH: 0,
+      activeValidated: 0,
+      automaticBuy: 0,
+      evidenceReview: 0,
+      soldValidated: 0,
+      total: 0,
+    },
   );
 }
 
@@ -1264,26 +1381,6 @@ function displayRecordTitle(find: ArbitrageFind): string {
   return `${find.artist} — ${find.title}`;
 }
 
-function cleanEbayResearchUrl(find: ArbitrageFind): string {
-  if (find.ebayResearchUrl) return find.ebayResearchUrl;
-  const parts = researchPartsForFind(find);
-  return buildNewVinylResearchUrl(parts.artist, parts.title);
-}
-
-function researchKeywordsForFind(find: ArbitrageFind): string {
-  if (find.ebayResearchKeyword) return find.ebayResearchKeyword;
-  if (find.ebayResearchKeywordVariants?.[0]) return find.ebayResearchKeywordVariants[0];
-  const parts = researchPartsForFind(find);
-  return buildResearchKeywords(parts.artist, parts.title);
-}
-
-function researchPartsForFind(find: ArbitrageFind): { artist: string; title: string } {
-  const sourceTitle = find.sourceListingTitle ?? "";
-  const match = sourceTitle.match(/^(.{2,80}?)(?:\s+-\s+|\s*:\s+)(.{2,})$/);
-  if (match) return { artist: match[1], title: match[2] };
-  return { artist: /^unknown artist$/i.test(find.artist) ? "" : find.artist, title: find.title };
-}
-
 function evidenceStatusLabel(find: ArbitrageScoredFind): string {
   if (find.currencyConversionRequired) return "FX conversion needed";
   if (find.gates.soldEvidence && find.gates.activeEvidence && find.gates.matchConfidence) return "Validated";
@@ -1330,8 +1427,27 @@ function turnLabel(value: number | null | undefined): string {
   return value === null || value === undefined ? "Unknown" : `${Math.round(value)} days`;
 }
 
-function priorityBandLabel(find: ArbitrageScoredFind): string {
-  return find.priorityBand === "REJECT" ? "Reject" : `Band ${find.priorityBand}`;
+function candidateBand(find: ArbitrageScoredFind): "A" | "B" | "C" | "REJECT" {
+  if (find.candidateTier === "A" || find.candidateTier === "B" || find.candidateTier === "C") {
+    return find.candidateTier;
+  }
+  return find.candidateTier === "REJECT" ? "REJECT" : "C";
+}
+
+function candidateTierLabel(tier: ArbitrageScoredFind["candidateTier"]): string {
+  if (tier === "A") return "Tier A · verified";
+  if (tier === "B") return "Tier B · promising";
+  if (tier === "C") return "Tier C · research";
+  if (tier === "WATCH") return "Price watch";
+  return "Rejected";
+}
+
+function candidateTierDescription(tier: ArbitrageScoredFind["candidateTier"]): string {
+  if (tier === "A") return "Fresh exact demand, supply, identity, offer, and full-cost economics all passed.";
+  if (tier === "B") return "Product-level demand and deal signals are promising, but at least one automatic evidence gate still needs confirmation.";
+  if (tier === "C") return "This is a real record offer with a direct purchase path; sold-market research is still required before calling it a deal.";
+  if (tier === "WATCH") return "The record has useful evidence, but the current source price is not yet attractive enough.";
+  return "Validated evidence or an explicit preference rules this offer out.";
 }
 
 function strategyLabel(value: ArbitrageScoredFind["recommendedStrategy"]): string | null {
@@ -1380,8 +1496,8 @@ function confidenceLabel(value: unknown): string {
   return "n/a";
 }
 
-function filterHeading(filter: DecisionFilter): string {
-  return decisionOptions.find((option) => option.value === filter)?.label ?? "Finds";
+function filterHeading(filter: CandidateQueueFilter): string {
+  return queueOptions.find((option) => option.value === filter)?.label ?? "Finds";
 }
 
 function outcomeLabel(outcome: RecordOutcome): string {
@@ -1410,14 +1526,8 @@ function humanize(value: string): string {
 }
 
 function statsMessage(finds: ArbitrageFind[]): string {
-  const decisions = finds.reduce(
-    (counts, find) => {
-      counts[find.status ?? "REVIEW"] += 1;
-      return counts;
-    },
-    { BUY: 0, REVIEW: 0, REJECT: 0, WATCH: 0 },
-  );
-  return `${decisions.BUY} BUY, ${decisions.REVIEW} need validation, ${decisions.WATCH} WATCH.`;
+  const sourceCount = new Set(finds.map((find) => purchaseRetailerKey(find))).size;
+  return `${sourceCount} purchase source${sourceCount === 1 ? "" : "s"} represented; candidate strength is recalculated locally.`;
 }
 
 function downloadFindsJson(finds: ArbitrageScoredFind[]) {

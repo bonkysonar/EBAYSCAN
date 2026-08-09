@@ -5,7 +5,13 @@ export type ResearchPlanEntry = {
   sourceId: string;
   sourceListingTitle?: string;
   title: string;
-  variants: Array<{ query: string; url: string }>;
+  variants: Array<{
+    identitySignals: string[];
+    kind: "exact" | "barcode" | "base";
+    publicSoldUrl: string;
+    query: string;
+    url: string;
+  }>;
 };
 
 export function buildProductResearchPlan(
@@ -13,6 +19,7 @@ export function buildProductResearchPlan(
   options?: { maxEntries?: number },
 ): ResearchPlanEntry[];
 export function buildProductResearchUrl(query: string): string;
+export function buildPublicSoldSearchUrl(query: string): string;
 export function curateResearchForFind(
   find: Record<string, unknown>,
   rawResearch: unknown,

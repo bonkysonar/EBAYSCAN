@@ -1,10 +1,13 @@
 import {
+  candidateTierRank as sharedCandidateTierRank,
   defaultArbitrageSettings as sharedDefaultArbitrageSettings,
   evaluateOpportunity as evaluateSharedOpportunity,
 } from "./evaluateOpportunity.mjs";
-import type { ArbitrageFind, ArbitrageScoredFind, ArbitrageSettings } from "./types";
+import type { ArbitrageCandidateTier, ArbitrageFind, ArbitrageScoredFind, ArbitrageSettings } from "./types";
 
 export const defaultArbitrageSettings: ArbitrageSettings = sharedDefaultArbitrageSettings;
+export const candidateTierRank = (value: ArbitrageCandidateTier | null | undefined): number =>
+  sharedCandidateTierRank(value);
 
 export function evaluateOpportunity(
   find: ArbitrageFind,

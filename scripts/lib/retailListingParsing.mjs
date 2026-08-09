@@ -24,14 +24,15 @@ export function parseRetailProductPrices(value) {
   return [...text.matchAll(PRICE_PATTERN)]
     .filter((match) => {
       const index = match.index ?? 0;
-      const before = text.slice(Math.max(0, index - 28), index);
+      const before = text.slice(Math.max(0, index - 96), index);
       const after = text.slice(
         index + match[0].length,
         Math.min(text.length, index + match[0].length + 28),
       );
       return (
-        !/\b(?:delivery|shipping|save|savings|coupon|orders?\s+over)\s*[:\-]?\s*$/i.test(before) &&
-        !/^\s*(?:delivery|shipping|off\s+coupon)\b/i.test(after) &&
+        !isShippingOrOrderThreshold(before, after) &&
+        !/\b(?:delivery|shipping|s\s*(?:&|and|\/)\s*h|save|savings|coupon|orders?\s+over)\s*[:\-]?\s*$/i.test(before) &&
+        !/^\s*(?:delivery|shipping|s\s*(?:&|and|\/)\s*h|off\s+coupon)\b/i.test(after) &&
         !UNIT_SUFFIX_PATTERN.test(after)
       );
     })
@@ -51,7 +52,8 @@ export function inferRetailTitle(value) {
 function splitRetailArtistTitle(value) {
   const source = cleanRetailText(value)
     .replace(/^best\s+seller\s+/i, "")
-    .replace(/^\[(?:pre[\s-]?order|preorder)\]\s*/i, "");
+    .replace(/^\[(?:pre[\s-]?order|preorder)\]\s*/i, "")
+    .replace(/^\$\s*[0-9][0-9,.]*\s*\*?\s*\|\s*/i, "");
   const dash = source.match(/^(.{2,100}?)\s+[-\u2013\u2014]\s+(.{2,})$/);
   if (dash) return { artist: dash[1], title: dash[2] };
 
@@ -75,10 +77,13 @@ function cleanRetailTitle(value) {
   return cleanRetailText(value)
     .replace(/^best\s+seller\s+/i, "")
     .replace(/\bMusic\s*(?:&|and)\s*Performance\b/gi, " ")
+    .replace(/\s*(?:\+|\||[-\u2013\u2014])\s*(?:free\s+)?(?:shipping|delivery|s\s*(?:&|and|\/)\s*h)\b.*$/i, " ")
+    .replace(/\s+or\s+less\b.*$/i, " ")
+    .replace(/\bat\s+(?:amazon|target|walmart|urban\s+outfitters|barnes\s*(?:&|and)\s*noble|deep\s+discount)\b.*$/i, " ")
+    .replace(/\([^)]*(?:vinyl|lp|record|sale|deal)[^)]*\)/gi, " ")
     .replace(/\b(?:vinyl|records?|album|[234]?\s*lp)\b/gi, " ")
     .replace(/\b(?:sale|deal|clearance|limited|edition|exclusive|colored|colour|color)\b/gi, " ")
     .replace(/\[[^\]]*\]/g, " ")
-    .replace(/\([^)]*(?:vinyl|lp|record|sale|deal)[^)]*\)/gi, " ")
     .replace(/\bwas\b(?=\s*(?:\$|USD))/gi, " ")
     .replace(PRICE_PATTERN, " ")
     .replace(/(?:\/\s*|per\s+)(?:ea(?:ch)?|unit|item|lb|oz|fl\.?\s*oz|kg|g|100g|ct|count)\b/gi, " ")
@@ -87,6 +92,20 @@ function cleanRetailTitle(value) {
     .replace(/\s+/g, " ")
     .replace(/^[\s\-:|]+|[\s\-:|]+$/g, "")
     .trim();
+}
+
+function isShippingOrOrderThreshold(before, after) {
+  const hasThresholdSuffix = /^\s*(?:\+|or\s+(?:more|above)|minimum\b)/i.test(after);
+  const shippingClause = before.match(
+    /\b(?:free\s+)?(?:shipping|delivery|s\s*(?:&|and|\/)\s*h)\b([^$]{0,80})$/i,
+  )?.[1] ?? null;
+  if (
+    shippingClause !== null &&
+    (hasThresholdSuffix || /\b(?:on|over|above|orders?|purchases?|minimum|prime|or)\b/i.test(shippingClause))
+  ) {
+    return true;
+  }
+  return /\b(?:orders?|purchases?)\s+(?:(?:over|above|of|at\s+least|total(?:ing)?)\s+)?$/i.test(before);
 }
 
 function cleanRetailText(value) {

@@ -165,11 +165,13 @@ function buildQueue(finds) {
 
 export async function enrichActiveEntry(entry, options = {}) {
   const listingsById = new Map();
+  const matchedListingIds = new Set();
   const errors = [];
   const variantResults = [];
   let rawListingsInspected = 0;
   let excludedSourceListingCount = 0;
   let searchComplete = true;
+  let shippingDestinationVerified = true;
   let successfulVariants = 0;
 
   for (const variant of entry.variants) {
@@ -181,13 +183,23 @@ export async function enrichActiveEntry(entry, options = {}) {
       rawListingsInspected += result.rawListingsInspected;
       excludedSourceListingCount += Number(result.excludedSourceListingCount) || 0;
       searchComplete = searchComplete && result.searchComplete;
+      shippingDestinationVerified =
+        shippingDestinationVerified && result.shippingDestinationVerified !== false;
+      const resultMatchedIds = result.matchedListingIds?.length
+        ? result.matchedListingIds
+        : result.listings.map((listing) => listing.id);
+      for (const id of resultMatchedIds) matchedListingIds.add(id);
       variantResults.push({
         keyword: variant,
         excludedSourceListingCount: result.excludedSourceListingCount ?? 0,
+        exactMatchedListingCount:
+          result.exactMatchedListingCount ?? resultMatchedIds.length,
+        landedPriceListingCount: result.listings.length,
         matchedListings: result.listings.length,
         pagesFetched: result.pagesFetched,
         rawListingsInspected: result.rawListingsInspected,
         searchComplete: result.searchComplete,
+        shippingDestinationVerified: result.shippingDestinationVerified === true,
       });
       for (const listing of result.listings) {
         const existing = listingsById.get(listing.id);
@@ -225,13 +237,17 @@ export async function enrichActiveEntry(entry, options = {}) {
   }
 
   const listings = [...listingsById.values()].sort((left, right) => left.totalPrice - right.totalPrice);
+  const activeListingCount = matchedListingIds.size;
   const lowest = listings[0];
-  const status = lowest ? "available" : "no_results";
+  const status = activeListingCount > 0 ? "available" : "no_results";
   return {
-    activeListingCount: listings.length,
+    activeListingCount,
     error: errors.length > 0 ? errors.join("; ") : undefined,
     excludedSourceListingCount,
     keyword: entry.primary,
+    landedPriceCoverageComplete:
+      shippingDestinationVerified && listings.length === activeListingCount,
+    landedPriceListingCount: listings.length,
     listings: listings.slice(0, 10),
     lowest,
     matchConfidence: searchComplete ? "high" : "unknown",
@@ -239,6 +255,7 @@ export async function enrichActiveEntry(entry, options = {}) {
     searchComplete,
     searchedVariants: entry.variants,
     searchUrl: publicSearchUrl(entry.primary),
+    shippingDestinationVerified,
     status,
     variantResults,
   };
@@ -254,10 +271,8 @@ export async function searchVariantPages(keyword, profile, options = {}) {
   const endpointRoot = environment.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
   const deliveryCountry = "US";
   const deliveryPostalCode = String(environment.EBAY_DELIVERY_POSTAL_CODE ?? "").trim();
-  if (!deliveryPostalCode) {
-    throw new Error("EBAY_DELIVERY_POSTAL_CODE is required for trustworthy active eBay landed-price evidence.");
-  }
   const listingsById = new Map();
+  const matchedListingIds = new Set();
   let pagesFetched = 0;
   let excludedSourceListingCount = 0;
   let rawListingsInspected = 0;
@@ -269,24 +284,32 @@ export async function searchVariantPages(keyword, profile, options = {}) {
     const url = new URL("/buy/browse/v1/item_summary/search", endpointRoot);
     url.searchParams.set("q", keyword);
     url.searchParams.set("category_ids", EBAY_VINYL_CATEGORY_ID);
+    const filters = [
+      "conditionIds:{1000}",
+      "buyingOptions:{FIXED_PRICE}",
+      `deliveryCountry:${deliveryCountry}`,
+      `itemLocationCountry:${deliveryCountry}`,
+    ];
+    if (deliveryPostalCode) filters.splice(3, 0, `deliveryPostalCode:${deliveryPostalCode}`);
     url.searchParams.set(
       "filter",
-      `conditionIds:{1000},buyingOptions:{FIXED_PRICE},deliveryCountry:${deliveryCountry},deliveryPostalCode:${deliveryPostalCode},itemLocationCountry:${deliveryCountry}`,
+      filters.join(","),
     );
     url.searchParams.set("limit", String(pageLimit));
     url.searchParams.set("offset", String(offset));
     url.searchParams.set("sort", "price");
 
-    const response = await fetchWithTimeout(fetchImpl, url, {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${tokenValue}`,
-        "X-EBAY-C-MARKETPLACE-ID": environment.EBAY_MARKETPLACE_ID,
-        "X-EBAY-C-ENDUSERCTX": `contextualLocation=${encodeURIComponent(
-          `country=${deliveryCountry},zip=${deliveryPostalCode}`,
-        )}`,
-      },
-    }, requestTimeoutMs);
+    const headers = {
+      Accept: "application/json",
+      Authorization: `Bearer ${tokenValue}`,
+      "X-EBAY-C-MARKETPLACE-ID": environment.EBAY_MARKETPLACE_ID,
+    };
+    if (deliveryPostalCode) {
+      headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=${encodeURIComponent(
+        `country=${deliveryCountry},zip=${deliveryPostalCode}`,
+      )}`;
+    }
+    const response = await fetchWithTimeout(fetchImpl, url, { headers }, requestTimeoutMs);
     const payloadText = await response.text();
     let payload = {};
     if (payloadText) {
@@ -311,6 +334,7 @@ export async function searchVariantPages(keyword, profile, options = {}) {
       }
       const match = matchActiveListing(item.title ?? "", profile);
       if (!match.matched) continue;
+      matchedListingIds.add(item.itemId ?? item.itemWebUrl ?? item.title);
       const listing = mapItem(item, {
         currency: "USD",
         deliveryCountry,
@@ -335,17 +359,20 @@ export async function searchVariantPages(keyword, profile, options = {}) {
     const hasMoreByTotal = total !== null && offset + summaries.length < total;
     const hasMore = Boolean(payload.next) || hasMoreByTotal || (total === null && summaries.length === pageLimit);
     if (!hasMore) {
-      searchComplete = untrustedMatchedListingCount === 0;
+      searchComplete = true;
       break;
     }
   }
 
   return {
     excludedSourceListingCount,
+    exactMatchedListingCount: matchedListingIds.size,
     listings: [...listingsById.values()].sort((left, right) => left.totalPrice - right.totalPrice),
+    matchedListingIds: [...matchedListingIds],
     pagesFetched,
     rawListingsInspected,
     searchComplete,
+    shippingDestinationVerified: Boolean(deliveryPostalCode),
     untrustedMatchedListingCount,
   };
 }
@@ -396,9 +423,12 @@ function applyResult(finds, key, result) {
       capturedAt: now,
       exactMatchedListingCount: result.activeListingCount ?? null,
       excludedSourceListingCount: result.excludedSourceListingCount ?? 0,
+      landedPriceCoverageComplete: result.landedPriceCoverageComplete === true,
+      landedPriceListingCount: result.landedPriceListingCount ?? 0,
       matchConfidence: result.matchConfidence ?? "unknown",
       rawListingsInspected: result.rawListingsInspected ?? 0,
       searchComplete: result.searchComplete === true,
+      shippingDestinationVerified: result.shippingDestinationVerified === true,
       status: result.status,
     };
     find.ebayActiveEditionIdentity = {
@@ -414,6 +444,8 @@ function applyResult(finds, key, result) {
     find.ebayActiveSearchComplete = result.searchComplete === true;
     find.exactActiveListingCount = result.activeListingCount ?? null;
     find.lowestActivePrice = result.lowest?.totalPrice ?? null;
+    find.lowestActivePriceDestinationVerified =
+      Boolean(result.lowest) && result.shippingDestinationVerified === true;
     find.lowestActiveItemPrice = result.lowest?.price ?? null;
     find.lowestActiveShippingPrice = result.lowest?.shippingPrice ?? null;
     find.lowestActiveTitle = result.lowest?.title;

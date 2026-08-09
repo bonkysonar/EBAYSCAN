@@ -1,6 +1,7 @@
 import type {
   ArbitrageCostInputs,
   ArbitrageCostLedger,
+  ArbitrageCandidateTier,
   ArbitrageFind,
   ArbitrageScoredFind,
   ArbitrageSettings,
@@ -21,3 +22,11 @@ export function evaluateOpportunity(
   settings?: Partial<ArbitrageSettings>,
   now?: Date | string | number,
 ): ArbitrageScoredFind;
+
+export function assessCandidateOpportunity(find: Partial<ArbitrageScoredFind> & ArbitrageFind): {
+  candidateReasons: string[];
+  candidateScore: number;
+  candidateTier: ArbitrageCandidateTier;
+};
+
+export function candidateTierRank(value: ArbitrageCandidateTier | null | undefined): number;

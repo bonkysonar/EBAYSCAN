@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 import {
   extractAmazonAsin,
+  extractSlickdealsDealCards,
   extractVinylPriceDropCards,
   parseOldRedditDealPage,
   parseRedditAtomFeed,
@@ -71,7 +72,10 @@ import {
   isFirstPartyWalmartOffer,
   parseWalmartCatalogPage,
 } from "./lib/walmartCatalog.mjs";
-import { evaluateOpportunity } from "../src/lib/arbitrage/evaluateOpportunity.mjs";
+import {
+  candidateTierRank,
+  evaluateOpportunity,
+} from "../src/lib/arbitrage/evaluateOpportunity.mjs";
 
 const WORKSPACE = process.cwd();
 const DEFAULT_OUTPUT_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
@@ -438,6 +442,7 @@ const finalProductFinds = finalSelection.selected;
 payload.finds = [...evaluatedSaleFinds, ...finalProductFinds].sort(
   (left, right) =>
     opportunitySortPriority(right) - opportunitySortPriority(left) ||
+    (Number(right.candidateScore) || 0) - (Number(left.candidateScore) || 0) ||
     (Number(right.priorityScore) || 0) - (Number(left.priorityScore) || 0) ||
     candidateQualityScore(right) - candidateQualityScore(left),
 );
@@ -945,12 +950,22 @@ function genericRetailerResult(source, pageScan) {
   const productCardCandidates = productCardResults.flatMap(({ items, page }) =>
     items.map((item) => structuredRetailItemToCandidate(source, item, page.url)).filter(Boolean),
   );
+  const slickdealsCardResults = source.id === "slickdeals-vinyl-records"
+    ? candidatePages.map((page) => ({
+        items: extractSlickdealsDealCards(page.html, page.url),
+        page,
+      }))
+    : [];
+  const slickdealsCardCandidates = slickdealsCardResults.flatMap(({ items, page }) =>
+    items.map((item) => slickdealsDealCardToCandidate(source, item, page.url)).filter(Boolean),
+  );
   const htmlCandidates = candidatePages.flatMap((page) =>
     extractCandidatesFromHtml(source, page.html, page.url),
   );
   const candidates = dedupeCandidates([
     ...structuredCandidates,
     ...productCardCandidates,
+    ...slickdealsCardCandidates,
     ...htmlCandidates,
   ]);
   return {
@@ -960,6 +975,10 @@ function genericRetailerResult(source, pageScan) {
       candidatePageCount: candidatePages.length,
       fetchedPageCount: pageScan.pages.length,
       htmlProductCardCount: productCardResults.reduce(
+        (total, result) => total + result.items.length,
+        0,
+      ),
+      slickdealsDealCardCount: slickdealsCardResults.reduce(
         (total, result) => total + result.items.length,
         0,
       ),
@@ -2209,6 +2228,40 @@ function discoveryDealToCandidate(source, deal) {
   };
 }
 
+function slickdealsDealCardToCandidate(source, deal, discoveryUrl) {
+  if (deal.expired || !deal.currentPrice || deal.currentPrice < 2 || deal.currentPrice > 250) return null;
+  const artist = inferRetailArtist(deal.title);
+  const title = inferRetailTitle(deal.title);
+  if (!title || title.length < 3) return null;
+  const assessment = assessRecordCandidate({
+    context: `${artist} ${deal.storeName ?? ""}`,
+    source,
+    title: deal.title,
+    url: deal.detailUrl,
+  });
+  if (!assessment.accepted) return null;
+
+  return {
+    artist,
+    candidateQualityReasons: assessment.reasons,
+    candidateQualityScore: assessment.score,
+    condition: "new/sealed",
+    discoveryUrl,
+    id: stableId(source.id, deal.detailUrl, title),
+    ...inferAdvertisedPurchaseRetailer(deal.storeName),
+    purchasePrice: deal.currentPrice,
+    purchaseOfferVerification: "discovery_lead",
+    sourceDiscountPercent: deal.discountPercent,
+    sourceId: source.id,
+    sourceListingTitle: cleanText(deal.title),
+    sourceName: source.name,
+    sourceOriginalPrice: deal.originalPrice,
+    sourcePublishedAt: deal.publishedAt,
+    sourceUrl: deal.detailUrl,
+    title,
+  };
+}
+
 function vinylPriceDropSaleEvent(source, detail) {
   const rawSignal = cleanText(detail.title);
   const discountPercent = detail.discountPercent ?? extractMaxDiscountPercent(rawSignal);
@@ -3040,6 +3093,23 @@ function inferPurchaseRetailer(directUrl) {
     : {};
 }
 
+function inferAdvertisedPurchaseRetailer(storeName) {
+  const name = cleanText(storeName).toLowerCase();
+  const knownRetailers = [
+    { domain: "amazon.com", name: "Amazon", pattern: /^amazon$/i },
+    { domain: "walmart.com", name: "Walmart", pattern: /^walmart$/i },
+    { domain: "target.com", name: "Target", pattern: /^target$/i },
+    { domain: "ebay.com", name: "eBay", pattern: /^ebay$/i },
+  ];
+  const retailer = knownRetailers.find(({ pattern }) => pattern.test(name));
+  return retailer
+    ? {
+        purchaseRetailerDomain: retailer.domain,
+        purchaseRetailerName: retailer.name,
+      }
+    : {};
+}
+
 function roundMetric(value) {
   return Math.round(value * 10_000) / 10_000;
 }
@@ -3163,10 +3233,30 @@ function runActiveEnrichmentIfConfigured(outputPath) {
   );
 
   if (result.status === 0) {
+    const completion = lastJsonLine(result.stdout);
+    if (
+      completion &&
+      Number(completion.completed) > 0 &&
+      Number(completion.failed) >= Number(completion.completed) &&
+      Number(completion.withLowest ?? 0) === 0 &&
+      Number(completion.withoutResults ?? 0) === 0
+    ) {
+      return {
+        error: "Every active eBay query failed; enrichment produced no usable supply evidence.",
+        failed: Number(completion.failed),
+        maxQueries: maxActiveQueries,
+        status: "failed",
+        stdout: tailLines(result.stdout, 5),
+      };
+    }
     return {
+      completed: Number(completion?.completed) || null,
+      failed: Number(completion?.failed) || 0,
       maxQueries: maxActiveQueries,
       status: "enriched",
       stdout: tailLines(result.stdout, 5),
+      withLowest: Number(completion?.withLowest) || 0,
+      withoutResults: Number(completion?.withoutResults) || 0,
     };
   }
 
@@ -3197,6 +3287,18 @@ function tailLines(text, count) {
     .join("\n");
 }
 
+function lastJsonLine(text) {
+  for (const line of String(text ?? "").trim().split(/\r?\n/).reverse()) {
+    try {
+      const value = JSON.parse(line);
+      if (value && typeof value === "object" && !Array.isArray(value)) return value;
+    } catch {
+      // Ignore progress text and keep looking for the final structured summary.
+    }
+  }
+  return null;
+}
+
 function readJsonFileIfPresent(path) {
   if (!existsSync(path)) return null;
   try {
@@ -3219,6 +3321,11 @@ function isBroadSaleSource(sourceId, sourceName, sourceUrl) {
 }
 
 function opportunitySortPriority(find) {
+  if (find.opportunityType !== "sitewide_sale") {
+    const tierRank = candidateTierRank(find.candidateTier);
+    if (tierRank > 0) return tierRank + 4;
+    if (find.candidateTier === "REJECT") return 1;
+  }
   if (find.status === "BUY") return 5;
   if (find.opportunityType === "sitewide_sale") return 4;
   if (find.status === "WATCH") return 3;
@@ -3230,6 +3337,7 @@ function opportunitySortPriority(find) {
 function compareEvaluatedFinds(left, right) {
   return (
     opportunitySortPriority(right) - opportunitySortPriority(left) ||
+    (Number(right.candidateScore) || 0) - (Number(left.candidateScore) || 0) ||
     (Number(right.priorityScore) || 0) - (Number(left.priorityScore) || 0) ||
     (Number(right.expectedNetProfit) || Number.NEGATIVE_INFINITY) -
       (Number(left.expectedNetProfit) || Number.NEGATIVE_INFINITY) ||
@@ -3238,10 +3346,15 @@ function compareEvaluatedFinds(left, right) {
 }
 
 function evaluatedCandidateScore(candidate) {
+  const tierRank = candidateTierRank(candidate.candidateTier);
+  const candidateScore = Math.max(0, Math.min(100, Number(candidate.candidateScore) || 0));
+  const priorityScore = Math.max(0, Math.min(100, Number(candidate.priorityScore) || 0));
+  const qualityScore = Math.max(0, Math.min(100, candidateQualityScore(candidate)));
   return (
-    opportunitySortPriority(candidate) * 1_000 +
-    (Number(candidate.priorityScore) || 0) * 10 +
-    candidateQualityScore(candidate)
+    tierRank * 1_000_000 +
+    candidateScore * 1_000 +
+    priorityScore * 10 +
+    qualityScore
   );
 }
 

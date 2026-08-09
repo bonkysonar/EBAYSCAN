@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCostLedger,
+  candidateTierRank,
   defaultArbitrageSettings,
   evaluateOpportunity as evaluateNodeOpportunity,
 } from "../lib/arbitrage/evaluateOpportunity.mjs";
@@ -69,6 +70,7 @@ describe("canonical arbitrage evaluation", () => {
     const result = evaluateOpportunity(validatedFind(), defaultArbitrageSettings, NOW);
 
     expect(result.decision).toBe("BUY");
+    expect(result.candidateTier).toBe("A");
     expect(result.gates).toEqual({
       activeEvidence: true,
       demand: true,
@@ -597,8 +599,12 @@ describe("canonical arbitrage evaluation", () => {
     expect(result.strategyOptions.every((option) => !option.eligible)).toBe(true);
   });
 
-  it("raises priority for an evergreen artist without fabricating item-level velocity", () => {
-    const ordinary = evaluateOpportunity(validatedFind(), defaultArbitrageSettings, NOW);
+  it("does not use artist-level history to raise a record's priority", () => {
+    const ordinary = evaluateOpportunity(
+      validatedFind({ retailerBestSeller: true, retailerReviewCount: 500 }),
+      defaultArbitrageSettings,
+      NOW,
+    );
     const evergreen = evaluateOpportunity(
       validatedFind({
         artist: "Creedence Clearwater Revival",
@@ -611,10 +617,11 @@ describe("canonical arbitrage evaluation", () => {
       NOW,
     );
 
-    expect(evergreen.priorityScore).toBeGreaterThan(ordinary.priorityScore);
-    expect(evergreen.priorityBreakdown.evergreenPrior).toBeGreaterThan(
+    expect(evergreen.priorityScore).toBe(ordinary.priorityScore);
+    expect(evergreen.priorityBreakdown.evergreenPrior).toBe(
       ordinary.priorityBreakdown.evergreenPrior,
     );
+    expect(evergreen.candidateScore).toBe(ordinary.candidateScore);
   });
 
   it("does not treat zero active listings as scarcity when no sold demand is validated", () => {
@@ -670,7 +677,8 @@ describe("canonical arbitrage evaluation", () => {
 
     const balanced = result.strategyOptions.find((option) => option.id === "balanced");
     expect(result.expectedNetProfit).toBe(5.75);
-    expect(result.decision).toBe("BUY");
+    expect(result.decision).toBe("REVIEW");
+    expect(result.candidateTier).toBe("B");
     expect(result.recommendedStrategy).toBe("balanced");
     expect(balanced).toMatchObject({
       demandSupport: "qualified",
@@ -684,7 +692,7 @@ describe("canonical arbitrage evaluation", () => {
       expect.stringContaining("lowered the balanced floor by 20%"),
     );
     expect(balanced?.thresholdReasons).toContainEqual(
-      expect.stringContaining("own artist-level sales"),
+      expect.stringContaining("condition-matched item sales"),
     );
   });
 
@@ -956,6 +964,121 @@ describe("canonical arbitrage evaluation", () => {
     );
 
     expect(result.conservativeResalePrice).toBe(24);
+  });
+
+  it("surfaces an evidence-supported candidate even when dated sold velocity is incomplete", () => {
+    const result = evaluateOpportunity(
+      validatedFind({
+        barcode: "081227934241",
+        productResearchRows: [
+          { avgShipping: 0, avgSoldPrice: 40, title: "exact new pressing", totalSold: 12 },
+        ],
+        soldEvidence: {
+          capturedAt: "2026-07-15T10:00:00.000Z",
+          condition: "new_sealed",
+          conservativeResalePrice: 40,
+          latestSaleDate: "2026-07-12",
+          matchConfidence: "high",
+          source: "ebay-product-research-aggregate",
+          status: "validated",
+          unitsSold90Days: null,
+          velocityEvidence: "aggregate_last_sale_only",
+        },
+      }),
+      defaultArbitrageSettings,
+      NOW,
+    );
+
+    expect(result.decision).toBe("REVIEW");
+    expect(result.candidateTier).toBe("B");
+    expect(result.candidateScore).toBeGreaterThanOrEqual(50);
+    expect(result.candidateReasons).toContainEqual(
+      expect.stringContaining("Product Research units support demand"),
+    );
+  });
+
+  it("labels a credible low-price offer without product demand as a research candidate", () => {
+    const result = evaluateOpportunity(
+      validatedFind({
+        conservativeResalePrice: undefined,
+        purchasePrice: 12,
+        productResearchRows: [],
+        soldEvidence: {
+          capturedAt: "2026-07-15T10:00:00.000Z",
+          condition: "new_sealed",
+          conservativeResalePrice: null,
+          latestSaleDate: null,
+          matchConfidence: "unknown",
+          source: "ebay-product-research",
+          status: "pending",
+          unitsSold90Days: null,
+          velocityEvidence: "unknown",
+        },
+      }),
+      defaultArbitrageSettings,
+      NOW,
+    );
+
+    expect(result.decision).toBe("REVIEW");
+    expect(result.candidateTier).toBe("C");
+    expect(result.candidateReasons.at(-1)).toBe(
+      "Treat this as a research lead, not a value claim.",
+    );
+  });
+
+  it("does not treat an unconverted foreign amount as a cheap dollar acquisition", () => {
+    const result = evaluateOpportunity(
+      validatedFind({
+        conservativeResalePrice: undefined,
+        purchasePrice: 7.99,
+        sourceCurrency: "GBP",
+        sourceDiscountPercent: null,
+        sourceOriginalPrice: null,
+        soldEvidence: {
+          capturedAt: "2026-07-15T10:00:00.000Z",
+          condition: "new_sealed",
+          conservativeResalePrice: null,
+          latestSaleDate: null,
+          matchConfidence: "unknown",
+          source: "ebay-product-research",
+          status: "pending",
+          unitsSold90Days: null,
+          velocityEvidence: "unknown",
+        },
+      }),
+      defaultArbitrageSettings,
+      NOW,
+    );
+
+    expect(result.currencyConversionRequired).toBe(true);
+    expect(result.candidateReasons.join(" ")).toContain("GBP");
+    expect(result.candidateReasons.join(" ")).not.toContain("$7.99");
+  });
+
+  it("keeps candidate-tier rank gaps absolute", () => {
+    expect(candidateTierRank("A")).toBeGreaterThan(candidateTierRank("B"));
+    expect(candidateTierRank("B")).toBeGreaterThan(candidateTierRank("C"));
+    expect(candidateTierRank("C")).toBeGreaterThan(candidateTierRank("WATCH"));
+    expect(candidateTierRank("REJECT")).toBe(0);
+  });
+
+  it("does not repackage a validated hard failure as a candidate", () => {
+    const result = evaluateOpportunity(
+      validatedFind({
+        conservativeResalePrice: 12,
+        purchasePrice: 20,
+        soldEvidence: {
+          ...validatedFind().soldEvidence,
+          conservativeResalePrice: 12,
+        },
+      }),
+      defaultArbitrageSettings,
+      NOW,
+    );
+
+    expect(result.decision).toBe("REJECT");
+    expect(result.candidateTier).toBe("REJECT");
+    expect(result.candidateScore).toBe(0);
   });
 
   it("itemizes every configured acquisition and selling cost", () => {

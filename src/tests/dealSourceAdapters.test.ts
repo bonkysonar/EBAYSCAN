@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalizeRetailDealUrl,
   extractAmazonAsin,
+  extractSlickdealsDealCards,
   extractVinylPriceDropCards,
   parseOldRedditDealPage,
   parseRedditAtomFeed,
@@ -80,6 +81,40 @@ describe("deal source adapters", () => {
     `;
     expect(extractVinylPriceDropCards(html)).toEqual([
       { detailUrl: "https://vinylpricedrop.com/deals/album-artist", title: "Artist – Album (2xLP)" },
+    ]);
+  });
+
+  it("parses role-labelled Slickdeals prices without treating shipping thresholds as list prices", () => {
+    const html = `
+      <div class="dealCardListView" data-threadid="19819023" data-store-id="1">
+        <a class="dealCardListView__imageContainer" href="/f/19819023-ignore-this-image-link"></a>
+        <a class="dealCardListView__title dealCardListView__title--underline"
+           href="/f/19819023-helluva-boss-season-1?src=SDSearchv3&amp;attrsrc=Thread%3AExpired%3AFalse"
+           title="Helluva Boss: Season 1 (Vinyl+ MP3) $9.65 + Free Shipping w/ Prime or on $35+">
+          Helluva Boss: Season 1 (Vinyl+ MP3) $9.65 + Free Shipping w/ Prime or on $35+
+        </a>
+        <span class="dealCardListView__finalPrice" title="$9">$9</span>
+        <span class="dealCardListView__listPrice" title="$13">$13</span>
+        <span class="dealCardListView__savings">25% off</span>
+        <span class="slickdealsTimestamp" title="Jul 28, 2026 8:08 PM">Jul 28, 2026</span>
+        <div class="dealCardListView__store">Amazon</div>
+      </div>
+    `;
+
+    expect(extractSlickdealsDealCards(html)).toEqual([
+      {
+        currentPrice: 9.65,
+        detailUrl:
+          "https://slickdeals.net/f/19819023-helluva-boss-season-1?src=SDSearchv3&attrsrc=Thread%3AExpired%3AFalse",
+        discountPercent: 25,
+        expired: false,
+        originalPrice: 13,
+        publishedAt: "Jul 28, 2026 8:08 PM",
+        storeName: "Amazon",
+        threadId: "19819023",
+        title:
+          "Helluva Boss: Season 1 (Vinyl+ MP3) $9.65 + Free Shipping w/ Prime or on $35+",
+      },
     ]);
   });
 

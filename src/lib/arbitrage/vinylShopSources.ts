@@ -49,6 +49,8 @@ export type RetailArbitrageSource = {
   noiseLevel: SourceNoiseLevel;
   notes: string;
   priority: SourcePriority;
+  resalePolicy?: "allowed" | "prohibited" | "unknown";
+  resalePolicyUrl?: string;
   saleLikelihood: SaleLikelihood;
   salePathHints?: string[];
   saleUrlPatterns?: string[];
@@ -446,11 +448,16 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
       sourceType: "uk_retailer",
       crawlType: domain.includes("myshopify") || baseUrl.includes("/collections/") ? "shopify-store" : "retailer",
       priority: displayName === "Zavvi" ? 3 : 1,
+      resalePolicy: id === "assai-records" ? "prohibited" : undefined,
+      resalePolicyUrl:
+        id === "assai-records" ? "https://assai.co.uk/policies/refund-policy" : undefined,
       saleLikelihood: "medium",
       ...(displayName === "Zavvi" ? strictPublicSourceRules : normalSourceRules),
       group: "UK / international retailers",
       notes:
-        displayName === "Bleep"
+        id === "assai-records"
+          ? "Excluded from automated acquisition: the retailer states that marketplace-reseller orders may not be fulfilled."
+          : displayName === "Bleep"
           ? "UK source; boost Warp, electronic and exclusive variants while accounting for landed cost."
           : "UK source; landed cost needs FX, international shipping, VAT/duty risk and damage reserve.",
       salePathHints: commonSalePathHints,
@@ -856,7 +863,9 @@ export const sourceGroups: SourceGroup[] = [
 
 export function getActiveRetailSources(): RetailArbitrageSource[] {
   const byDomain = new Map<string, RetailArbitrageSource>();
-  for (const source of retailArbitrageSourceCatalog.filter((entry) => !entry.isDiscoveryOnly).sort(compareSourcePriority)) {
+  for (const source of retailArbitrageSourceCatalog
+    .filter((entry) => !entry.isDiscoveryOnly && entry.resalePolicy !== "prohibited")
+    .sort(compareSourcePriority)) {
     if (!byDomain.has(source.domain)) byDomain.set(source.domain, source);
   }
   return [...byDomain.values()];

@@ -149,7 +149,7 @@ describe("active eBay enrichment", () => {
     expect(result.searchComplete).toBe(false);
   });
 
-  it("makes active evidence incomplete when matching listings lack trustworthy landed shipping", async () => {
+  it("keeps exact supply complete while reporting incomplete landed-price coverage", async () => {
     const profile = buildActiveSearchProfile(sourceFind())!;
     const valid = ebayItem("valid", "Artist Great Escape Vinyl LP New Sealed", 20);
     const calculated = {
@@ -195,8 +195,41 @@ describe("active eBay enrichment", () => {
     });
 
     expect(result.listings.map((listing) => listing.id)).toEqual(["valid"]);
-    expect(result.searchComplete).toBe(false);
+    expect(result.exactMatchedListingCount).toBe(4);
+    expect(result.searchComplete).toBe(true);
     expect(result.untrustedMatchedListingCount).toBe(3);
+  });
+
+  it("counts exact active supply without a destination ZIP but does not verify landed pricing", async () => {
+    const profile = buildActiveSearchProfile(sourceFind())!;
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          itemSummaries: [ebayItem("match-1", "Artist Great Escape Vinyl LP New Sealed", 20)],
+          total: 1,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await searchVariantPages("Artist Great Escape", profile, {
+      env: { EBAY_ENV: "production", EBAY_MARKETPLACE_ID: "EBAY_US" },
+      fetchImpl,
+      maxPages: 1,
+      pageLimit: 1,
+      token: "test-token",
+    });
+
+    expect(result).toMatchObject({
+      exactMatchedListingCount: 1,
+      searchComplete: true,
+      shippingDestinationVerified: false,
+    });
+    const [requestedUrl, requestInit] = fetchImpl.mock.calls[0];
+    expect(new URL(String(requestedUrl)).searchParams.get("filter")).not.toContain(
+      "deliveryPostalCode",
+    );
+    expect(new Headers(requestInit?.headers).has("X-EBAY-C-ENDUSERCTX")).toBe(false);
   });
 
   it("aborts a stalled Browse API request after the configured timeout", async () => {

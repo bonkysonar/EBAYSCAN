@@ -17,11 +17,14 @@ export type MatchedActiveListing = {
 };
 
 export type ActiveVariantResult = {
+  exactMatchedListingCount?: number;
   excludedSourceListingCount?: number;
   listings: MatchedActiveListing[];
+  matchedListingIds?: string[];
   pagesFetched: number;
   rawListingsInspected: number;
   searchComplete: boolean;
+  shippingDestinationVerified?: boolean;
   untrustedMatchedListingCount?: number;
 };
 
@@ -58,11 +61,14 @@ export function enrichActiveEntry(
   error?: string;
   excludedSourceListingCount: number;
   keyword?: string;
+  landedPriceCoverageComplete?: boolean;
+  landedPriceListingCount?: number;
   listings?: MatchedActiveListing[];
   lowest?: MatchedActiveListing;
   matchConfidence?: ArbitrageMatchConfidence;
   rawListingsInspected: number;
   searchedVariants: string[];
   searchComplete: boolean;
+  shippingDestinationVerified?: boolean;
   status: "available" | "failed" | "no_results";
 }>;

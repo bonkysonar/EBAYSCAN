@@ -96,6 +96,13 @@ export function shopifyCatalogUrls(source, page, limit = 250, options = {}) {
 export function normalizeShopifyProducts({ assessment, collectionContext = null, currency = null, origin, products = [], source }) {
   const candidates = [];
   for (const product of products) {
+    // Shopify feeds occasionally retain a retired product handle after the
+    // product row has been repurposed.  In that state the feed's title, SKU,
+    // and price describe one record while the generated purchase URL opens a
+    // completely different record.  Fail closed only when both identities are
+    // descriptive and share no meaningful token; opaque/catalog-number handles
+    // remain eligible.
+    if (shopifyHandleTitleMismatch(product.handle, product.title)) continue;
     const pricedVariants = (product.variants ?? [])
       .filter((variant) => variant.available !== false)
       .map((variant) => ({ ...variant, numericPrice: finiteNumber(variant.price) }))
@@ -240,4 +247,75 @@ function combinedVariantTitle(productTitle, variantTitle) {
   const title = String(productTitle ?? "").trim();
   if (!variantTitle || title.toLowerCase().includes(variantTitle.toLowerCase())) return title;
   return `${title} - ${variantTitle}`;
+}
+
+function shopifyHandleTitleMismatch(handle, title) {
+  const handleTokens = meaningfulIdentityTokens(handle);
+  const titleTokens = meaningfulIdentityTokens(title);
+  if (handleTokens.size < 2 || titleTokens.size < 2) return false;
+  return ![...handleTokens].some((token) => titleTokens.has(token));
+}
+
+const SHOPIFY_IDENTITY_NOISE = new Set([
+  "album",
+  "anniversary",
+  "black",
+  "blue",
+  "box",
+  "clear",
+  "coloured",
+  "colored",
+  "deluxe",
+  "edition",
+  "exclusive",
+  "gold",
+  "green",
+  "limited",
+  "marbled",
+  "marble",
+  "orange",
+  "pink",
+  "purple",
+  "record",
+  "records",
+  "red",
+  "release",
+  "remaster",
+  "remastered",
+  "reissue",
+  "sealed",
+  "silver",
+  "splatter",
+  "transparent",
+  "vinyl",
+  "white",
+  "yellow",
+]);
+
+const SHOPIFY_IDENTITY_STOP_WORDS = new Set([
+  "and",
+  "for",
+  "from",
+  "his",
+  "new",
+  "out",
+  "the",
+  "with",
+]);
+
+function meaningfulIdentityTokens(value) {
+  return new Set(
+    String(value ?? "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(
+        (token) =>
+          token.length >= 3 &&
+          !/^\d{4}$/.test(token) &&
+          !SHOPIFY_IDENTITY_NOISE.has(token) &&
+          !SHOPIFY_IDENTITY_STOP_WORDS.has(token),
+      ),
+  );
 }
