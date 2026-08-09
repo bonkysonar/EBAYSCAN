@@ -21,13 +21,14 @@ EBAY_ENV=production
 EBAY_CLIENT_ID=
 EBAY_CLIENT_SECRET=
 EBAY_MARKETPLACE_ID=EBAY_US
+EBAY_DELIVERY_POSTAL_CODE=
 DISCOGS_USER_TOKEN=
 EBAY_USER_REFRESH_TOKEN=
 BLOB_READ_WRITE_TOKEN=
 ARBITRAGE_UPLOAD_TOKEN=
 ```
 
-`DISCOGS_USER_TOKEN` is optional for Discogs release data. `EBAY_USER_REFRESH_TOKEN` is optional for the read-only Seller Price Analyzer and lets the server mint and cache short-lived seller user tokens automatically. `EBAY_USER_ACCESS_TOKEN` remains supported only as a temporary fallback. eBay client variables are required for real scanner lookup and for seller-token refresh.
+`EBAY_DELIVERY_POSTAL_CODE` is optional for discovery and exact active-supply counts but required for destination-specific landed shipping and verified eBay acquisition offers. `DISCOGS_USER_TOKEN` is optional for Discogs release data. `EBAY_USER_REFRESH_TOKEN` is optional for the read-only Seller Price Analyzer and lets the server mint and cache short-lived seller user tokens automatically. `EBAY_USER_ACCESS_TOKEN` remains supported only as a temporary fallback. eBay client variables are required for real scanner lookup and for seller-token refresh.
 
 `BLOB_READ_WRITE_TOKEN` is required for hosted Retail Arbitrage uploads and should be provisioned by a Vercel Blob store attached to the project. `ARBITRAGE_UPLOAD_TOKEN` is a shared secret that protects `POST /api/arbitrage/upload`; use the same value in the daily automation environment.
 

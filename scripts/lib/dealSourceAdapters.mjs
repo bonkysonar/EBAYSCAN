@@ -72,6 +72,71 @@ export function extractVinylPriceDropCards(html, pageUrl = "https://vinylpricedr
   return dedupeBy(cards, (card) => card.detailUrl);
 }
 
+export function extractSlickdealsDealCards(
+  html,
+  pageUrl = "https://slickdeals.net/search",
+) {
+  const source = String(html ?? "");
+  const cardStarts = [...source.matchAll(/<div\b([^>]*)>/gi)]
+    .filter((match) => hasClassToken(match[1], "dealCardListView") && attribute(match[1], "data-threadid"))
+    .map((match) => ({ attributes: match[1], index: match.index ?? 0 }));
+  const cards = [];
+
+  for (const [index, start] of cardStarts.entries()) {
+    const block = source.slice(start.index, cardStarts[index + 1]?.index ?? source.length);
+    const threadId = attribute(start.attributes, "data-threadid").trim();
+    const titleAnchor = [...block.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)].find((match) => {
+      if (!hasClassToken(match[1], "dealCardListView__title")) return false;
+      const detailUrl = normalizeHttpUrl(attribute(match[1], "href"), pageUrl);
+      return slickdealsThreadId(detailUrl) === threadId;
+    });
+    if (!titleAnchor) continue;
+
+    const detailUrl = normalizeHttpUrl(attribute(titleAnchor[1], "href"), pageUrl);
+    const title = cleanText(attribute(titleAnchor[1], "title") || stripTags(titleAnchor[2]));
+    const semanticCurrentPrice = firstPrice(
+      classValue(block, "dealCardListView__finalPrice", { preferTitle: true }),
+    );
+    const titleCurrentPrice = firstPrice(title);
+    const currentPrice =
+      semanticCurrentPrice !== null &&
+      titleCurrentPrice !== null &&
+      Math.abs(titleCurrentPrice - semanticCurrentPrice) < 1
+        ? titleCurrentPrice
+        : semanticCurrentPrice ?? titleCurrentPrice;
+    if (!detailUrl || !title || currentPrice === null) continue;
+
+    const parsedOriginalPrice = firstPrice(
+      classValue(block, "dealCardListView__listPrice", { preferTitle: true }),
+    );
+    const originalPrice = parsedOriginalPrice !== null && parsedOriginalPrice > currentPrice
+      ? parsedOriginalPrice
+      : null;
+    const savingsText = classValue(block, "dealCardListView__savings");
+    const advertisedDiscount = Number(savingsText.match(/\b([0-9]{1,2})\s*%\s*off\b/i)?.[1]);
+    const publishedText = classValue(block, "slickdealsTimestamp", { preferTitle: true });
+
+    cards.push({
+      currentPrice,
+      detailUrl,
+      discountPercent:
+        Number.isFinite(advertisedDiscount) && advertisedDiscount > 0 && advertisedDiscount < 100
+          ? advertisedDiscount
+          : originalPrice !== null
+            ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100)
+            : null,
+      expired: /(?:[?&]|%3A)Expired(?::|%3A)(?:True|true)\b/i.test(detailUrl) || /\bexpired\b/i.test(block),
+      originalPrice,
+      publishedAt: publishedText || null,
+      storeName: classValue(block, "dealCardListView__store") || null,
+      threadId,
+      title,
+    });
+  }
+
+  return dedupeBy(cards, (card) => card.threadId);
+}
+
 export function parseVinylPriceDropDetail(html, detailUrl, fallbackTitle = "") {
   const source = String(html ?? "");
   const h1Match = source.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
@@ -174,6 +239,32 @@ function isAmazonHost(hostname) {
 
 function normalizedAmazonHost(hostname) {
   return `www.${String(hostname ?? "").toLowerCase().replace(/^www\./, "")}`;
+}
+
+function slickdealsThreadId(value) {
+  if (!value) return null;
+  try {
+    return new URL(value).pathname.match(/^\/f\/(\d+)(?:-|\/|$)/i)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function hasClassToken(attributes, className) {
+  return attribute(attributes, "class").split(/\s+/).includes(className);
+}
+
+function classValue(block, className, { preferTitle = false } = {}) {
+  const source = String(block ?? "");
+  for (const match of source.matchAll(/<([a-z][a-z0-9]*)\b([^>]*)>/gi)) {
+    if (!hasClassToken(match[2], className)) continue;
+    const contentStart = (match.index ?? 0) + match[0].length;
+    const contentEnd = source.toLowerCase().indexOf(`</${match[1].toLowerCase()}`, contentStart);
+    const title = cleanText(attribute(match[2], "title"));
+    const content = contentEnd < 0 ? "" : cleanText(stripTags(source.slice(contentStart, contentEnd)));
+    return preferTitle ? title || content : content || title;
+  }
+  return "";
 }
 
 function allPrices(value) {

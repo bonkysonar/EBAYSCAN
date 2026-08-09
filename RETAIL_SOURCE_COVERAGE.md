@@ -1,6 +1,6 @@
 # Retail source coverage
 
-Last bounded live audit: 2026-07-22 from the local scanner host. A successful request below means the retailer exposed a public, read-only catalog response at that moment; it is not a promise that the retailer will keep the endpoint available.
+Last broad bounded live audit: 2026-07-22 from the local scanner host, with a targeted candidate-path recheck on 2026-08-05. A successful request below means the retailer exposed a public, read-only catalog response at that moment; it is not a promise that the retailer will keep the endpoint available or permit resale acquisition.
 
 ## Structured direct-retailer coverage
 
@@ -13,7 +13,7 @@ The retail scanner can paginate Shopify `products.json` collection feeds. The fo
 | EMI Store | `emirecords.com/collections/vinyl` | 250 / 250 |
 | Verve Store | `store.ververecords.com/collections/9-98-up-vinyl-collection` | 66 / 58 |
 | Rarewaves | `rarewaves.com/collections/vinyl` | 250 / 250 |
-| Assai Records | `assai.co.uk/collections/a-z-vinyl-offers` | 250 / 250 |
+| Assai Records (coverage only; excluded from acquisition) | `assai.co.uk/collections/a-z-vinyl-offers` | 250 / 250 |
 | Plaid Room Records | `plaidroomrecords.com/collections/discounted` | 250 / 250 |
 | Light in the Attic | `lightintheattic.net/collections/sale` | 43 / 43 |
 | Mondo | `mondoshop.com/collections/new-vinyl-records` | 41 / 15 |
@@ -36,6 +36,7 @@ These counts are discovery inputs, not purchase recommendations. A product must 
 
 ## Known external limitations
 
+- Assai Records exposes a catalog but its official refund policy says marketplace-reseller orders may not be fulfilled and may incur an administration fee. It is excluded from active acquisition targets while that policy remains in force.
 - Target's public category page does not currently expose a usable product catalog to the generic parser. The scanner must use an approved Target partner/affiliate data feed if access is granted; it must not call Target's private storefront APIs.
 - Walmart returned HTTP 412 to bounded catalog requests from this host during the audit. That is reported as blocked/unknown coverage. The scanner must not evade the block.
 - Rough Trade's corrected canonical sale route is `roughtrade.com/browse/sale`, but this host received an access challenge during the audit. A challenge is unknown coverage, not evidence that no sale exists.

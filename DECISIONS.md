@@ -140,7 +140,7 @@ Artist identity is a separate evidence requirement. A title and edition resembla
 
 Retail arbitrage no longer applies one minimum-profit rule to every record. It evaluates Fast Turn, Balanced, and Slower / Higher Margin profiles. A quick seller may qualify with a smaller dollar margin, while a slower seller must compensate with materially stronger net profit and ROI. Exact evidence, matching, freshness, and supply constraints are not relaxed by the cheaper profile.
 
-Priority is a separate 100-point model covering demand durability, economics, competition/supply, evergreen prior, and evidence quality. The evergreen component can use this account's artist-level sales, retailer best-seller/customer-pick signals, review depth, identifiers, and explicit user preference, but it remains a weak prior. It cannot convert sparse aggregate Product Research or crowded active supply into real velocity.
+Priority is a separate 100-point model covering item-level demand durability, economics, competition/supply, retailer product signals, and evidence quality. Artist-level history and explicit artist preference are inclusion/review signals only; they do not claim value or change candidate/economic ordering. They cannot convert sparse aggregate Product Research or crowded active supply into real velocity.
 
 The buyer UI presents all three options with their thresholds and reasons, defaults to the priority-sorted active queue, and accepts explicit negative feedback such as Not for me, Too slow, and Margin too thin.
 
@@ -206,3 +206,12 @@ The daily automation runs the source scan, optional active enrichment, find-ID r
 
 The automation must not modify scanner source code for individual titles, publish drafts, purchase products, submit retailer forms, mutate eBay listings, or overwrite browser feedback.
 
+## 2026-08-05: Candidate-first Retail Arbitrage
+
+Retail Arbitrage now leads with A/B/C candidate strength instead of a wall of canonical `REVIEW` decisions. Tier A is reserved for fully verified `BUY`; Tier B requires useful product-level demand plus deal/economics signals but may retain an explicit proof gap; Tier C is a source-linked research lead and never a value claim. Candidate tier and score control the default queue and ordering, while the canonical decision remains a separate evidence badge and filter.
+
+Every researchable candidate receives a clean exact-edition, barcode, then base-release ladder for signed-in three-year Seller Hub Product Research and public eBay Sold/Completed results. Links are user-opened; the scanner does not scrape or persist the public sold page. The research planner covers all visible candidates unless an operator deliberately supplies `--max`.
+
+Active eBay enrichment may collect exact listing identities and supply counts without a destination ZIP. Destination-specific landed prices remain unverified and cannot authorize `BUY` or cause a below-cost hard rejection. A child run in which every query fails is reported as failed, not enriched.
+
+Shopify products with descriptive handle/title identities that share no meaningful token fail closed, preventing a stale product URL from being paired with another record's title and SKU. Retailers whose published policy prohibits marketplace resellers are excluded from automated acquisition; Assai Records is the first explicit policy exclusion.

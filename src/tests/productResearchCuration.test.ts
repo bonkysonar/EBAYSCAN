@@ -18,16 +18,43 @@ const find = {
 
 describe("generic Product Research curation", () => {
   it("builds a stable find-id research plan without a title allowlist", () => {
-    expect(buildProductResearchPlan([find])).toEqual([
-      expect.objectContaining({
-        findId: "find-mother-love-bone",
-        variants: [
-          expect.objectContaining({
-            query: "Mother Love Bone Shine",
-          }),
-        ],
-      }),
-    ]);
+    const [entry] = buildProductResearchPlan([find]);
+
+    expect(entry).toMatchObject({
+      findId: "find-mother-love-bone",
+      variants: [
+        {
+          identitySignals: ["180g"],
+          kind: "exact",
+          query: "Mother Love Bone Shine 180g",
+        },
+        {
+          identitySignals: [],
+          kind: "base",
+          query: "Mother Love Bone Shine",
+        },
+      ],
+    });
+    for (const variant of entry.variants) {
+      const productUrl = new URL(variant.url);
+      const publicUrl = new URL(variant.publicSoldUrl);
+      expect(productUrl.searchParams.get("keywords")).toBe(variant.query);
+      expect(publicUrl.searchParams.get("_nkw")).toBe(variant.query);
+      expect(publicUrl.searchParams.get("LH_Complete")).toBe("1");
+      expect(publicUrl.searchParams.get("LH_Sold")).toBe("1");
+    }
+  });
+
+  it("plans every visible candidate unless an explicit cap is requested", () => {
+    const finds = Array.from({ length: 45 }, (_, index) => ({
+      ...find,
+      id: `find-${index}`,
+      sourceListingTitle: `Research Artist ${index} - Research Album ${index} Vinyl LP`,
+      title: `Research Album ${index}`,
+    }));
+
+    expect(buildProductResearchPlan(finds)).toHaveLength(45);
+    expect(buildProductResearchPlan(finds, { maxEntries: 10 })).toHaveLength(10);
   });
 
   it("removes numeric LP format text from research queries", () => {

@@ -6,7 +6,7 @@ const WORKSPACE = process.cwd();
 const FINDS_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
 const requestedPath = process.argv[2];
 const maxEntriesArgument = process.argv.find((argument) => argument.startsWith("--max="));
-const maxEntries = maxEntriesArgument ? Number(maxEntriesArgument.split("=")[1]) : 40;
+const maxEntries = maxEntriesArgument ? Number(maxEntriesArgument.split("=")[1]) : undefined;
 const sourcePath = requestedPath && !requestedPath.startsWith("--") ? join(WORKSPACE, requestedPath) : latestRawScanPath();
 
 if (!existsSync(sourcePath)) throw new Error(`Arbitrage source payload not found: ${sourcePath}`);

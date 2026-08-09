@@ -20,6 +20,12 @@ The app is deployed on Vercel from `main`:
 
 See `HOSTING.md` for required environment variables and deployment notes.
 
+## Delivery Ownership and Purchase Boundary
+
+When the repository owner asks Codex to implement, merge, publish, or deploy a Record Scanner change, Codex owns the complete routine delivery workflow. That includes isolating the requested changes from unrelated work, using the configured Git, GitHub, and Vercel credentials or connected tools, testing, staging, committing, pushing, merging into `main`, deploying production, and verifying the live result. Codex must not hand routine command-line or authentication work back to the owner; it must first exhaust the available credential manager, authenticated CLIs, connected services, and clean-worktree options. Owner involvement is reserved for an external service that truly requires an inaccessible credential or interactive approval.
+
+Record Scanner and Codex are discovery and decision-support tools only. They must never bid, purchase, submit checkout, initiate payment, or otherwise commit to acquiring inventory. The repository owner alone decides what to buy and completes every purchase.
+
 ## Hosted Retail Arbitrage Uploads
 
 The Retail Arbitrage and Site-wide Sales pages load the newest daily scan from `GET /api/arbitrage/latest`. In production, that endpoint reads from Vercel Blob when `BLOB_READ_WRITE_TOKEN` is configured, so the Vercel site stays usable even when local dev servers are closed.
@@ -39,6 +45,8 @@ ARBITRAGE_UPLOAD_TOKEN=same_shared_secret_as_production
 ```
 
 The scanner writes a timestamped draft in `exports/arbitrage-finds/`; drafts are never publishable. The daily workflow builds the Product Research plan, curates one final artifact, validates that exact file, and uploads it once. The server rejects low-coverage or targeted/partial new runs instead of replacing the latest trustworthy publication.
+
+Retail Arbitrage is candidate-first. Its default queue shows source-linked Tier A/B/C records even when no row clears every automatic `BUY` gate: A is fully verified, B is promising product-level evidence with at least one proof gap, and C is a research lead rather than a value claim. Each selected record has both a three-year Seller Hub Product Research link and a public eBay Sold/Completed fallback.
 
 Useful commands:
 
@@ -71,7 +79,7 @@ EBAY_DELIVERY_POSTAL_CODE=your_destination_zip_here
 
 Do not commit `.env.local`. For hosted Vercel, set the same values in the project environment variable dashboard. The client secret is used only server-side and is not bundled into browser code.
 
-The destination ZIP is required for verified retail-acquisition evidence because shipping is part of landed cost. Without it, official eBay purchase results remain visible as discovery leads, but the canonical evaluator will not promote them to `BUY`.
+The destination ZIP is required for destination-specific landed shipping and verified eBay acquisition evidence. Without it, exact active-listing identity and supply counts can still be collected, but landed prices are labeled destination-unverified and eBay purchase results remain discovery leads that cannot become `BUY`.
 
 The server mints and caches short-lived eBay application tokens automatically. If eBay rejects a real request, normal searches show a YELLOW no-results warning instead of misleading mock matches. Only explicit demo inputs use mock fallback.
 

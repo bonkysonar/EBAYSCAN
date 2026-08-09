@@ -41,6 +41,10 @@ Walmart has a dedicated structured-data adapter. When Walmart permits access, it
 
 `EBAY_DELIVERY_POSTAL_CODE` is required before an eBay acquisition offer can be marked `official_api`, because the landed shipping quote must apply to a real destination. Without it—or when item-detail identity remains incomplete—the result stays a `discovery_lead` and cannot become an automatic `BUY`.
 
+Active-supply enrichment does not fail wholesale when the postal code is absent. It can still collect and deduplicate exact matched listing identities and counts. Shipping and landed prices are explicitly marked destination-unverified, so they cannot trigger a below-cost hard failure or authorize a purchase until a real destination is configured.
+
+Retailers with a published no-reseller policy are excluded from automated acquisition. Assai Records is currently inactive for viable-candidate discovery because its official refund policy says marketplace-reseller orders may not be fulfilled; the policy URL and exclusion reason remain in the source catalog for audit.
+
 Amazon is not claimed as a direct catalog while approved Amazon Creators API credentials are absent. A discovery feed can still surface an Amazon product URL; those results retain both identities and display as, for example, `Amazon via Vinyl Price Drop`.
 
 ## Product Discovery
@@ -49,6 +53,8 @@ The scanner first rejects obvious navigation, promotion-only, non-music, non-vin
 
 High-noise marketplace sources require explicit vinyl/LP evidence in the product itself. ISBN/book links, digital-only products, turntables/record players, apparel, merch, and conflicting physical formats are rejected even when surrounding page text mentions vinyl. Broad volume/BOGO collection offers remain sale-campaign leads unless the scanner can normalize a real per-record price; they do not become product candidates by themselves.
 
+Slickdeals search cards use a source-specific, role-labelled parser for the thread, current price, list price, advertised discount, date, and retailer. Shipping minimums such as `free shipping on $35+` are excluded from price evidence. A new U.S. explicit-vinyl thread at $20 or less can remain visible as a Tier C research lead even when sold evidence is still missing; that visibility never promotes it to an automatic value claim.
+
 General-retailer price cards are normalized before discount math. Per-unit values such as `$26.68/lb` or `$34.43/ea`, shipping amounts, savings callouts, and coupons cannot become the record's purchase price. Escaped HTML entities and query separators are decoded, and retailer taxonomy such as `Music & Performance` is removed from artist/title and eBay search text. A high-confidence record with a genuine compare-at markdown can enter an exploratory validation slot below a noisy source's main sale threshold; small markdowns still stay out of sale-radar.
 
 Shopify sources use paginated JSON catalogs rather than silently stopping after the first 250 products:
@@ -56,6 +62,7 @@ Shopify sources use paginated JSON catalogs rather than silently stopping after 
 - Collection context is queried when the configured URL identifies a collection.
 - Pagination continues up to `--shopifyMaxPages`.
 - Only available variants can become candidates.
+- A descriptive Shopify handle and product title must share meaningful identity text. A repurposed or stale handle that would open a different record fails closed; opaque catalog-number handles remain allowed.
 - Each available variant is assessed separately, so a mixed CD/LP product cannot use the CD price for the LP. Explicit variant formats such as `2LP`, `2xLP`, and `2-LP` override contradictory product-level CD taxonomy throughout ingestion, active-supply enrichment, publication filtering, and display.
 - Price, compare-at price, currency, SKU, barcode, variant identity, inventory quantity, and collection context are retained when present.
 - All observed collection memberships are retained. A fixed percentage from a verified retailer page can change the candidate price only when it is truly sitewide/vinyl-wide or the product was observed in that exact sale collection. `Up to`, BOGO, and already-marked-down offers are never uniformly discounted.
@@ -63,6 +70,18 @@ Shopify sources use paginated JSON catalogs rather than silently stopping after 
 Candidates from all sources are scored together before the daily limit is applied. Ranking considers record confidence, source quality, discount, sold evidence, identifiers, and deal context. The research pool and final post-evaluation queue both use source-diverse selection. Strong global candidates are protected, each eligible source receives representation when capacity permits, and source/family caps prevent one high-volume feed from consuming the queue. The payload retains exclusion reasons, largest-source share, represented-source count, and concentration HHI.
 
 The default sale-radar run caps the final candidate queue; `--mode=comprehensive` intentionally retains the broader set.
+
+## Candidate Queue
+
+Candidate strength is the primary output; the canonical decision remains a separate evidence status:
+
+- `Tier A · verified`: the canonical decision is `BUY`; exact fresh demand, supply, identity, offer, and full-ledger economics all pass.
+- `Tier B · promising`: product-level demand and deal/economics signals are useful, but at least one automatic evidence gate remains incomplete. Aggregate Product Research can support B, never A.
+- `Tier C · research`: a credible source-linked record offer that still needs sold-market confirmation. This is explicitly not a market-value claim.
+- `Price watch`: useful evidence exists, but the source price is not yet attractive enough.
+- `Rejected`: validated evidence or an explicit deterministic preference rules the offer out.
+
+The Retail Arbitrage page defaults to A/B/C candidates, sorts by tier and candidate score before the secondary evidence score, and shows candidate reasons plus an immediate retailer link. `BUY`/`REVIEW`/`WATCH`/`REJECT` remain available as evidence filters and badges instead of dominating the queue.
 
 ## Canonical Buy Decision
 
@@ -91,7 +110,7 @@ An automatic `BUY` requires all of these:
 
 Default evidence gates include at least 3 units sold in 90 days, 1 sale per month, a sale within 60 days for the balanced profile, 20% sell-through, market evidence no older than 30 days, and a retail offer no older than 2 days. Exact supply is converted into estimated days-to-sale and tested against each profile's inventory horizon. The default ledger reserves `$5` for inbound shipping unless known free shipping or pickup is explicitly recorded as zero. Unknown source currency withholds USD profit/ROI, and a foreign-currency price requires a positive, fresh dated conversion before it can clear economics.
 
-Priority is scored separately across demand durability, economics, competition/supply, evergreen strength, and evidence quality. Artist-level results from this account's own order history, retailer best-seller/customer-pick signals, reviews, identifiers, and explicit user preference are weak evergreen priors; they cannot rescue weak item-level velocity or crowded supply.
+Priority is scored separately across item-level demand durability, economics, competition/supply, retailer product signals, and evidence quality. Artist-level results and artist preferences are inclusion/review context only; they do not claim value, change candidate/economic rank, or rescue weak item-level velocity or crowded supply.
 
 Decision meanings:
 
@@ -164,7 +183,7 @@ The builder allocates order-level shipping, preserves transaction and unit count
 
 ## eBay Product Research
 
-Seller Hub Product Research remains useful for sold-price and repeat-row validation. Research links target Vinyl Records (`categoryId=176985`), New (`conditionId=1000`), the Sold tab, and normalized query variants.
+Seller Hub Product Research remains useful for sold-price and repeat-row validation. Research links target Vinyl Records (`categoryId=176985`), New (`conditionId=1000`), the Sold tab, a three-year window, and normalized exact-edition, barcode, then base-release query variants. Every selected record also receives a public eBay Sold/Completed link as a recent-view fallback; both are manual browser handoffs and neither public page content nor URL is persisted as evidence.
 
 Product Research rows are aggregate rows. Even when they show a total sold quantity and a latest-sale date, they do not reveal how those units were distributed across the last 30, 90, and 365 days. Aggregate Product Research alone therefore cannot prove velocity or create a `BUY`.
 
@@ -175,7 +194,7 @@ node scripts/prepareArbitrageResearchPlan.mjs
 node scripts/prepareArbitrageResearchPlan.mjs exports\arbitrage-finds\<scan-file>.json --max=40
 ```
 
-The generated plan includes the find ID, normalized query variants, research URL, source identity, and edition terms. The curation step matches returned rows to the record, rejects bundles, merch, damaged copies, used copies, and conflicting editions, then stores the usable evidence by find ID. There is no title-by-title allowlist in the curator.
+Without `--max`, the generated plan covers every researchable candidate; a cap is now an explicit operator choice rather than a silent first-40 default. The plan includes the find ID, normalized query variants, Seller Hub and public sold URLs, source identity, and edition terms. The curation step matches returned rows to the record, rejects bundles, merch, damaged copies, used copies, and conflicting editions, then stores the usable evidence by find ID. There is no title-by-title allowlist in the curator.
 
 For soundtracks, the plan can try the core title, `Soundtrack`, and `OST` variants. A pending, failed, or no-row search remains explicitly labeled.
 

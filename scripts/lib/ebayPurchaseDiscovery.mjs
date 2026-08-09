@@ -803,6 +803,8 @@ function assessRecordTitle(title) {
     /\b(?:sleeve|jacket|cover)\s+only\b/,
     /\b(?:record|vinyl)\s+(?:storage|case|holder|stand|display|frame|rack|shelf|coaster|clock)\b/,
     /\b(?:lot\s+of|job\s+lot|record\s+lot|vinyl\s+lot|record\s+collection|vinyl\s+collection|mystery\s+box|random\s+bundle)\b/,
+    /\b(?:mini\s+brands?|miniature\s+records?|toy\s+records?|plush(?:ie)?|stuffed\s+(?:animal|bear|toy)|headbands?|oven\s+mitt)\b/,
+    /\b(?:you\s+(?:pick|choose)|choose\s+(?:one|your)|pick\s+(?:one|your)|your\s+choice|select\s+(?:one|title))\b/,
   ];
   if (hardNoise.some((pattern) => pattern.test(normalized))) return { accepted: false, reason: "non_record_title" };
 

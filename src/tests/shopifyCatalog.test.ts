@@ -297,6 +297,62 @@ describe("Shopify retail catalog ingestion", () => {
     });
   });
 
+  it("rejects a repurposed Shopify row whose descriptive handle opens another record", () => {
+    const result = normalizeShopifyProducts({
+      assessment: assessRecordCandidate,
+      collectionContext: "a-z-vinyl-offers",
+      currency: "GBP",
+      origin: "https://assai.co.uk",
+      products: [
+        {
+          handle: "ronnie-wood-his-wild-five-mad-lad-vinyl-lp-box-set-new-out-15-11-19",
+          product_type: "Vinyl",
+          title: "Hawthorne Heights - Lost Frequencies Vinyl LP Album New 2019",
+          variants: [
+            {
+              available: true,
+              compare_at_price: "24.99",
+              id: 31070385242171,
+              price: "7.99",
+              sku: "PNE2551",
+            },
+          ],
+        },
+      ],
+      source: { id: "assai-records", name: "Assai Records", priority: 1 },
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it("keeps normal title handles and opaque Shopify handles", () => {
+    const result = normalizeShopifyProducts({
+      assessment: assessRecordCandidate,
+      currency: "USD",
+      origin: "https://label.example",
+      products: [
+        {
+          handle: "artist-album",
+          product_type: "Vinyl",
+          title: "Artist - Album (Blue Vinyl LP)",
+          variants: [{ available: true, id: 1, price: "12.00" }],
+        },
+        {
+          handle: "pne2551",
+          product_type: "Vinyl",
+          title: "Another Artist - Another Record Vinyl LP",
+          variants: [{ available: true, id: 2, price: "13.00" }],
+        },
+      ],
+      source: { id: "label", name: "Vinyl Label", priority: 1 },
+    });
+
+    expect(result.map((item) => item.productUrl)).toEqual([
+      "https://label.example/products/artist-album?variant=1",
+      "https://label.example/products/pne2551?variant=2",
+    ]);
+  });
+
   it("extracts the storefront currency when the JSON feed omits it", () => {
     expect(extractShopifyCurrency(['<script>Shopify.currency.active = "CAD";</script>'])).toBe("CAD");
   });

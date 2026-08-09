@@ -1,4 +1,4 @@
-export const EVALUATION_VERSION = 6;
+export const EVALUATION_VERSION = 7;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -58,6 +58,9 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
       ...find,
       allInCost: 0,
       cashReturnPer30Days: null,
+      candidateReasons: ["This is a broad sale alert, not an individual record candidate."],
+      candidateScore: 0,
+      candidateTier: "REJECT",
       costLedger: buildCostLedger(
         0,
         null,
@@ -99,7 +102,10 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
   const now = validDate(nowInput) ?? new Date();
   const sold = canonicalSoldEvidence(find, now);
   const active = canonicalActiveEvidence(find);
-  const lowestActiveMarketPrice = finitePositive(find.lowestActivePrice);
+  const lowestActiveMarketPrice =
+    find.lowestActivePriceDestinationVerified === false
+      ? null
+      : finitePositive(find.lowestActivePrice);
   const resalePrice = canonicalResalePrice(find);
   const sourceCurrency =
     normalizeCurrency(find.sourceCurrency) ?? defaultCurrencyForCountry(find.sourceCountry);
@@ -316,11 +322,25 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     soldEvidenceAge,
     strategyOptions,
   });
+  const candidateAssessment = assessCandidateOpportunity({
+    ...find,
+    decision,
+    exactActiveListingCount: active.exactCount,
+    expectedNetProfit: costLedger.expectedNetProfit,
+    gates,
+    priorityScore: priority.score,
+    reasonCodes,
+    recommendedMaxPurchasePrice,
+    roiRatio: costLedger.roiRatio,
+    soldUnits90Days: sold.units90,
+    status: decision,
+  });
   return {
     ...find,
     activeSupplyMonths,
     allInCost: costLedger.totalCost,
     cashReturnPer30Days,
+    ...candidateAssessment,
     conservativeResalePrice: resalePrice,
     costLedger,
     currencyConversionRequired,
@@ -356,6 +376,224 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     status: decision,
     strategyOptions,
   };
+}
+
+const CANDIDATE_HARD_REJECT_REASONS = new Set([
+  "ACTIVE_MARKET_BELOW_BUY_COST",
+  "ECONOMICS_HARD_FAIL",
+  "SUPPLY_HARD_FAIL",
+  "USER_AVOID_PREFERENCE",
+]);
+
+/**
+ * Ranks credible offers for human research without weakening the canonical BUY
+ * decision. Product-level demand and known economics drive the higher tiers;
+ * artist popularity is intentionally excluded.
+ */
+export function assessCandidateOpportunity(find) {
+  const decision = String(find.decision ?? find.status ?? "REVIEW").toUpperCase();
+  const reasonCodes = new Set(Array.isArray(find.reasonCodes) ? find.reasonCodes : []);
+  const candidateReasons = [];
+
+  if (
+    decision === "REJECT" ||
+    [...CANDIDATE_HARD_REJECT_REASONS].some((reason) => reasonCodes.has(reason))
+  ) {
+    return {
+      candidateReasons: ["Validated evidence or an explicit preference rules this offer out."],
+      candidateScore: 0,
+      candidateTier: "REJECT",
+    };
+  }
+
+  let score = 0;
+  let dealSignal = false;
+  let economicsSignal = false;
+  let productDemandSignal = false;
+
+  const sourceCurrency = normalizeCurrency(find.sourceCurrency);
+  const sourcePurchasePrice = finiteNonNegative(find.purchasePrice);
+  const convertedPurchasePrice = finiteNonNegative(find.purchasePriceUsd);
+  const purchasePrice =
+    sourceCurrency === "USD"
+      ? sourcePurchasePrice
+      : find.currencyConversionRequired === false
+        ? convertedPurchasePrice
+        : null;
+  const originalPrice = finitePositive(find.sourceOriginalPrice ?? find.listPrice);
+  const explicitDiscount = finiteNonNegative(find.sourceDiscountPercent);
+  const discountPercent =
+    explicitDiscount ??
+    (purchasePrice !== null && originalPrice !== null && originalPrice > purchasePrice
+      ? ((originalPrice - purchasePrice) / originalPrice) * 100
+      : 0);
+  if (discountPercent >= 50) score += 18;
+  else if (discountPercent >= 35) score += 14;
+  else if (discountPercent >= 25) score += 10;
+  else if (discountPercent >= 15) score += 5;
+  if (discountPercent >= 25) {
+    dealSignal = true;
+    candidateReasons.push(`${Math.round(discountPercent)}% below the source reference price.`);
+  }
+
+  if (purchasePrice !== null) {
+    if (purchasePrice <= 10) score += 8;
+    else if (purchasePrice <= 15) score += 6;
+    else if (purchasePrice <= 20) score += 3;
+    if (purchasePrice <= 15) {
+      dealSignal = true;
+      candidateReasons.push(`Low acquisition price at ${money(purchasePrice)}.`);
+    }
+  } else if (sourcePurchasePrice !== null && sourceCurrency && sourceCurrency !== "USD") {
+    candidateReasons.push(
+      `${sourceMoney(sourcePurchasePrice, sourceCurrency)} source offer; a fresh USD conversion is still needed.`,
+    );
+  }
+
+  const expectedNetProfit = finiteNumber(find.expectedNetProfit);
+  const roiRatio = finiteNumber(find.roiRatio);
+  if (expectedNetProfit !== null) {
+    if (expectedNetProfit >= 12) score += 14;
+    else if (expectedNetProfit >= 7) score += 11;
+    else if (expectedNetProfit >= 4) score += 8;
+    else if (expectedNetProfit > 0) score += 2;
+    else score -= 20;
+  }
+  if (roiRatio !== null) {
+    if (roiRatio >= 0.5) score += 14;
+    else if (roiRatio >= 0.3) score += 11;
+    else if (roiRatio >= 0.2) score += 8;
+    else if (roiRatio > 0) score += 2;
+    else score -= 20;
+  }
+  if (
+    expectedNetProfit !== null &&
+    roiRatio !== null &&
+    expectedNetProfit >= 4 &&
+    roiRatio >= 0.2
+  ) {
+    economicsSignal = true;
+    dealSignal = true;
+    candidateReasons.push(
+      `Known evidence supports ${money(expectedNetProfit)} net and ${percentText(roiRatio)} ROI.`,
+    );
+  }
+
+  const soldUnits90Days = finiteNonNegative(find.soldUnits90Days);
+  if (find.gates?.soldEvidence === true && soldUnits90Days !== null) {
+    if (soldUnits90Days >= 10) score += 22;
+    else if (soldUnits90Days >= 3) score += 17;
+    else if (soldUnits90Days >= 1) score += 10;
+    if (soldUnits90Days > 0) {
+      productDemandSignal = true;
+      candidateReasons.push(`${Math.round(soldUnits90Days)} exact units sold in the last 90 days.`);
+    }
+  }
+
+  const aggregateSoldUnits = aggregateAcceptedResearchUnits(find);
+  if (!productDemandSignal && aggregateSoldUnits > 0) {
+    if (aggregateSoldUnits >= 20) score += 12;
+    else if (aggregateSoldUnits >= 5) score += 8;
+    else score += 4;
+    productDemandSignal = true;
+    candidateReasons.push(
+      `${aggregateSoldUnits} condition-matched Product Research units support demand; timing still needs confirmation.`,
+    );
+  }
+
+  const exactActiveCount = finiteNonNegative(find.exactActiveListingCount);
+  if (find.gates?.activeEvidence === true && exactActiveCount !== null) {
+    if (exactActiveCount <= 3) score += 12;
+    else if (exactActiveCount <= 10) score += 8;
+    else if (exactActiveCount <= 25) score += 3;
+    else if (exactActiveCount > 50) score -= 12;
+    if (exactActiveCount <= 10) {
+      candidateReasons.push(`${Math.round(exactActiveCount)} exact active listings.`);
+    }
+  }
+
+  const verification = String(find.purchaseOfferVerification ?? "").toLowerCase();
+  if (verification === "direct_retailer" || verification === "official_api") {
+    score += 7;
+    candidateReasons.push("Offer came directly from the retailer or an official marketplace API.");
+  } else if (verification === "campaign_advertised") {
+    score += 3;
+  } else if (verification === "discovery_lead") {
+    score -= 4;
+  }
+  if (find.gates?.offerFreshness === true) score += 5;
+  if (find.barcode) score += 5;
+  else if (find.sku) score += 2;
+
+  if (decision === "BUY") {
+    return {
+      candidateReasons: ["All automatic evidence gates passed.", ...candidateReasons],
+      candidateScore: Math.max(90, clamp(Math.round(score), 0, 100)),
+      candidateTier: "A",
+    };
+  }
+  if (decision === "WATCH") {
+    return {
+      candidateReasons: candidateReasons.length
+        ? candidateReasons
+        : ["The record has useful evidence, but the current source price needs to improve."],
+      candidateScore: clamp(Math.round(score), 0, 100),
+      candidateTier: "WATCH",
+    };
+  }
+
+  const candidateScore = clamp(Math.round(score), 0, 100);
+  // Tier A is reserved for the canonical BUY decision above.  A REVIEW can
+  // still be a genuinely promising option, but incomplete timing, identity,
+  // supply, or offer evidence caps it at B.
+  const candidateTier =
+    ((economicsSignal && productDemandSignal && candidateScore >= 50) ||
+      (dealSignal && productDemandSignal && candidateScore >= 30))
+      ? "B"
+      : "C";
+  if (candidateReasons.length === 0) {
+    candidateReasons.push("Credible record offer; sold-market confirmation is still needed.");
+  }
+  if (candidateTier === "C") {
+    candidateReasons.push("Treat this as a research lead, not a value claim.");
+  }
+  return { candidateReasons, candidateScore, candidateTier };
+}
+
+export function candidateTierRank(value) {
+  if (value === "A") return 4;
+  if (value === "B") return 3;
+  if (value === "C") return 2;
+  if (value === "WATCH") return 1;
+  return 0;
+}
+
+function aggregateAcceptedResearchUnits(find) {
+  const rows = Array.isArray(find.ebayResearchRows)
+    ? find.ebayResearchRows
+    : Array.isArray(find.productResearchRows)
+      ? find.productResearchRows
+      : [];
+  return rows.reduce((total, row) => {
+    const units = finiteNonNegative(row?.totalSold ?? row?.itemSales);
+    return total + (units === null ? 0 : Math.max(0, Math.floor(units)));
+  }, 0);
+}
+
+function percentText(value) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function sourceMoney(value, currency) {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      currency,
+      currencyDisplay: "code",
+      style: "currency",
+    }).format(value);
+  } catch {
+    return `${currency} ${Number(value).toFixed(2)}`;
+  }
 }
 
 export function buildCostLedger(purchasePrice, expectedResalePrice, costs = {}, settingsOverrides = {}) {
@@ -1119,29 +1357,15 @@ function strategyOption({
 }
 
 function evergreenSupport(find, sold, longTermSalesPerMonth) {
-  const artistUnits365 = finiteNonNegative(find.artistSoldUnits365Days) ?? 0;
-  const artistUnits1095 = finiteNonNegative(find.artistSoldUnits1095Days) ?? 0;
-  const externalScore = clamp(
-    finiteNonNegative(find.externalEvergreenScore) ?? 0,
-    0,
-    1,
-  );
   const reasons = [];
   let strength = 0;
 
-  if (artistUnits365 >= 20) {
+  if (sold.units365 !== null && sold.units365 >= 24) {
     strength += 2;
-    reasons.push(`${artistUnits365} own artist-level sales in the last year.`);
-  } else if (artistUnits365 >= 8) {
+    reasons.push(`${sold.units365} condition-matched item sales in the last year.`);
+  } else if (sold.units365 !== null && sold.units365 >= 12) {
     strength += 1;
-    reasons.push(`${artistUnits365} own artist-level sales in the last year.`);
-  }
-  if (artistUnits1095 >= 60) {
-    strength += 2;
-    reasons.push(`${artistUnits1095} own artist-level sales across three years.`);
-  } else if (artistUnits1095 >= 24) {
-    strength += 1;
-    reasons.push(`${artistUnits1095} own artist-level sales across three years.`);
+    reasons.push(`${sold.units365} condition-matched item sales in the last year.`);
   }
   if (
     sold.units1095 !== null &&
@@ -1154,16 +1378,9 @@ function evergreenSupport(find, sold, longTermSalesPerMonth) {
       `${sold.units1095} condition-matched item sales across three years.`,
     );
   }
-  if (externalScore >= 0.8) {
-    strength += 2;
-    reasons.push("High external evergreen confidence.");
-  } else if (externalScore >= 0.5) {
+  if (longTermSalesPerMonth !== null && longTermSalesPerMonth >= 0.67) {
     strength += 1;
-    reasons.push("Moderate external evergreen confidence.");
-  }
-  if (find.userEvergreenPreference === "prefer") {
-    strength += 1;
-    reasons.push("Catalog is explicitly marked evergreen/preferred.");
+    reasons.push(`${round(longTermSalesPerMonth, 2)} exact item sales per month over the long term.`);
   }
 
   return {
@@ -1215,22 +1432,13 @@ function buildPriorityScore(context) {
       )
     : 0;
   const preference = String(find.userEvergreenPreference ?? "neutral");
-  const artistUnits365 = finiteNonNegative(find.artistSoldUnits365Days);
-  const artistUnits1095 = finiteNonNegative(find.artistSoldUnits1095Days);
-  const externalEvergreenScore = clamp(
-    finiteNonNegative(find.externalEvergreenScore) ?? 0,
-    0,
-    1,
-  );
   const retailerReviewCount = finiteNonNegative(find.retailerReviewCount) ?? 0;
   const evergreenPrior = round(
-    clamp(scale(artistUnits365, 0, 20) * 6, 0, 6) +
-      clamp(scale(artistUnits1095, 0, 60) * 2, 0, 2) +
+    clamp(scale(sold.units365, 0, 24) * 4, 0, 4) +
+      clamp(scale(sold.units1095, 0, 72) * 4, 0, 4) +
       clamp(scale(longTermSalesPerMonth, 0, 1) * 4, 0, 4) +
       (find.retailerBestSeller || find.retailerCustomerPick ? 1.5 : 0) +
-      clamp(Math.log10(1 + retailerReviewCount) / 3, 0, 0.5) +
-      externalEvergreenScore * 4 +
-      (preference === "prefer" ? 5 : 0),
+      clamp(Math.log10(1 + retailerReviewCount) / 3, 0, 0.5),
     1,
   );
   const evidenceQuality = round(
@@ -1437,6 +1645,12 @@ function finiteNonNegative(value) {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function finitePositive(value) {

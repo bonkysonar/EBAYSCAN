@@ -175,7 +175,7 @@ describe("arbitrage pages", () => {
 
     expect(container?.textContent).toContain("Amazon via Deal Feed");
     expect(container?.textContent).toContain("Purchase retailerAmazon");
-    expect(container?.textContent).toContain("Open Amazon");
+    expect(container?.textContent).toContain("Open offer: Amazon via Deal Feed");
     expect(
       Array.from(container?.querySelectorAll("select") ?? []).some((select) =>
         select.textContent?.includes("Amazon"),
@@ -213,8 +213,9 @@ describe("arbitrage pages", () => {
 
     await render(<RetailArbitrage />);
 
-    expect(container?.querySelector(".arbitrage-sort.active")?.textContent).toContain("Priority");
-    expect(container?.textContent).toContain("Band");
+    expect(container?.querySelector(".arbitrage-sort.active")?.textContent).toContain("Candidate");
+    expect(container?.textContent).toContain("Tier A · verified");
+    expect(container?.textContent).toContain("Evidence: BUY");
     expect(container?.textContent).toContain("Buy options");
     expect(container?.textContent).toContain("Fast turn / smaller margin");
     expect(container?.textContent).toContain("Balanced buy");
@@ -222,6 +223,140 @@ describe("arbitrage pages", () => {
     expect(container?.textContent).toContain("Profit / 30 days");
     expect(container?.textContent).toContain("Long-term velocity");
     expect(container?.textContent).toContain("Adaptive buy profiles");
+  });
+
+  it("shows and orders candidate tiers even when no record is an automatic BUY", async () => {
+    const promising = {
+      ...validatedBuyFind(),
+      id: "promising-candidate",
+      purchaseOfferVerification: "campaign_advertised",
+      sourceListingTitle: "Runtime Test Artist - Promising Candidate Vinyl LP",
+      title: "Promising Candidate",
+    };
+    const research = {
+      ...validatedBuyFind(),
+      conservativeResalePrice: undefined,
+      id: "research-candidate",
+      purchasePrice: 12,
+      soldEvidence: {
+        capturedAt: now(),
+        condition: "new_sealed",
+        conservativeResalePrice: null,
+        latestSaleDate: null,
+        matchConfidence: "unknown",
+        source: "ebay-product-research",
+        status: "pending",
+        unitsSold90Days: null,
+        velocityEvidence: "unknown",
+      },
+      sourceListingTitle: "Runtime Test Artist - Research Candidate Vinyl LP",
+      title: "Research Candidate",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          fileName: "retail-arbitrage-candidates.json",
+          payload: {
+            createdAt: now(),
+            finds: [research, promising],
+            phase: "final",
+            runId: "candidate-tier-run",
+            sourceReports: [],
+          },
+          status: "available",
+        }),
+      ),
+    );
+
+    await render(<RetailArbitrage />);
+
+    const stats = Array.from(container?.querySelectorAll<HTMLElement>(".seller-stat") ?? []);
+    expect(stats.find((stat) => stat.textContent?.includes("Tier B · promising"))?.textContent).toContain("1");
+    expect(stats.find((stat) => stat.textContent?.includes("Tier C · research"))?.textContent).toContain("1");
+    expect(stats.find((stat) => stat.textContent?.includes("Automatic BUY"))?.textContent).toContain("0");
+    expect(
+      Array.from(container?.querySelectorAll<HTMLElement>(".arbitrage-find-row .arbitrage-title strong") ?? []).map(
+        (element) => element.textContent,
+      ),
+    ).toEqual([
+      "Runtime Test Artist — Promising Candidate",
+      "Runtime Test Artist — Research Candidate",
+    ]);
+    expect(container?.textContent).toContain("Why this candidate surfaced");
+    expect(container?.textContent).toContain("Evidence: REVIEW");
+
+    const queue = container?.querySelector<HTMLSelectElement>(".seller-controls select");
+    await act(async () => {
+      if (queue) {
+        queue.value = "C";
+        queue.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      await flushAsyncWork();
+    });
+    expect(container?.textContent).toContain("Research Candidate");
+    expect(container?.textContent).not.toContain("Promising Candidate");
+  });
+
+  it("shows signed-in Product Research and public sold-listing handoffs for every selected candidate", async () => {
+    const openSpy = vi.spyOn(window, "open");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          fileName: "retail-arbitrage-test.json",
+          payload: {
+            createdAt: now(),
+            finds: [
+              {
+                ...validatedBuyFind(),
+                artist: "The Jimi Hendrix Experience",
+                barcode: "0 12345-67890 5",
+                ebayActiveEditionIdentity: {
+                  colors: ["yellow"],
+                  retailerExclusive: "walmart",
+                },
+                ebayResearchUrl:
+                  "https://www.ebay.com/sh/research?keywords=wrong+Music+%26+Performance",
+                sourceListingTitle:
+                  "The Jimi Hendrix Experience - Are You Experienced (Walmart Exclusive) - Opaque Yellow Vinyl",
+                title: "Are You Experienced - Opaque Yellow",
+              },
+            ],
+            phase: "final",
+            runId: "sold-research-links",
+            sourceReports: [],
+          },
+          status: "available",
+        }),
+      ),
+    );
+
+    await render(<RetailArbitrage />);
+
+    expect(container?.textContent).toContain("Check the sold market");
+    expect(container?.textContent).toContain("Exact edition query");
+    expect(container?.textContent).toContain("Try 2 alternate sold-search queries");
+    const productAnchor = Array.from(container?.querySelectorAll<HTMLAnchorElement>("a") ?? []).find(
+      (anchor) => anchor.textContent?.includes("eBay Product Research"),
+    );
+    const publicAnchor = Array.from(container?.querySelectorAll<HTMLAnchorElement>("a") ?? []).find(
+      (anchor) => anchor.textContent?.includes("Public sold listings"),
+    );
+    expect(productAnchor?.target).toBe("_blank");
+    expect(publicAnchor?.target).toBe("_blank");
+    expect(productAnchor?.rel).toContain("noreferrer");
+    expect(publicAnchor?.rel).toContain("noreferrer");
+    expect(new URL(productAnchor?.href ?? "https://invalid.example").searchParams.get("keywords")).toBe(
+      "The Jimi Hendrix Experience Are You Experienced yellow walmart exclusive",
+    );
+    const publicUrl = new URL(publicAnchor?.href ?? "https://invalid.example");
+    expect(publicUrl.searchParams.get("_nkw")).toBe(
+      "The Jimi Hendrix Experience Are You Experienced yellow walmart exclusive",
+    );
+    expect(publicUrl.searchParams.get("LH_Complete")).toBe("1");
+    expect(publicUrl.searchParams.get("LH_Sold")).toBe("1");
+    expect(openSpy).not.toHaveBeenCalled();
   });
 
   it("releases dismissal and outcome feedback when the retail offer price changes", async () => {
@@ -962,6 +1097,7 @@ function validatedBuyFind(purchasePrice = 10) {
     id: "runtime-buy",
     opportunityType: "product_deal",
     purchasePrice,
+    purchaseOfferVerification: "direct_retailer",
     soldEvidence: {
       capturedAt,
       condition: "new_sealed",

@@ -28,6 +28,17 @@ describe("retail arbitrage source catalog", () => {
     expect(activeIds.has("mvd-entertainment")).toBe(false);
   });
 
+  it("excludes retailers whose published policy prohibits marketplace resellers", () => {
+    const assai = retailArbitrageSourceCatalog.find((source) => source.id === "assai-records");
+    const activeIds = new Set(getActiveRetailSources().map((source) => source.id));
+
+    expect(assai).toMatchObject({
+      resalePolicy: "prohibited",
+      resalePolicyUrl: "https://assai.co.uk/policies/refund-policy",
+    });
+    expect(activeIds.has("assai-records")).toBe(false);
+  });
+
   it("uses stricter thresholds for noisy public sources", () => {
     const noisyPublicSources = getNoisySources().filter((source) =>
       ["barnes-noble", "deep-discount", "popmarket", "target", "udiscover-music", "walmart"].includes(source.id),

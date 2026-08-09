@@ -20,6 +20,24 @@ describe("generic retail listing parsing", () => {
     ).toEqual([19.97, 23.99]);
   });
 
+  it("does not mistake a free-shipping order threshold for a previous price", () => {
+    const listing =
+      "Helluva Boss: Season 1 (Vinyl+ MP3) $9.65 + Free Shipping w/ Prime or on $35+";
+
+    expect(parseRetailProductPrices(listing)).toEqual([9.65]);
+    expect(inferRetailArtist(listing)).toBe("Helluva Boss");
+    expect(inferRetailTitle(listing)).toBe("Season 1");
+
+    expect(
+      parseRetailProductPrices("Album LP $12.99 - Free shipping on orders $35 or more"),
+    ).toEqual([12.99]);
+    expect(
+      parseRetailProductPrices(
+        'The Ramones "Leave Home" (Vinyl LP) $16.44 + Free S&H w/ Walmart+ or on $35+',
+      ),
+    ).toEqual([16.44]);
+  });
+
   it("produces usable artist and title text from general-retailer cards", () => {
     expect(
       inferRetailArtist(
@@ -52,6 +70,27 @@ describe("generic retail listing parsing", () => {
     expect(inferRetailTitle(listing)).toBe(
       "All The Good Sh**: 14 Solid Gold Hits 2001-2008",
     );
+    expect(
+      inferRetailArtist(
+        "$15.99* | The Go-Go's: Vacation (Vinyl w/ AutoRip MP3) at Amazon",
+      ),
+    ).toBe("The Go-Go's");
+    expect(
+      inferRetailTitle(
+        "$15.99* | The Go-Go's: Vacation (Vinyl w/ AutoRip MP3) at Amazon",
+      ),
+    ).toBe("Vacation");
+  });
+
+  it("removes deal fulfillment language from the release title", () => {
+    expect(
+      inferRetailTitle(
+        "Taylor Swift - The Life of a Showgirl: The Crowd is Your King Edition Vinyl (Pink) $17.99 or less + Free Shipping",
+      ),
+    ).toBe("The Life of a Showgirl: The Crowd is Your King (Pink)");
+    expect(
+      inferRetailTitle("$16.78 | Commodores (Vinyl w/ AutoRip MP3) at Amazon"),
+    ).toBe("Commodores");
   });
 
   it("removes preorder badges before splitting the artist and title", () => {

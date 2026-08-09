@@ -1,3 +1,9 @@
+import {
+  buildEbayProductResearchUrl,
+  buildEbayPublicSoldUrl,
+  buildSoldResearchQueryVariants,
+} from "../../src/lib/arbitrage/soldResearchLinks.mjs";
+
 const NON_RECORD_PATTERN =
   /\b(?:cd|compact\s+disc|cassette|dvd|blu[-\s]?ray|book|poster|shirt|t-?shirt|hoodie|sweatshirt|hat|pin|patch|sticker|slipmat|turntable|speaker|stylus|cartridge|gift\s+card|coupon|digital|download|mp3|flac|bundle|lot\s+of)\b/i;
 const DAMAGED_PATTERN =
@@ -62,11 +68,11 @@ const IDENTITY_TERMS = [
 ];
 
 export function buildProductResearchPlan(finds, options = {}) {
-  const maxEntries = finiteOr(options.maxEntries, 40);
+  const maxEntries = finiteOr(options.maxEntries, finds.length);
   return finds
     .filter(isResearchableFind)
     .map((find) => {
-      const variants = researchVariants(find);
+      const variants = researchVariantDetails(find);
       return {
         artist: find.artist,
         capturedAt: find.capturedAt,
@@ -74,9 +80,12 @@ export function buildProductResearchPlan(finds, options = {}) {
         sourceId: find.sourceId,
         sourceListingTitle: find.sourceListingTitle,
         title: find.title,
-        variants: variants.map((query) => ({
-          query,
-          url: buildProductResearchUrl(query),
+        variants: variants.map((variant) => ({
+          identitySignals: variant.identitySignals,
+          kind: variant.kind,
+          publicSoldUrl: buildPublicSoldSearchUrl(variant.query),
+          query: variant.query,
+          url: buildProductResearchUrl(variant.query),
         })),
       };
     })
@@ -261,47 +270,25 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
 }
 
 export function researchVariants(find) {
-  const artist = meaningfulArtist(find.artist);
-  const normalizedTitle = normalizeResearchTitle(preferredResearchTitle(find));
-  const titleWithoutArtist = withoutLeadingArtist(normalizedTitle, artist);
-  const primaryTitle =
-    artist && uniqueTokens(titleWithoutArtist).length === 0 ? "self titled" : titleWithoutArtist;
-  const primary = cleanQuery(`${artist} ${primaryTitle}`);
-  const variants = new Set([primary]);
-  const raw = `${find.title ?? ""} ${find.sourceListingTitle ?? ""}`;
-  const sourceOnly = cleanQuery(normalizeResearchTitle(find.sourceListingTitle || find.title || ""));
-
-  if (sourceOnly && artist && overlapRatio(uniqueTokens(artist), new Set(uniqueTokens(sourceOnly))) < 1) {
-    variants.add(sourceOnly);
-  }
-
-  if (/\b(?:soundtrack|ost|motion\s+picture)\b/i.test(raw)) {
-    const core = cleanQuery(
-      `${artist} ${withoutLeadingArtist(normalizedTitle, artist).replace(/\b(?:soundtrack|ost)\b/gi, " ")}`,
-    );
-    if (core) {
-      variants.add(core);
-      variants.add(cleanQuery(`${core} Soundtrack`));
-      variants.add(cleanQuery(`${core} OST`));
-    }
-  }
-
-  return [...variants].filter((query) => query.length >= 3);
+  return researchVariantDetails(find).map((variant) => variant.query);
 }
 
 export function buildProductResearchUrl(query) {
-  const url = new URL("https://www.ebay.com/sh/research");
-  url.searchParams.set("marketplace", "EBAY-US");
-  url.searchParams.set("keywords", query);
-  url.searchParams.set("dayRange", "1095");
-  url.searchParams.set("categoryId", "176985");
-  url.searchParams.set("conditionId", "1000");
-  url.searchParams.set("offset", "0");
-  url.searchParams.set("limit", "50");
-  url.searchParams.set("sorting", "-itemssold");
-  url.searchParams.set("tabName", "SOLD");
-  url.searchParams.set("tz", "America/Los_Angeles");
-  return url.toString();
+  return buildEbayProductResearchUrl(query);
+}
+
+export function buildPublicSoldSearchUrl(query) {
+  return buildEbayPublicSoldUrl(query);
+}
+
+function researchVariantDetails(find) {
+  return buildSoldResearchQueryVariants({
+    artist: meaningfulArtist(find.artist),
+    barcode: find.barcode,
+    ebayActiveEditionIdentity: find.ebayActiveEditionIdentity,
+    sourceListingTitle: find.sourceListingTitle,
+    title: preferredResearchTitle(find),
+  }).filter((variant) => variant.query.length >= 3);
 }
 
 function researchEntries(rawResearch) {

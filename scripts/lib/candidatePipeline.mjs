@@ -7,7 +7,7 @@ const VINYL_FORMAT =
 const MUSIC_SHAPE =
   /(?:\s[-\u2013\u2014:|]\s)|\b(?:album|anniversary|audiophile|edition|exclusive|gatefold|mono|remaster(?:ed)?|soundtrack|stereo)\b/i;
 const PHYSICAL_NON_RECORD =
-  /\b(?:4k\s+uhd|bag|blanket|blu[\s-]?ray|book|bottle|calendar|cassette|(?:\d+\s*x?\s*)?cds?|compact\s+disc|deck\s+bundle|dvd|earrings?|figurine|gift\s+card|guitar\s+picks?|hat|hoodie|jewelry|keychain|koozie|magazine|merch(?:andise)?\s+bundle|mug|necklace|ornament|patch|pin|pizza\s+cutter|placemat|poster|record\s+players?|shirt|slip\s*mat|socks|steelbook|sticker|sweatshirt|t[\s-]?shirts?|tee|tote|trading\s+card|turntables?|uhd|wallet|zine)\b/i;
+  /\b(?:4k\s+uhd|bag|blanket|blu[\s-]?ray|book|bottle|calendar|cassette|(?:\d+\s*x?\s*)?cds?|compact\s+disc|deck\s+bundle|dvd|earrings?|figurine|gift\s+card|guitar\s+picks?|hat|headbands?|hoodie|jewelry|keychain|koozie|magazine|merch(?:andise)?\s+bundle|mini\s+brands?|miniature\s+records?|mug|necklace|ornament|oven\s+mitt|patch|pin|pizza\s+cutter|placemat|plush(?:ie)?|poster|record\s+players?|shirt|slip\s*mat|socks|steelbook|sticker|stuffed\s+(?:animal|bear|toy)|sweatshirt|t[\s-]?shirts?|tee|tote|toy\s+records?|trading\s+card|turntables?|uhd|wallet|zine)\b/i;
 const DIGITAL_NON_RECORD = /\b(?:digital|download|flac|mp3|streaming|wav)\b/i;
 const RETAIL_NOISE =
   /\b(?:air\s+fryer|apparel|automotive|baby|bathing\s+suits?|beauty|bedding|bicycles?|bikinis?|bra(?:lette)?|bucket|cable|car\s+wash|cat\s+treats?|charger|cleaning|clothing|coffee|comforter|coolers?|cosmetics|decorations?|dish\s+soap|electronics?|eyeshadow|fitness\s+tracker|food|gimmicks?|goggles|granola|grocery|groceries|hair|handbags?|headphones?|ice\s+packs?|kitchen|knife|laundry|laptop|makeup|manicure|mattress|nail\s+colou?r|ornament|pants|paprika|pencils?|pens?|phone|protein|purse|sauce|screwdrivers?|shampoo|shoes?|shorts|skin\s*care|smart\s*watch|smartwatch|snacks?|speaker|supplement|swimdress|swimsuits?|swimwear|tablet|toothpaste|toys?|tuna|underwear|webcam|wipes?)\b/i;
@@ -135,11 +135,6 @@ export function candidateQualityScore(candidate) {
   if (validatedRecentUnits > 0) {
     score += Math.min(12, Math.log2(1 + validatedRecentUnits) * 3);
   }
-  const artistSoldUnits365Days = Math.max(0, Number(candidate.artistSoldUnits365Days) || 0);
-  if (artistSoldUnits365Days >= 20) score += 25;
-  else if (artistSoldUnits365Days >= 10) score += 20;
-  else if (artistSoldUnits365Days >= 5) score += 14;
-  else if (artistSoldUnits365Days >= 2) score += 7;
   const listingIdentity = cleanText(
     `${candidate.artist ?? ""} ${candidate.title ?? ""} ${candidate.sourceListingTitle ?? ""}`,
   );
@@ -196,6 +191,8 @@ export function isHighSignalProductFind(find) {
     Number(find.purchasePrice) <= 20 &&
     !explicitUnavailable &&
     isVerifiedDirectUsNewRetailOffer(find);
+  const credibleSlickdealsResearchLead =
+    !explicitUnavailable && isCredibleSlickdealsResearchLead(find);
   const fromFinalDealSource = isFinalDealSource(find.sourceId, find.sourceName, sourceEvidence);
   const trustedFinalDealSource = fromFinalDealSource && !discoveryOnlySource;
   const productSaleSignal = hasProductSaleSignal(`${find.sourceListingTitle ?? ""} ${sourceEvidence}`);
@@ -224,7 +221,8 @@ export function isHighSignalProductFind(find) {
     !productSaleSignal &&
     !meetsConfiguredDiscount &&
     !hasCredibleExploratoryMarkdown &&
-    !directUsAbsolutePriceCandidate
+    !directUsAbsolutePriceCandidate &&
+    !credibleSlickdealsResearchLead
   ) {
     return false;
   }
@@ -234,7 +232,7 @@ export function isHighSignalProductFind(find) {
       sourceEvidence,
     ) && observedDiscount <= 0;
   if (volumeOfferWithoutNormalizedItemPrice) return false;
-  if (directUsAbsolutePriceCandidate) return true;
+  if (directUsAbsolutePriceCandidate || credibleSlickdealsResearchLead) return true;
 
   const sale = soldTotal(find);
   const margin = estimatedMargin(find);
@@ -1066,6 +1064,23 @@ function isVerifiedDirectUsNewRetailOffer(find) {
     Boolean(configuredHost) &&
     (productHost === configuredHost || productHost.endsWith(`.${configuredHost}`));
   return directDomainMatch || (find.retailerSoldBySource === true && Boolean(productHost));
+}
+
+function isCredibleSlickdealsResearchLead(find) {
+  const purchasePrice = finitePositive(find.purchasePrice);
+  if (purchasePrice === null || purchasePrice > 20) return false;
+  if (!isUsCountry(find.sourceCountry)) return false;
+  if (String(find.sourceCurrency ?? "").trim().toUpperCase() !== "USD") return false;
+  if (!isNewCondition(find.condition)) return false;
+  if (!/^slickdeals-vinyl-records(?:$|-)/i.test(String(find.sourceId ?? ""))) return false;
+  if (Number(find.candidateQualityScore ?? 0) < 55) return false;
+  if (!VINYL_FORMAT.test(String(find.sourceListingTitle ?? find.title ?? ""))) return false;
+  try {
+    const url = new URL(String(find.sourceUrl ?? ""));
+    return /(?:^|\.)slickdeals\.net$/i.test(url.hostname) && /^\/f\/\d+/i.test(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 function isUsCountry(value) {

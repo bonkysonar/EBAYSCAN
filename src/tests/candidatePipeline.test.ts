@@ -366,6 +366,37 @@ describe("retail candidate pipeline", () => {
     ).toBe(false);
   });
 
+  it("keeps a cheap, explicit-vinyl Slickdeals thread as a research lead without inventing a markdown", () => {
+    const helluvaBoss = {
+      averageSoldPrice: null,
+      candidateQualityScore: 61,
+      condition: "new/sealed",
+      purchasePrice: 9.65,
+      sourceCountry: "US",
+      sourceCurrency: "USD",
+      sourceDiscountPercent: null,
+      sourceGroup: "Discovery sources",
+      sourceId: "slickdeals-vinyl-records",
+      sourceListingTitle:
+        "Helluva Boss: Season 1 (Vinyl+ MP3) $9.65 + Free Shipping w/ Prime or on $35+",
+      sourceName: "Slickdeals Vinyl Records",
+      sourceOriginalPrice: null,
+      sourceType: "deal-aggregator",
+      sourceUrl:
+        "https://slickdeals.net/f/19819023-helluva-boss-season-1-vinyl-mp3-9-65-free-shipping-w-prime-or-on-35",
+    };
+
+    expect(isHighSignalProductFind(helluvaBoss)).toBe(true);
+    expect(isHighSignalProductFind({ ...helluvaBoss, purchasePrice: 20.01 })).toBe(false);
+    expect(
+      isHighSignalProductFind({
+        ...helluvaBoss,
+        sourceId: "cheap-vinyl",
+        sourceUrl: "https://www.amazon.com/dp/B000000000",
+      }),
+    ).toBe(false);
+  });
+
   it("does not reward an unwindowed raw sold count", () => {
     const candidate = {
       candidateQualityScore: 70,
@@ -423,7 +454,7 @@ describe("retail candidate pipeline", () => {
     );
   });
 
-  it("uses own-account artist history as a modest evergreen ranking prior", () => {
+  it("does not use artist-level history to rank one record above another", () => {
     const obscure = {
       artistSoldUnits365Days: 0,
       candidateQualityScore: 70,
@@ -440,8 +471,7 @@ describe("retail candidate pipeline", () => {
       title: "Duke Ellington - Album",
     };
 
-    expect(candidateQualityScore(evergreen) - candidateQualityScore(obscure)).toBe(25);
-    expect(rankAndSelectCandidates([obscure, evergreen], { limit: 2 })[0]?.id).toBe("evergreen");
+    expect(candidateQualityScore(evergreen)).toBe(candidateQualityScore(obscure));
   });
 
   it("keeps singles, bundles, unknown artists, and high buy costs available but ranks them below comparable LPs", () => {
