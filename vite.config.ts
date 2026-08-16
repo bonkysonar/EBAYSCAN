@@ -12,6 +12,11 @@ import { fetchDiscogsSalesStatsPage } from "./src/server/discogsStatsPage";
 import { readLocalEnv, searchMarketplace } from "./src/server/marketplaceApi";
 import { fetchSellerActiveListings } from "./src/server/sellerListingsApi";
 import { readSoldHistoryIndex, searchSoldHistory } from "./src/server/soldHistoryApi";
+import { scanVinylLots } from "./src/server/vinylLotDiscoveryApi";
+import {
+  saveVinylLotFeedback,
+  VINYL_LOT_FEEDBACK_MAX_BYTES,
+} from "./src/server/vinylLotFeedbackApi";
 import type { SearchInput } from "./src/lib/ebay/types";
 
 function ebayLocalApiPlugin(): Plugin {
@@ -31,6 +36,51 @@ function ebayLocalApiPlugin(): Plugin {
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown marketplace API error";
           sendJson(res, isRateLimitError(message) ? 429 : 500, { error: message });
+        }
+      });
+
+      server.middlewares.use("/api/vinyl-lots/scan", async (req, res) => {
+        res.setHeader("Cache-Control", "private, no-store, max-age=0");
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "Method not allowed" });
+          return;
+        }
+
+        try {
+          const body = await readBody(req);
+          const scanRequest = body.trim() ? JSON.parse(body) as unknown : {};
+          sendJson(res, 200, await scanVinylLots(readLocalEnv(process.cwd()), { scanRequest }));
+        } catch (error) {
+          const statusCode =
+            typeof error === "object" && error !== null && "statusCode" in error
+              ? Number(error.statusCode)
+              : 500;
+          sendJson(res, Number.isInteger(statusCode) && statusCode >= 400 && statusCode <= 599 ? statusCode : 500, {
+            error: error instanceof Error ? error.message : "Unknown vinyl-lot scan error",
+          });
+        }
+      });
+
+      server.middlewares.use("/api/vinyl-lots/feedback", async (req, res) => {
+        res.setHeader("Cache-Control", "private, no-store, max-age=0");
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "Method not allowed" });
+          return;
+        }
+        if (!isLoopbackRequest(req)) {
+          sendJson(res, 403, { error: "Vinyl-lot feedback can only be saved from this computer." });
+          return;
+        }
+
+        try {
+          const body = await readBody(req, VINYL_LOT_FEEDBACK_MAX_BYTES);
+          const payload = body.trim() ? JSON.parse(body) as unknown : {};
+          sendJson(res, 200, await saveVinylLotFeedback(payload, { workspaceRoot: process.cwd() }));
+        } catch (error) {
+          const statusCode = typeof error === "object" && error !== null && "statusCode" in error ? Number(error.statusCode) : 400;
+          sendJson(res, Number.isInteger(statusCode) && statusCode >= 400 && statusCode <= 599 ? statusCode : 400, {
+            error: error instanceof Error ? error.message : "Unknown vinyl-lot feedback error",
+          });
         }
       });
 
@@ -147,16 +197,35 @@ function ebayLocalApiPlugin(): Plugin {
   };
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+function readBody(req: IncomingMessage, maximumBytes = Number.POSITIVE_INFINITY): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
+    let byteCount = 0;
     req.setEncoding("utf8");
     req.on("data", (chunk) => {
+      byteCount += Buffer.byteLength(chunk, "utf8");
+      if (byteCount > maximumBytes) {
+        reject(Object.assign(new Error("Request body is too large."), { statusCode: 413 }));
+        return;
+      }
       body += chunk;
     });
     req.on("end", () => resolve(body));
     req.on("error", reject);
   });
+}
+
+function isLoopbackRequest(req: IncomingMessage): boolean {
+  const host = (req.headers.host ?? "").split(":")[0].toLowerCase();
+  if (host !== "127.0.0.1" && host !== "localhost" && host !== "[::1]") return false;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    const hostname = new URL(origin).hostname.toLowerCase();
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+  } catch {
+    return false;
+  }
 }
 
 function sendJson(res: ServerResponse, status: number, payload: unknown) {

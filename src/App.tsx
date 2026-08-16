@@ -9,6 +9,8 @@ import { SearchInputPanel } from "./components/SearchInputPanel";
 import { SellerPriceAnalyzer } from "./components/SellerPriceAnalyzer";
 import { SiteWideSales } from "./components/SiteWideSales";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { VinylLotArtists } from "./components/VinylLotArtists";
+import { VinylLotFinder } from "./components/VinylLotFinder";
 import {
   createBulkBuyBatch,
   loadBulkBuyBatches,
@@ -288,17 +290,35 @@ export function App() {
 
   const isLookupRoute = route === "scanner" || route === "bulkBuy";
   const isBulkBuyRoute = route === "bulkBuy";
+  const isVinylLotRoute = route === "vinylLots";
+  const isVinylLotArtistsRoute = route === "vinylLotArtists";
+  const pageTitle = isBulkBuyRoute
+    ? "Bulk Buy Scanner"
+    : isVinylLotRoute
+      ? "Vinyl Lot Finder"
+      : isVinylLotArtistsRoute
+        ? "Vinyl Lot Artists"
+        : "Record Scanner";
+  const pageSubtitle = isBulkBuyRoute
+    ? "Scan records, estimate offer prices, and tally the buy."
+    : isVinylLotRoute
+      ? "A fresh, evidence-first review queue for multi-record eBay listings."
+      : isVinylLotArtistsRoute
+        ? "Editable artist signals for the vinyl-lot review queue."
+      : "Fast conservative triage for vinyl resale decisions.";
 
   return (
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <h1>{isBulkBuyRoute ? "Bulk Buy Scanner" : "Record Scanner"}</h1>
-          <p>{isBulkBuyRoute ? "Scan records, estimate offer prices, and tally the buy." : "Fast conservative triage for vinyl resale decisions."}</p>
+          <h1>{pageTitle}</h1>
+          <p>{pageSubtitle}</p>
         </div>
         <nav className="app-nav" aria-label="App pages">
           <a className={route === "scanner" ? "active" : ""} href="#/scanner">Scanner</a>
           <a className={route === "bulkBuy" ? "active" : ""} href="#/bulk-buy">Bulk Buy</a>
+          <a className={route === "vinylLots" ? "active" : ""} href="#/vinyl-lots">Vinyl Lots</a>
+          <a className={route === "vinylLotArtists" ? "active" : ""} href="#/vinyl-lot-artists">Lot Artists</a>
           <a className={route === "seller" ? "active" : ""} href="#/seller-prices">Seller Price Analyzer</a>
           <a className={route === "arbitrage" ? "active" : ""} href="#/retail-arbitrage">Retail Arbitrage</a>
           <a className={route === "siteSales" ? "active" : ""} href="#/site-wide-sales">Site-wide Sales</a>
@@ -313,7 +333,7 @@ export function App() {
         ) : null}
       </header>
 
-      {route === "seller" ? <SellerPriceAnalyzer /> : route === "arbitrage" ? <RetailArbitrage /> : route === "siteSales" ? <SiteWideSales /> : <section className={`workbench-grid ${isBulkBuyRoute ? "bulk-buy-workbench" : "scanner-workbench"}`}>
+      {route === "vinylLots" ? <VinylLotFinder /> : route === "vinylLotArtists" ? <VinylLotArtists /> : route === "seller" ? <SellerPriceAnalyzer /> : route === "arbitrage" ? <RetailArbitrage /> : route === "siteSales" ? <SiteWideSales /> : <section className={`workbench-grid ${isBulkBuyRoute ? "bulk-buy-workbench" : "scanner-workbench"}`}>
         <div className="panel stack">
           <SearchInputPanel isSearching={isSearching} onSearch={runSearch} />
           <SettingsPanel settings={settings} onChange={updateSettings} />
@@ -379,13 +399,15 @@ export function App() {
   );
 }
 
-type AppRoute = "arbitrage" | "bulkBuy" | "scanner" | "seller" | "siteSales";
+type AppRoute = "arbitrage" | "bulkBuy" | "scanner" | "seller" | "siteSales" | "vinylLotArtists" | "vinylLots";
 
 function routeFromHash(): AppRoute {
   if (window.location.hash === "#/seller-prices") return "seller";
   if (window.location.hash === "#/retail-arbitrage") return "arbitrage";
   if (window.location.hash === "#/site-wide-sales") return "siteSales";
   if (window.location.hash === "#/bulk-buy") return "bulkBuy";
+  if (window.location.hash === "#/vinyl-lots") return "vinylLots";
+  if (window.location.hash === "#/vinyl-lot-artists") return "vinylLotArtists";
   return "scanner";
 }
 

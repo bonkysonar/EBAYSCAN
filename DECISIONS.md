@@ -206,6 +206,22 @@ The daily automation runs the source scan, optional active enrichment, find-ID r
 
 The automation must not modify scanner source code for individual titles, publish drafts, purchase products, submit retailer forms, mutate eBay listings, or overwrite browser feedback.
 
+## 2026-07-28: Compliance-safe Vinyl Lot Discovery Boundary
+
+Vinyl Lot Finder is isolated at `#/vinyl-lots`. Its initial production boundary is active-listing discovery only: two bounded official Browse searches per selected genre plus shortfall-only expansions, transient six-hour results, conservative lot/genre/condition parsing, and human review links.
+
+The page does not combine eBay content with third-party market data, infer seller type, persist listing history, calculate value or purchase recommendations, or use listing content for automated image analysis. Those capabilities require explicit written eBay approval or clarification before implementation. Hosted manual scans require a dedicated operator token and fail closed when it is not configured.
+
+## 2026-07-28: Broad Collection Coverage and Local Learning
+
+Vinyl-lot discovery no longer searches for an exact 20-record phrase. The default hard floor for known counts is 12. Plausible collection/lot listings with unknown counts remain reviewable, while apparent single LPs, singles, 7-inch/45 RPM records, choice listings, and packaging-only lots are excluded.
+
+Each selected genre must retain at least 10 distinct collection candidates. The scanner starts with two broad queries per genre and spends the remaining 20-call budget on a fallback plus enabled artist searches only for short genres. A short genre makes the scan incomplete and remains visibly labeled; the classifier may not relax format or minimum-count gates simply to pass coverage.
+
+Artist preferences live on the separate `#/vinyl-lot-artists` page. `always-review` and `priority` are inclusion/genre signals, not value scores, and do not replace eBay ordering.
+
+The feedback loop is local and explicit. Per-result and overall ratings are stored in sanitized packets outside the synced repository by default. eBay listing content and raw item IDs are not retained. `AGENTS.md` plus `VINYL_LOT_LEARNING.md` are the deterministic Codex handoff; native Codex memories remain optional asynchronous recall. The first version opens a new Codex task with a prepared prompt and does not claim to send into the currently focused task automatically.
+
 ## 2026-08-05: Candidate-first Retail Arbitrage
 
 Retail Arbitrage now leads with A/B/C candidate strength instead of a wall of canonical `REVIEW` decisions. Tier A is reserved for fully verified `BUY`; Tier B requires useful product-level demand plus deal/economics signals but may retain an explicit proof gap; Tier C is a source-linked research lead and never a value claim. Candidate tier and score control the default queue and ordering, while the canonical decision remains a separate evidence badge and filter.

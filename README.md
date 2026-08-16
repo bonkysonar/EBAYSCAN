@@ -114,6 +114,28 @@ Bulk Buy math uses the lower of Discogs sales/market median and eBay average che
 
 The ledger supports sortable columns, adjustable column widths, row deletion, row click-to-review, running totals, average buy per record, CSV download, reset, and named local saved batches. Saved batches are stored in browser localStorage.
 
+## Vinyl Lot Finder
+
+Vinyl Lot Finder is a separate page at `#/vinyl-lots`. It starts with two broad official eBay Browse searches for each selected genre, then uses a fallback and enabled artist searches only when a category has fewer than 10 retained collection candidates. Every scan has a hard ceiling of 20 Browse calls.
+
+The hosted scan route has a 60-second Vercel function limit and a 50-second internal runtime budget. Each eBay request remains capped at eight seconds. If the overall budget expires, in-flight requests are aborted, queued searches are skipped, and the response is marked incomplete instead of running into Vercel's hard termination window.
+
+The default known-count floor is 12 records. The page removes obvious single LPs, choice/per-record listings, known groups under 12, singles, 7-inch/45 RPM lots, empty-sleeve lots, and non-vinyl formats. Plausible collections without a trustworthy count stay in a separate human-review queue. Results are transient, expire within six hours, and are not published to Vercel Blob.
+
+Scan size, retained results per category, enabled genres, unknown-count handling, singles/45 filtering, and per-genre fallback phrases are customizable and saved on this computer. `#/vinyl-lot-artists` contains an editable local list of priority artists. Artist names are discovery and inclusion signals only, never value guarantees or custom ranking inputs.
+
+Each displayed result and the overall scan can be rated from 1 to 10 with an explanation. On loopback development, **Save & open in Codex** stores the sanitized packet under `%LOCALAPPDATA%\RecordScanner\vinyl-lot-feedback\inbox`. On the hosted site, **Save in browser & open Codex** stores the same whitelisted fields in browser-local storage and copies the complete request before opening Codex. Both paths exclude eBay listing content and raw item IDs, and both require the user to press **Send**. `VINYL_LOT_LEARNING.md` is the durable, reviewable product memory; Codex native memory is optional recall, not the product database.
+
+This page intentionally does not calculate value, profit, ROI, maximum offers, seller type, or sold-market comparisons. Those capabilities remain disabled pending explicit eBay approval for the use case.
+
+Hosted scans require a server-side operator key:
+
+```env
+VINYL_LOT_SCAN_TOKEN=private_scan_access_key
+```
+
+Enter the same key under Hosted scan access on the page. On a private computer, **Remember this key on this device** saves it in browser-local storage only after a successful authenticated scan; **Forget saved key** removes it. Missing keys are stopped before a request is sent, and rejected saved keys are cleared automatically. Local development permits scans without the key; production fails closed when it is absent.
+
 ## Seller Price Analyzer
 
 The Seller Price Analyzer is a separate page at `#/seller-prices`. It does not change the scanner workflow and it does not mutate eBay listings.
@@ -200,6 +222,10 @@ npm run build
 
 - `src/lib/ebay` contains the marketplace client interface, browser client, and mock eBay client.
 - `src/server/marketplaceApi.ts` contains shared server-side eBay and Discogs lookup logic.
+- `src/server/vinylLotDiscoveryApi.ts` contains the transient, bounded eBay lot-discovery workflow.
+- `src/server/vinylLotFeedbackApi.ts` validates and stores sanitized local-only feedback packets.
+- `api/vinyl-lots/scan.ts` exposes the protected hosted Vinyl Lots scan action.
+- `src/lib/vinylLots` contains scan options, artist preferences, feedback contracts, and lot quantity/genre/condition/noise classification.
 - `vite.config.ts` wires that shared lookup into local Vite dev at `/api/ebay/search`.
 - `api/ebay/search.ts` exposes the same lookup as a hosted Vercel serverless function.
 - `api/ebay/seller-listings.ts` exposes the read-only active seller listings endpoint.

@@ -20,6 +20,24 @@ afterEach(() => {
 });
 
 describe("App routing", () => {
+  it("opens Vinyl Lots as an isolated page", async () => {
+    renderApp("#/vinyl-lots");
+
+    expect(container?.querySelector("h1")?.textContent).toBe("Vinyl Lot Finder");
+    expect(container?.querySelector(".vinyl-lot-page")?.textContent).toContain("Find broad record collections");
+    expect(container?.querySelector(".arbitrage-page")).toBeNull();
+    expect(container?.querySelector(".bulk-buy-panel")).toBeNull();
+  });
+
+  it("opens the editable lot artist list as its own page", async () => {
+    renderApp("#/vinyl-lot-artists");
+
+    expect(container?.querySelector("h1")?.textContent).toBe("Vinyl Lot Artists");
+    expect(container?.querySelector(".vinyl-lot-page")?.textContent).toContain("Teach the lot scan which artists deserve attention");
+    expect(container?.querySelector(".vinyl-lot-page")?.textContent).toContain("Miles Davis");
+    expect(container?.querySelector(".vinyl-lot-page")?.textContent).toContain("Pearl Jam");
+  });
+
   it("keeps Bulk Buy off the default scanner and enables it on the Bulk Buy page", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (String(url).includes("/api/ebay/search")) {

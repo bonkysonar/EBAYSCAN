@@ -38,6 +38,24 @@
 34. Click Download CSV and verify the export includes `sku`, `custom_label`, `item_id`, proposed price, change note, pricing recommendation, delta, active comp count, and item URL.
 35. Click Import Snapshot CSV with a saved browser snapshot export. Verify analyzed rows restore without running eBay Browse calls, and SKU/custom label values are preserved when matching active listings were already loaded.
 
+## Vinyl Lot Finder Manual Flow
+
+1. Open `#/vinyl-lots`. Verify it is a separate page and neither the Bulk Buy ledger nor Retail Arbitrage queue is present.
+2. Confirm the default minimum is 12, all four genres are enabled, unknown-count collections are included, and singles/7-inch/45 RPM filtering is enabled. Change an option, reload, and verify the local preference persists.
+3. Click **Scan now** with valid eBay application credentials. Verify the selected genre lanes finish, the observation and expiry times appear, and the expiry is no more than six hours after observation. At expiry, verify all listing cards and unfinished review drafts disappear and the page requests a fresh scan.
+4. Verify every selected category shows at least 10 retained candidates or a prominent coverage shortfall. Confirm fallback/artist searches are added only for a short category and total Browse calls never exceed 20. In the automated deadline fixture, confirm the 50-second scan budget aborts in-flight calls, stops queued calls from starting, and leaves response time inside the route's 60-second Vercel limit.
+5. Verify 12+ record leads, custom-threshold near-matches, needs-evidence listings, and removed noise are reported separately.
+6. Verify choice listings, per-record offers, single LPs, 7-inch/45 RPM/single lots, empty-sleeve lots, non-vinyl formats, and stated counts under 12 do not appear as review cards.
+7. Verify a listing with no supported VG+ evidence says the condition is unverified; VG/G+/untested/as-is language must not produce a supported lead.
+8. Open `#/vinyl-lot-artists`. Add, edit, pause, reassign, and remove an artist. Verify the scanner sends enabled artist signals and never lets an artist rescue an apparent single or excluded format.
+9. Rate every displayed result and the overall scan with a score and explanation. Verify **Save & open in Codex** stays disabled until all feedback is complete.
+10. Save feedback on loopback and verify the filesystem packet contains ratings, explanations, settings, coverage, hashed item keys, and derived flags but no eBay title, price, image, URL, seller, description, or raw item ID. Repeat on a non-loopback hostname and verify the sanitized packet stays in browser-local storage, the complete request is copied, and no feedback request is sent to the server. Verify neither Codex handoff sends automatically.
+11. Verify genre filtering works without changing the eBay response order inside each lane.
+12. Verify every visible listing links to the current eBay page and shows source price and quoted shipping separately, before tax.
+13. Verify no sold-comparable, value, seller-type, purchasing, or price-recommendation language appears.
+14. In a production-like environment, verify a missing browser key opens Hosted scan access without sending a request; a wrong or stale saved key returns 401, is cleared, and reopens the panel; and a correct key succeeds. Check **Remember this key on this device**, reload, and verify the successful key is restored. Click **Forget saved key** and verify it is removed. Separately verify a missing server-side `VINYL_LOT_SCAN_TOKEN` returns 503.
+15. Reload the page and verify prior listing results are gone rather than persisted.
+
 ## Retail Arbitrage Manual Flow
 
 1. Run a small diagnostic source scan:

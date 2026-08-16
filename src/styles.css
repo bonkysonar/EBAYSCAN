@@ -2512,6 +2512,845 @@ input[type="radio"] {
   line-height: 1.25;
 }
 
+.vinyl-lot-page {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.vinyl-lot-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: 1.5rem;
+  align-items: center;
+  min-height: 300px;
+  overflow: hidden;
+  border-radius: 24px;
+  padding: clamp(1.25rem, 3vw, 2.5rem);
+  background:
+    radial-gradient(circle at 75% 15%, rgba(218, 180, 92, 0.25), transparent 26%),
+    linear-gradient(135deg, #17130f, #292015 70%, #4f351c);
+  color: white;
+  box-shadow: 0 22px 55px rgba(48, 34, 17, 0.22);
+}
+
+.vinyl-lot-hero-copy {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 880px;
+}
+
+.vinyl-lot-kicker {
+  width: max-content;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  padding: 0.32rem 0.55rem;
+  color: #f4cc79;
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vinyl-lot-hero h2 {
+  max-width: 780px;
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2rem, 5vw, 4.6rem);
+  font-weight: 700;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+
+.vinyl-lot-hero p {
+  max-width: 720px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.vinyl-lot-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.3rem;
+}
+
+.vinyl-lot-controls button {
+  min-width: 145px;
+  background: #f0c86d;
+  color: #17130f;
+}
+
+.vinyl-lot-controls span {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.vinyl-lot-hero-mark {
+  position: relative;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  width: 190px;
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, #e0b652 0 9%, #141414 10% 16%, transparent 17%),
+    repeating-radial-gradient(circle, #1d1d1d 0 3px, #0d0d0d 4px 6px);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.4);
+}
+
+.vinyl-lot-hero-mark::after {
+  content: "";
+  position: absolute;
+  inset: 33%;
+  border-radius: 50%;
+  background: #d3a647;
+}
+
+.vinyl-lot-hero-mark strong,
+.vinyl-lot-hero-mark small {
+  position: relative;
+  z-index: 1;
+  color: #17130f;
+}
+
+.vinyl-lot-hero-mark strong {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.vinyl-lot-hero-mark small {
+  font-size: 0.58rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.vinyl-lot-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem 1rem;
+  flex-wrap: wrap;
+  border: 1px solid #d2bd86;
+  border-radius: 14px;
+  padding: 0.65rem 0.8rem;
+  background: #fff8e7;
+  color: #6e5522;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.vinyl-lot-notice strong {
+  color: #2d2311;
+  font-size: 0.8rem;
+}
+
+.vinyl-lot-access,
+.vinyl-lot-coverage {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 253, 247, 0.8);
+}
+
+.vinyl-lot-access > summary,
+.vinyl-lot-coverage > summary {
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 950;
+}
+
+.vinyl-lot-access label {
+  display: grid;
+  gap: 0.3rem;
+  max-width: 460px;
+  margin: 0 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.vinyl-lot-access input {
+  padding: 0.5rem 0.65rem;
+  font-size: 0.8rem;
+}
+
+.vinyl-lot-access p {
+  margin: 0.45rem 0.75rem 0.7rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.vinyl-lot-access .vinyl-lot-access-remember {
+  display: flex;
+  align-items: center;
+  max-width: none;
+  margin-top: 0.65rem;
+  font-weight: 800;
+}
+
+.vinyl-lot-access .vinyl-lot-access-remember input {
+  width: auto;
+  margin: 0;
+}
+
+.vinyl-lot-access-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 0.75rem 0.7rem;
+}
+
+.vinyl-lot-access-actions p {
+  margin: 0;
+}
+
+.vinyl-lot-access-actions button {
+  flex: 0 0 auto;
+}
+
+.vinyl-lot-error,
+.vinyl-lot-loading,
+.vinyl-lot-empty {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  min-height: 130px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 1rem;
+  background: rgba(255, 253, 247, 0.94);
+  box-shadow: var(--shadow);
+}
+
+.vinyl-lot-error {
+  border-color: #d39a90;
+  background: #fff1ee;
+}
+
+.vinyl-lot-error span {
+  flex: 1;
+  color: #7f2e22;
+  font-size: 0.82rem;
+}
+
+.vinyl-lot-loading-disc {
+  width: 62px;
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  border: 5px solid #161616;
+  border-right-color: #d5a838;
+  border-radius: 50%;
+  animation: vinyl-lot-spin 1s linear infinite;
+}
+
+@keyframes vinyl-lot-spin {
+  to { transform: rotate(360deg); }
+}
+
+.vinyl-lot-loading strong,
+.vinyl-lot-empty h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.25rem;
+}
+
+.vinyl-lot-loading p,
+.vinyl-lot-empty p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.vinyl-lot-empty {
+  display: grid;
+  place-content: center;
+  min-height: 220px;
+  text-align: center;
+}
+
+.vinyl-lot-empty > span {
+  color: #997328;
+  font-size: 0.7rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vinyl-lot-empty h3 {
+  margin: 0.25rem 0 0;
+}
+
+.vinyl-lot-empty.filtered {
+  min-height: 130px;
+}
+
+.vinyl-lot-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.vinyl-lot-stat {
+  display: grid;
+  gap: 0.05rem;
+  border: 1px solid var(--line);
+  border-top: 5px solid #9a8d77;
+  border-radius: 14px;
+  padding: 0.72rem;
+  background: rgba(255, 253, 247, 0.94);
+}
+
+.vinyl-lot-stat.lead { border-top-color: #1f7a3f; }
+.vinyl-lot-stat.near { border-top-color: #2d65a5; }
+.vinyl-lot-stat.review { border-top-color: #b48222; }
+.vinyl-lot-stat.muted { border-top-color: #7c7468; }
+
+.vinyl-lot-stat strong {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.vinyl-lot-stat span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.vinyl-lot-filter-bar {
+  display: flex;
+  gap: 0.35rem;
+  overflow-x: auto;
+  padding: 0.15rem 0;
+}
+
+.vinyl-lot-filter-bar button {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.42rem 0.65rem;
+  background: rgba(255, 253, 247, 0.88);
+  color: var(--ink);
+  font-size: 0.74rem;
+}
+
+.vinyl-lot-filter-bar button.active {
+  border-color: #17130f;
+  background: #17130f;
+  color: white;
+}
+
+.vinyl-lot-group {
+  display: grid;
+  gap: 0.65rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.8rem;
+}
+
+.vinyl-lot-group > header span {
+  color: #997328;
+  font-size: 0.66rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vinyl-lot-group > header h3 {
+  margin: 0.16rem 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.55rem;
+  letter-spacing: -0.025em;
+}
+
+.vinyl-lot-group > header p {
+  max-width: 720px;
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.vinyl-lot-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.vinyl-lot-card {
+  display: grid;
+  grid-template-rows: 180px 1fr;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 253, 247, 0.96);
+  box-shadow: 0 10px 24px rgba(52, 41, 20, 0.08);
+}
+
+.vinyl-lot-card-image {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: linear-gradient(135deg, #dfd6c5, #f5efe3);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.vinyl-lot-card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.vinyl-lot-status-chip {
+  position: absolute;
+  left: 0.55rem;
+  bottom: 0.55rem;
+  border-radius: 999px;
+  padding: 0.27rem 0.48rem;
+  background: rgba(20, 18, 15, 0.9);
+  color: white;
+  font-size: 0.64rem;
+  font-weight: 950;
+}
+
+.status-qualifying .vinyl-lot-status-chip { background: rgba(25, 105, 54, 0.94); }
+.status-near-match .vinyl-lot-status-chip { background: rgba(35, 86, 145, 0.94); }
+
+.vinyl-lot-card-body {
+  display: grid;
+  gap: 0.58rem;
+  align-content: start;
+  padding: 0.75rem;
+}
+
+.vinyl-lot-card-eyebrow {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.61rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.vinyl-lot-card h4 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1rem;
+  line-height: 1.25;
+}
+
+.vinyl-lot-price-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.vinyl-lot-price-line strong {
+  font-size: 1.05rem;
+}
+
+.vinyl-lot-price-line span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.vinyl-lot-card-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.32rem;
+  margin: 0;
+}
+
+.vinyl-lot-card-facts div {
+  min-width: 0;
+  border: 1px solid #e2dccf;
+  border-radius: 8px;
+  padding: 0.38rem;
+  background: #faf7ef;
+}
+
+.vinyl-lot-card-facts dt {
+  color: var(--muted);
+  font-size: 0.56rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.vinyl-lot-card-facts dd {
+  overflow: hidden;
+  margin: 0.1rem 0 0;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vinyl-lot-flags {
+  display: flex;
+  gap: 0.24rem;
+  flex-wrap: wrap;
+}
+
+.vinyl-lot-flags span {
+  border-radius: 999px;
+  padding: 0.2rem 0.34rem;
+  background: #f3ead2;
+  color: #765b24;
+  font-size: 0.58rem;
+  font-weight: 950;
+  text-transform: capitalize;
+}
+
+.vinyl-lot-reasons {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding-left: 1rem;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.vinyl-lot-card-body > a {
+  width: max-content;
+  max-width: 100%;
+  border-radius: 999px;
+  padding: 0.42rem 0.62rem;
+  background: #17130f;
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 950;
+  text-decoration: none;
+}
+
+.vinyl-lot-link-missing {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.vinyl-lot-coverage > div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
+  border-top: 1px solid var(--line);
+  padding: 0.65rem;
+}
+
+.vinyl-lot-coverage article {
+  display: grid;
+  gap: 0.12rem;
+  border: 1px solid var(--line);
+  border-left: 4px solid #1f7a3f;
+  border-radius: 8px;
+  padding: 0.45rem;
+  background: white;
+  font-size: 0.68rem;
+}
+
+.vinyl-lot-coverage article.error { border-left-color: var(--red); }
+.vinyl-lot-coverage article span,
+.vinyl-lot-coverage article small { color: var(--muted); }
+
+.vinyl-lot-options {
+  border: 1px solid #cabd9f;
+  border-radius: 16px;
+  background: rgba(255, 253, 247, 0.96);
+  box-shadow: 0 9px 24px rgba(52, 41, 20, 0.06);
+}
+
+.vinyl-lot-options > summary {
+  padding: 0.75rem 0.9rem;
+  cursor: pointer;
+  color: #4c3a17;
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.vinyl-lot-option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  border-top: 1px solid var(--line);
+  padding: 0.8rem;
+}
+
+.vinyl-lot-option-grid > label:not(.vinyl-lot-check-option),
+.vinyl-lot-genre-options > div > label:not(.vinyl-lot-check-option),
+.vinyl-lot-feedback-overall label,
+.vinyl-lot-feedback-card label {
+  display: grid;
+  gap: 0.28rem;
+  color: #403820;
+  font-size: 0.71rem;
+  font-weight: 900;
+}
+
+.vinyl-lot-option-grid input,
+.vinyl-lot-genre-options input,
+.vinyl-lot-feedback-overall select,
+.vinyl-lot-feedback-overall textarea,
+.vinyl-lot-feedback-card select,
+.vinyl-lot-feedback-card textarea {
+  min-width: 0;
+  padding: 0.48rem 0.58rem;
+  font-size: 0.75rem;
+}
+
+.vinyl-lot-option-grid small,
+.vinyl-lot-genre-options small {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.vinyl-lot-check-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 42px;
+  border: 1px solid #e2dccf;
+  border-radius: 9px;
+  padding: 0.5rem 0.6rem;
+  background: #faf7ef;
+  color: #403820;
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.vinyl-lot-check-option input {
+  width: auto;
+  margin: 0;
+}
+
+.vinyl-lot-genre-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0 0.8rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.7rem;
+}
+
+.vinyl-lot-genre-options legend {
+  padding: 0 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 950;
+}
+
+.vinyl-lot-genre-options > div {
+  display: grid;
+  gap: 0.4rem;
+  border-radius: 10px;
+  padding: 0.5rem;
+  background: #f8f3e8;
+}
+
+.vinyl-lot-artist-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin: 0 0.8rem 0.8rem;
+  border: 1px solid #d3b76f;
+  border-radius: 11px;
+  padding: 0.65rem 0.75rem;
+  background: #fff8e7;
+}
+
+.vinyl-lot-artist-link div {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.vinyl-lot-artist-link strong { font-size: 0.75rem; }
+.vinyl-lot-artist-link span { color: var(--muted); font-size: 0.66rem; }
+.vinyl-lot-artist-link a { font-size: 0.72rem; font-weight: 950; }
+
+.vinyl-lot-coverage-panel {
+  display: grid;
+  gap: 0.65rem;
+  border: 1px solid #83ad8e;
+  border-radius: 15px;
+  padding: 0.75rem;
+  background: #eef8f0;
+}
+
+.vinyl-lot-coverage-panel.has-shortfall {
+  border-color: #d39767;
+  background: #fff2e7;
+}
+
+.vinyl-lot-coverage-panel header span {
+  color: #2a7540;
+  font-size: 0.64rem;
+  font-weight: 950;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.vinyl-lot-coverage-panel.has-shortfall header span { color: #9a451e; }
+
+.vinyl-lot-coverage-panel h3 {
+  margin: 0.12rem 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.1rem;
+}
+
+.vinyl-lot-coverage-panel > div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.vinyl-lot-coverage-panel article {
+  display: grid;
+  gap: 0.15rem;
+  border: 1px solid rgba(40, 90, 50, 0.22);
+  border-left: 4px solid #2f8247;
+  border-radius: 8px;
+  padding: 0.48rem;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.vinyl-lot-coverage-panel article.shortfall { border-left-color: #bd5e2f; }
+.vinyl-lot-coverage-panel article strong { font-size: 0.72rem; }
+.vinyl-lot-coverage-panel article span { font-size: 0.67rem; font-weight: 850; }
+.vinyl-lot-coverage-panel article small { color: var(--muted); font-size: 0.6rem; }
+
+.vinyl-lot-priority-artists {
+  border-left: 3px solid #c18c20;
+  padding: 0.32rem 0.45rem;
+  background: #fff8e7;
+  color: #6e5522;
+  font-size: 0.66rem;
+}
+
+.vinyl-lot-feedback-card {
+  border: 1px solid #d6c9ac;
+  border-radius: 10px;
+  background: #fbf7ed;
+}
+
+.vinyl-lot-feedback-card.complete {
+  border-color: #74a681;
+  background: #f0f8f1;
+}
+
+.vinyl-lot-feedback-card > summary {
+  padding: 0.48rem 0.55rem;
+  cursor: pointer;
+  font-size: 0.69rem;
+  font-weight: 950;
+}
+
+.vinyl-lot-feedback-card > div {
+  display: grid;
+  gap: 0.5rem;
+  border-top: 1px solid #ded4bf;
+  padding: 0.55rem;
+}
+
+.vinyl-lot-feedback-card textarea,
+.vinyl-lot-feedback-overall textarea {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.vinyl-lot-feedback-panel {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid #8f7bb3;
+  border-radius: 18px;
+  padding: 0.9rem;
+  background: linear-gradient(145deg, #f8f4ff, #fffdf8);
+  box-shadow: 0 12px 30px rgba(58, 42, 85, 0.08);
+}
+
+.vinyl-lot-feedback-panel header span {
+  color: #66508f;
+  font-size: 0.64rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vinyl-lot-feedback-panel h3 {
+  margin: 0.12rem 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.4rem;
+}
+
+.vinyl-lot-feedback-panel header p {
+  margin: 0.18rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.vinyl-lot-feedback-overall {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.35fr) minmax(0, 1fr);
+  gap: 0.6rem;
+}
+
+.vinyl-lot-feedback-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.vinyl-lot-feedback-actions span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 750;
+}
+
+.vinyl-lot-feedback-error {
+  margin: 0;
+  color: var(--red);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.vinyl-lot-feedback-saved {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  border: 1px solid #78a887;
+  border-radius: 10px;
+  padding: 0.6rem;
+  background: #eff8f1;
+  font-size: 0.69rem;
+}
+
+.vinyl-lot-feedback-saved small {
+  width: 100%;
+  color: var(--muted);
+}
+
+.vinyl-lot-page > .panel .vinyl-lot-controls span,
+.vinyl-lot-group .vinyl-lot-controls span {
+  color: var(--muted);
+}
+
 @media (max-width: 1050px) {
   .workbench-grid {
     grid-template-columns: 1fr;
@@ -2561,6 +3400,18 @@ input[type="radio"] {
   .arbitrage-detail {
     position: static;
     max-height: none;
+  }
+
+  .vinyl-lot-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .vinyl-lot-coverage > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .vinyl-lot-coverage-panel > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .arbitrage-profile-settings {
@@ -2698,6 +3549,36 @@ input[type="radio"] {
 
   .site-sale-meta {
     grid-template-columns: 1fr;
+  }
+
+  .vinyl-lot-hero {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .vinyl-lot-hero-mark {
+    display: none;
+  }
+
+  .vinyl-lot-notice {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .vinyl-lot-summary,
+  .vinyl-lot-grid,
+  .vinyl-lot-coverage > div,
+  .vinyl-lot-coverage-panel > div,
+  .vinyl-lot-option-grid,
+  .vinyl-lot-genre-options,
+  .vinyl-lot-feedback-overall {
+    grid-template-columns: 1fr;
+  }
+
+  .vinyl-lot-artist-link,
+  .vinyl-lot-feedback-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

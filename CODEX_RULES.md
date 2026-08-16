@@ -15,4 +15,4 @@
 
 ## Future Session Startup
 
-Read these files first if present: `PROJECT_BRIEF.md`, `DATA_MODEL.md`, `DECISIONS.md`, `CODEX_RULES.md`, `TEST_PLAN.md`, `README.md`, `.env.example`, and `package.json`.
+Read these files first if present: `AGENTS.md`, `PROJECT_BRIEF.md`, `DATA_MODEL.md`, `DECISIONS.md`, `CODEX_RULES.md`, `VINYL_LOT_LEARNING.md`, `TEST_PLAN.md`, `README.md`, `.env.example`, and `package.json`.
