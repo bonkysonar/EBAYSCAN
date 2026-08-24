@@ -167,6 +167,7 @@ Coverage should include:
 - Price normalization.
 - Title normalization.
 - Consensus extraction.
+- eBay application-token resolution prefers renewable client credentials over a configured short-lived static fallback.
 
 ## API Mock Testing
 

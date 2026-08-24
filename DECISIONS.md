@@ -212,6 +212,8 @@ Vinyl Lot Finder is isolated at `#/vinyl-lots`. Its initial production boundary 
 
 The page does not combine eBay content with third-party market data, infer seller type, persist listing history, calculate value or purchase recommendations, or use listing content for automated image analysis. Those capabilities require explicit written eBay approval or clarification before implementation. Hosted manual scans require a dedicated operator token and fail closed when it is not configured.
 
+Hosted eBay application access is renewable: the server mints short-lived tokens from `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET`, caches them only until near expiry, and prefers that durable credential pair over any emergency static Browse token. The separate Vinyl Lots operator token protects API quota and is entered once per trusted browser unless deliberately rotated.
+
 ## 2026-07-28: Broad Collection Coverage and Local Learning
 
 Vinyl-lot discovery no longer searches for an exact 20-record phrase. The default hard floor for known counts is 12. Plausible collection/lot listings with unknown counts remain reviewable, while apparent single LPs, singles, 7-inch/45 RPM records, choice listings, and packaging-only lots are excluded.

@@ -154,28 +154,28 @@ export const DEFAULT_EBAY_PURCHASE_LANES = Object.freeze([
 
 /**
  * Resolve an eBay application token without exposing credential material.
- * A purpose-specific static token takes precedence over client credentials.
+ * Durable client credentials take precedence. A purpose-specific static token
+ * is an emergency/local fallback only when the credential pair is unavailable.
  */
 export async function getEbayApplicationToken(options = {}) {
   const env = options.env ?? process.env;
+  const clientId = cleanText(env.EBAY_CLIENT_ID);
+  const clientSecret = cleanText(env.EBAY_CLIENT_SECRET);
   const staticToken = cleanText(
     env.EBAY_BROWSE_ACCESS_TOKEN ??
       env.EBAY_APPLICATION_ACCESS_TOKEN ??
       env.EBAY_APP_ACCESS_TOKEN,
   );
-  if (staticToken) {
-    return {
-      available: true,
-      credentialSource: "static_application_token",
-      expiresInSeconds: null,
-      status: "available",
-      token: staticToken,
-    };
-  }
-
-  const clientId = cleanText(env.EBAY_CLIENT_ID);
-  const clientSecret = cleanText(env.EBAY_CLIENT_SECRET);
   if (!clientId || !clientSecret) {
+    if (staticToken) {
+      return {
+        available: true,
+        credentialSource: "static_application_token",
+        expiresInSeconds: null,
+        status: "available",
+        token: staticToken,
+      };
+    }
     return {
       available: false,
       credentialSource: null,

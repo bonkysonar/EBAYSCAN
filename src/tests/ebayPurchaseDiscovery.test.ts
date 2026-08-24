@@ -17,14 +17,32 @@ const lane = {
 };
 
 describe("eBay purchase discovery", () => {
-  it("prefers an explicit static application token without making a token request", async () => {
-    const fetchImpl = vi.fn();
+  it("prefers durable client credentials over a short-lived static token", async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({ access_token: "generated-test-token", expires_in: 7200 }));
     const result = await getEbayApplicationToken({
       env: {
         EBAY_BROWSE_ACCESS_TOKEN: "static-test-token",
         EBAY_CLIENT_ID: "client-id",
         EBAY_CLIENT_SECRET: "client-secret",
       },
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      available: true,
+      credentialSource: "client_credentials",
+      expiresInSeconds: 7200,
+      status: "available",
+      token: "generated-test-token",
+    });
+  });
+
+  it("uses a static application token only when client credentials are unavailable", async () => {
+    const fetchImpl = vi.fn();
+    const result = await getEbayApplicationToken({
+      env: { EBAY_BROWSE_ACCESS_TOKEN: "static-test-token" },
       fetchImpl: fetchImpl as typeof fetch,
     });
 

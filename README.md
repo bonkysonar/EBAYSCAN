@@ -122,6 +122,8 @@ The hosted scan route has a 60-second Vercel function limit and a 50-second inte
 
 The default known-count floor is 12 records. The page removes obvious single LPs, choice/per-record listings, known groups under 12, singles, 7-inch/45 RPM lots, empty-sleeve lots, and non-vinyl formats. Plausible collections without a trustworthy count stay in a separate human-review queue. Results are transient, expire within six hours, and are not published to Vercel Blob.
 
+Hosted Vinyl Lots scans use the server-side `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` pair to mint short-lived eBay application tokens automatically. Client credentials take precedence over any static Browse token, so normal operation does not require recurring eBay sign-in or manual token rotation.
+
 Scan size, retained results per category, enabled genres, unknown-count handling, singles/45 filtering, and per-genre fallback phrases are customizable and saved on this computer. `#/vinyl-lot-artists` contains an editable local list of priority artists. Artist names are discovery and inclusion signals only, never value guarantees or custom ranking inputs.
 
 Each displayed result and the overall scan can be rated from 1 to 10 with an explanation. On loopback development, **Save & open in Codex** stores the sanitized packet under `%LOCALAPPDATA%\RecordScanner\vinyl-lot-feedback\inbox`. On the hosted site, **Save in browser & open Codex** stores the same whitelisted fields in browser-local storage and copies the complete request before opening Codex. Both paths exclude eBay listing content and raw item IDs, and both require the user to press **Send**. `VINYL_LOT_LEARNING.md` is the durable, reviewable product memory; Codex native memory is optional recall, not the product database.
