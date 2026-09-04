@@ -31,7 +31,7 @@ Requests use bounded concurrency, per-host pacing, timeouts, retries, and backof
 node scripts/runRetailArbitrageScan.mjs --sources=source-id-1,source-id-2 --skipUpload
 ```
 
-Source-limited runs are diagnostics only. New run manifests distinguish the full configured catalog from the sources actually scanned, and the publication API rejects a targeted/partial run as the new site-wide latest result.
+Source-limited runs cannot use full publication. The versioned `publicationMode: "source_updates"`, `sourceUpdateVersion: 1` contract can publish independently verified retailer observations, retain untouched sources at their original timestamps, and label partial coverage. The original full-catalog coverage gate is unchanged.
 
 Useful scan controls include `--sourceConcurrency`, `--fetchRetries`, `--fetchRetryDelayMs`, `--hostDelayMs`, `--fetchTimeoutMs`, `--maxDiscoveredSalePages`, `--discoveryDetailLimit`, `--discoveryConcurrency`, and `--ebayPurchaseMaxDetailRequests`. Defaults favor coverage over speed: four sources run concurrently, same-host requests are spaced by 650 ms, and retryable failures back off from one second.
 
@@ -206,7 +206,7 @@ The pipeline has explicit phases:
 2. `runRetailArbitrageScan.mjs` writes a timestamped `phase: "scan"`, `publicationStatus: "draft"` artifact with a stable `runId`.
 3. Active eBay enrichment updates that draft when credentials are available.
 4. Product Research is gathered against the find-ID plan.
-5. `curateRetailArbitrageRun.mjs` applies the research, runs the canonical evaluator, and writes the dated `phase: "final"` artifact plus an evidence sidecar.
+5. `curateRetailArbitrageRun.mjs` applies the research, runs the canonical evaluator, and writes the run-ID-specific `phase: "final"` artifact plus an evidence sidecar.
 6. `uploadLatestArbitrageFinds.mjs` accepts only final schema-version-2 payloads.
 
 Example:
@@ -298,3 +298,29 @@ npx vitest run src/tests/candidatePipeline.test.ts src/tests/shopifyCatalog.test
 npx vitest run src/tests/arbitrageEvaluation.test.ts src/tests/productResearchCuration.test.ts
 npx vitest run src/tests/saleCampaignLifecycle.test.ts src/tests/arbitrageFindsApi.test.ts
 ```
+
+## Decision-list workflow (September 2026)
+
+Run `npm run arbitrage:daily` to prepare a daily broad scan or a bounded campaign refresh. It returns an exact context path, draft path, and research checkpoint path. `--full` forces a broad scan. The cadence file records the last broad attempt; it never substitutes an older draft after a failed command.
+
+The daily automation runs at 5:30 local, with refresh opportunities every two hours. Refreshes check up to twelve sources, pinning up to six priority active-campaign sources and rotating the others. Retailer blocks remain unknown coverage. Requests to a host stop after a final 403/429, and offer verification has a three-minute pass budget. No browser fingerprint or access-control workaround is used.
+
+Research uses the retained pool (up to 240 products), not the preliminary visible 80. Save each completed Product Research query to the checkpoint immediately, with its find ID, query, status, and rows. Use `npm run arbitrage:research-plan -- <draft> --checkpoint=<checkpoint>` to resume. Keep failed/blocked/pending queries separate from successful empty searches. Broad release fallback cannot prove an exact pressing. Aggregate results cannot establish dated velocity.
+
+Finish with `node scripts/runRetailWorkflow.mjs --finish=<context> --research=<checkpoint>`. Omitting research leaves it explicitly pending. The command curates, validates, publishes the same final artifact, and records the attempt result. Full publication requires the original coverage gate; otherwise the separate source-update contract applies. Final artifacts and sidecars use the run ID so multiple daily refreshes do not overwrite each other.
+
+The default Worth considering list contains at most fifteen release groups, with no fill quota. Offers must be at most 24 hours old. A verified BUY may appear; a B candidate needs at least $7 expected net, 30% ROI, credible matched demand, fresh active evidence, and at most one remaining timing or checkout-price check. Tier C research is optional. Equivalent releases are grouped for display only; edition-specific prices and evidence remain separate.
+
+Campaign terms bind to their own content block and scope. Fixed discounts and BOGO use explicit baskets; thresholds do not make extra inventory free. A basket is illustrative, before tax and selling costs, and never creates an automatic BUY. Shopify Ajax product and cart GETs check the exact physical variant, availability, price, and presentment currency. Checkout-only discounts remain estimates. Unsupported endpoints or access failures cannot establish verification.
+
+The feedback endpoint accepts only signed, expiring receipts for published offers and enumerated outcomes. The learning store contains opaque hashes, ranks, reason codes, and timestamps only. It does not retain marketplace titles, prices, images, URLs, sellers, descriptions, or raw IDs. Unchanged negative outcomes suppress research for up to fourteen days; material offer or own-evidence changes reopen it. Successful empty research is deferred for seven days using the same sanitized identity, while failed searches remain retryable.
+
+`node scripts/reportRetailUsefulness.mjs` measures the last seven days of explicit feedback on the first ten recommendations. It reports null precision when nothing has been reviewed. The 70% usefulness target is a measurement target, not a claimed result. Per-run source/campaign funnel counters and daily aggregate metrics support the shadow evaluation. The undisclosed retailer deal is not used as a fixture.
+
+Status and feedback API: `/api/arbitrage/operations` (GET status; authenticated POST scan status; POST `?action=feedback` with a signed offer receipt; authenticated GET feedback for the scanner). The existing upload secret signs receipts and authorizes scanner operations; it is never returned to the browser. Review sync failure remains visible and keeps the browser-local outcome.
+
+
+
+Research links now include explicit start/end timestamps because Seller Hub can display a three-year dropdown while loading only 30 days when the URL has only `dayRange`. Scheduled research must verify the results header and save `periodDays`; absent a known window, curation leaves velocity unknown. An empty checkpoint is pending, failed requests cannot validate partial rows, and only a successfully exhausted query ladder is eligible for seven-day empty-search deferral.
+
+The final retailer verification runs after sold-research curation, with host pacing, a three-minute budget, and no additional requests to a host after a 403/429. These limits preserve explicit verification gaps when a retailer refuses access. The scanner retains separate own-sales, campaign, and exploration allocations through research; display ranking runs after evidence is applied.

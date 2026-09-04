@@ -26,15 +26,26 @@ const COLOR_TERMS = [
 export function buildSoldResearchQueryVariants(candidate = {}) {
   const artist = normalizeResearchArtist(candidate.artist ?? "");
   const rawTitle = preferredTitle(candidate);
-  const baseTitle = normalizedCandidateTitle(rawTitle, candidate.sourceListingTitle ?? "", artist);
+  const baseTitle = normalizedCandidateTitle(
+    rawTitle,
+    candidate.sourceListingTitle ?? "",
+    artist,
+  );
   const baseQuery = cleanResearchText(
-    artist && !startsWithSameWords(baseTitle, artist) ? `${artist} ${baseTitle}` : baseTitle || artist,
+    artist && !startsWithSameWords(baseTitle, artist)
+      ? `${artist} ${baseTitle}`
+      : baseTitle || artist,
   );
   const variants = [];
-  const exactSignals = editionSignals(candidate, `${candidate.title ?? ""} ${candidate.sourceListingTitle ?? ""}`);
+  const exactSignals = editionSignals(
+    candidate,
+    `${candidate.title ?? ""} ${candidate.sourceListingTitle ?? ""}`,
+  );
 
   for (const signalSet of exactSignalVariants(exactSignals)) {
-    const exactQuery = truncateQuery(cleanResearchText(`${baseQuery} ${signalSet.join(" ")}`));
+    const exactQuery = truncateQuery(
+      cleanResearchText(`${baseQuery} ${signalSet.join(" ")}`),
+    );
     if (exactQuery && normalizeKey(exactQuery) !== normalizeKey(baseQuery)) {
       variants.push({
         identitySignals: signalSet,
@@ -46,18 +57,29 @@ export function buildSoldResearchQueryVariants(candidate = {}) {
 
   const barcode = validBarcode(candidate.barcode);
   if (barcode) {
-    variants.push({ identitySignals: [barcode], kind: "barcode", query: barcode });
+    variants.push({
+      identitySignals: [barcode],
+      kind: "barcode",
+      query: barcode,
+    });
   }
 
   if (baseQuery) {
-    variants.push({ identitySignals: [], kind: "base", query: truncateQuery(baseQuery) });
+    variants.push({
+      identitySignals: [],
+      kind: "base",
+      query: truncateQuery(baseQuery),
+    });
   }
 
   return dedupeVariants(variants);
 }
 
 export function buildSoldResearchLinks(candidate = {}, options = {}) {
-  const productResearchDayRange = positiveInteger(options.productResearchDayRange, 1095);
+  const productResearchDayRange = positiveInteger(
+    options.productResearchDayRange,
+    1095,
+  );
   const publicWindowDays = positiveInteger(options.publicWindowDays, 90);
   return buildSoldResearchQueryVariants(candidate).map((variant) => ({
     ...variant,
@@ -75,7 +97,11 @@ export function buildEbayProductResearchUrl(query, options = {}) {
   const url = new URL("https://www.ebay.com/sh/research");
   url.searchParams.set("marketplace", "EBAY-US");
   url.searchParams.set("keywords", truncateQuery(cleanResearchText(query)));
-  url.searchParams.set("dayRange", String(positiveInteger(options.dayRange, 1095)));
+  const dayRange = positiveInteger(options.dayRange, 1095);
+  const endDate = Math.floor(Date.now() / 86400000) * 86400000;
+  url.searchParams.set("dayRange", String(dayRange));
+  url.searchParams.set("startDate", String(endDate - dayRange * 86400000));
+  url.searchParams.set("endDate", String(endDate));
   url.searchParams.set("categoryId", EBAY_RESEARCH_VINYL_CATEGORY_ID);
   url.searchParams.set("conditionId", EBAY_RESEARCH_NEW_CONDITION_ID);
   url.searchParams.set("offset", "0");
@@ -99,10 +125,16 @@ export function buildEbayPublicSoldUrl(query) {
 export function buildBaseResearchQuery(artist, title) {
   const normalizedArtist = normalizeResearchArtist(artist);
   const normalizedTitle = normalizeResearchTitle(title);
-  const titleWithoutArtist = withoutLeadingArtist(normalizedTitle, normalizedArtist);
-  const usefulTitle = titleWithoutArtist || (normalizedArtist && normalizeKey(normalizedTitle) === normalizeKey(normalizedArtist)
-    ? "self titled"
-    : normalizedTitle);
+  const titleWithoutArtist = withoutLeadingArtist(
+    normalizedTitle,
+    normalizedArtist,
+  );
+  const usefulTitle =
+    titleWithoutArtist ||
+    (normalizedArtist &&
+    normalizeKey(normalizedTitle) === normalizeKey(normalizedArtist)
+      ? "self titled"
+      : normalizedTitle);
   return truncateQuery(
     cleanResearchText(
       normalizedArtist && !startsWithSameWords(usefulTitle, normalizedArtist)
@@ -114,11 +146,15 @@ export function buildBaseResearchQuery(artist, title) {
 
 export function normalizeResearchArtist(rawArtist = "") {
   const raw = decodeEntities(String(rawArtist));
-  if (/^\s*(?:unknown\s+artist|various(?:\s+artists?)?)\s*$/i.test(raw)) return "";
+  if (/^\s*(?:unknown\s+artist|various(?:\s+artists?)?)\s*$/i.test(raw))
+    return "";
   return cleanResearchText(
     raw
       .replace(/[|:]+/g, " ")
-      .replace(/\b(?:official\s+store|sound\s+of\s+vinyl|def\s+jam\s+official|recordings?\s+store|music\s+store)\b/gi, " ")
+      .replace(
+        /\b(?:official\s+store|sound\s+of\s+vinyl|def\s+jam\s+official|recordings?\s+store|music\s+store)\b/gi,
+        " ",
+      )
       .replace(/^\s*(?:def\s+jam|store|shop)\s*$/gi, " "),
   );
 }
@@ -132,20 +168,50 @@ export function normalizeResearchTitle(rawTitle = "") {
     .replace(/\bwas\s*\/\s*ea\b.*$/gi, " ")
     .replace(/\bparental\s+advisory(?:\s+label)?\b/gi, " ")
     .replace(/\bfree\s+shipping\b.*$/gi, " ")
-    .replace(/\bat\s+(?:amazon|target|walmart|urban\s+outfitters|barnes\s*&\s*noble|deep\s+discount)\b.*$/gi, " ")
-    .replace(/\s+-\s+(?:(?:opaque|transparent|translucent)\s+)?(?:black|blue|clear|gold|green|orange|pink|purple|red|silver|white|yellow)\s*$/gi, " ")
+    .replace(
+      /\bat\s+(?:amazon|target|walmart|urban\s+outfitters|barnes\s*&\s*noble|deep\s+discount)\b.*$/gi,
+      " ",
+    )
+    .replace(
+      /\s+-\s+(?:(?:opaque|transparent|translucent)\s+)?(?:black|blue|clear|gold|green|orange|pink|purple|red|silver|white|yellow)\s*$/gi,
+      " ",
+    )
     .replace(/\[[^\]]*\]/g, " ")
-    .replace(/\([^)]*(?:vinyl|lp|record|edition|exclusive|color|colour|soundtrack|remaster|sale|deal)[^)]*\)/gi, " ")
+    .replace(
+      /\([^)]*(?:vinyl|lp|record|edition|exclusive|color|colour|soundtrack|remaster|sale|deal)[^)]*\)/gi,
+      " ",
+    )
     .replace(/\boriginal\s+(?:motion\s+picture\s+)?soundtrack\b/gi, " ")
     .replace(/\bmotion\s+picture\s+soundtrack\b/gi, " ")
     .replace(/\b(?:soundtrack|ost)\b/gi, " ")
-    .replace(/\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban\s+outfitters|uo)\s+edition\b/gi, " ")
-    .replace(/\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban\s+outfitters|uo)\b/gi, " ")
-    .replace(/\b(?:(?:opaque|transparent|translucent)\s+)?(?:colored|colour|color|clear|red|blue|green|yellow|pink|purple|orange|white|black|gold|silver|splatter|swirl|marbled)\s+vinyl\b/gi, " ")
-    .replace(/\b(?:vinyl|record|records|album|(?:[1-9]\s*(?:x|-)?)?\s*lps?|ep|single)\b/gi, " ")
-    .replace(/\b(?:180\s*(?:g|grams?)|heavyweight|remaster(?:ed)?|half[-\s]?speed\s+master(?:ed)?)\b/gi, " ")
-    .replace(/\b(?:pre[-\s]?order|sale|clearance|new|sealed|brand\s+new|staff\s+pick)\b/gi, " ")
-    .replace(/\s+-\s+(?:r\s*&\s*b|rock|pop|country|jazz|rap|hip[-\s]?hop)(?:\s+-\s*)*$/gi, " ")
+    .replace(
+      /\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban\s+outfitters|uo)\s+edition\b/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban\s+outfitters|uo)\b/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:(?:opaque|transparent|translucent)\s+)?(?:colored|colour|color|clear|red|blue|green|yellow|pink|purple|orange|white|black|gold|silver|splatter|swirl|marbled)\s+vinyl\b/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:vinyl|record|records|album|(?:[1-9]\s*(?:x|-)?)?\s*lps?|ep|single)\b/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:180\s*(?:g|grams?)|heavyweight|remaster(?:ed)?|half[-\s]?speed\s+master(?:ed)?)\b/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:pre[-\s]?order|sale|clearance|new|sealed|brand\s+new|staff\s+pick)\b/gi,
+      " ",
+    )
+    .replace(
+      /\s+-\s+(?:r\s*&\s*b|rock|pop|country|jazz|rap|hip[-\s]?hop)(?:\s+-\s*)*$/gi,
+      " ",
+    )
     .replace(/[()]/g, " ")
     .replace(/[|:]+/g, " ")
     .replace(/\s+-\s+/g, " ");
@@ -162,12 +228,16 @@ function preferredTitle(candidate) {
 
 function normalizedCandidateTitle(title, sourceTitle, artist) {
   let normalized = normalizeResearchTitle(title);
-  if (!normalized || normalizeKey(withoutLeadingArtist(normalized, artist)) === "") {
+  if (
+    !normalized ||
+    normalizeKey(withoutLeadingArtist(normalized, artist)) === ""
+  ) {
     normalized = normalizeResearchTitle(sourceTitle);
   }
   const withoutArtist = withoutLeadingArtist(normalized, artist);
   if (withoutArtist) return withoutArtist;
-  if (artist && normalized && normalizeKey(normalized) === normalizeKey(artist)) return "self titled";
+  if (artist && normalized && normalizeKey(normalized) === normalizeKey(artist))
+    return "self titled";
   return normalized;
 }
 
@@ -186,36 +256,54 @@ function editionSignals(candidate, rawText) {
   const formatMatch = raw.match(/\b([2-9])\s*(?:x|-)?\s*lp\b/i);
   if (formatMatch) signals.push(`${formatMatch[1]}LP`);
 
-  const structuredRetailer = cleanResearchText(identity.retailerExclusive ?? "");
-  const retailerMatch = raw.match(/\b(walmart|target|urban\s+outfitters|uo|indie)\b.{0,24}\bexclusive\b/i);
-  const retailer = structuredRetailer || cleanResearchText(retailerMatch?.[1] ?? "");
+  const structuredRetailer = cleanResearchText(
+    identity.retailerExclusive ?? "",
+  );
+  const retailerMatch = raw.match(
+    /\b(walmart|target|urban\s+outfitters|uo|indie)\b.{0,24}\bexclusive\b/i,
+  );
+  const retailer =
+    structuredRetailer || cleanResearchText(retailerMatch?.[1] ?? "");
   if (retailer) signals.push(retailer.toLowerCase(), "exclusive");
 
-  for (const signal of Array.isArray(identity.signals) ? identity.signals : []) {
+  for (const signal of Array.isArray(identity.signals)
+    ? identity.signals
+    : []) {
     const normalized = normalizeEditionSignal(signal);
     if (normalized) signals.push(normalized);
   }
 
-  const anniversary = raw.match(/\b((?:\d{1,3})(?:st|nd|rd|th)\s+anniversary)\b/i);
-  if (anniversary) signals.push(cleanResearchText(anniversary[1]).toLowerCase());
+  const anniversary = raw.match(
+    /\b((?:\d{1,3})(?:st|nd|rd|th)\s+anniversary)\b/i,
+  );
+  if (anniversary)
+    signals.push(cleanResearchText(anniversary[1]).toLowerCase());
   if (/\bdeluxe\b/i.test(raw)) signals.push("deluxe");
   if (/\bhalf[-\s]?speed\b/i.test(raw)) signals.push("half speed");
   if (/\b180\s*(?:g|grams?)\b/i.test(raw)) signals.push("180g");
   if (/\bmono\b/i.test(raw)) signals.push("mono");
   if (/\bstereo\b/i.test(raw)) signals.push("stereo");
   if (/\bremaster(?:ed)?\b/i.test(raw)) {
-    const remasterYear = raw.match(/\b((?:19|20)\d{2})\b.{0,18}\bremaster(?:ed)?\b/i)?.[1];
+    const remasterYear = raw.match(
+      /\b((?:19|20)\d{2})\b.{0,18}\bremaster(?:ed)?\b/i,
+    )?.[1];
     if (remasterYear) signals.push(remasterYear);
     signals.push("remastered");
   }
 
   const rawColor = raw.match(
-    new RegExp(`\\b(?:opaque|transparent|translucent)?\\s*(${COLOR_TERMS.join("|")})\\b.{0,18}\\bvinyl\\b`, "i"),
+    new RegExp(
+      `\\b(?:opaque|transparent|translucent)?\\s*(${COLOR_TERMS.join("|")})\\b.{0,18}\\bvinyl\\b`,
+      "i",
+    ),
   );
   if (rawColor) signals.push(rawColor[1].toLowerCase());
-  const rawPattern = raw.match(/\b(splatter|marbled|swirl|picture\s+disc)\b.{0,18}\bvinyl\b/i);
+  const rawPattern = raw.match(
+    /\b(splatter|marbled|swirl|picture\s+disc)\b.{0,18}\bvinyl\b/i,
+  );
   if (rawPattern) signals.push(rawPattern[1].toLowerCase());
-  if (/\b(?:soundtrack|original\s+motion\s+picture|\bost\b)/i.test(raw)) signals.push("soundtrack");
+  if (/\b(?:soundtrack|original\s+motion\s+picture|\bost\b)/i.test(raw))
+    signals.push("soundtrack");
 
   return uniqueSignals(signals);
 }
@@ -224,20 +312,31 @@ function exactSignalVariants(signals) {
   if (!signals.length) return [];
   if (!signals.includes("soundtrack")) return [signals];
   const withoutSoundtrack = signals.filter((signal) => signal !== "soundtrack");
-  return [[...withoutSoundtrack, "Soundtrack"], [...withoutSoundtrack, "OST"]];
+  return [
+    [...withoutSoundtrack, "Soundtrack"],
+    [...withoutSoundtrack, "OST"],
+  ];
 }
 
 function normalizeEditionSignal(signal) {
   const normalized = cleanResearchText(signal).toLowerCase();
   if (/^remaster(?:ed)?$/.test(normalized)) return "remastered";
-  if (/^(?:deluxe|mono|stereo|splatter|transparent|translucent|marbled|swirl)$/.test(normalized)) return normalized;
-  if (/^\d{1,3}(?:st|nd|rd|th) anniversary$/.test(normalized)) return normalized;
+  if (
+    /^(?:deluxe|mono|stereo|splatter|transparent|translucent|marbled|swirl)$/.test(
+      normalized,
+    )
+  )
+    return normalized;
+  if (/^\d{1,3}(?:st|nd|rd|th) anniversary$/.test(normalized))
+    return normalized;
   return "";
 }
 
 function validBarcode(value) {
   const barcode = String(value ?? "").replace(/[\s-]/g, "");
-  return /^\d+$/.test(barcode) && VALID_BARCODE_LENGTHS.has(barcode.length) ? barcode : "";
+  return /^\d+$/.test(barcode) && VALID_BARCODE_LENGTHS.has(barcode.length)
+    ? barcode
+    : "";
 }
 
 function withoutLeadingArtist(title, artist) {
@@ -252,7 +351,10 @@ function withoutLeadingArtist(title, artist) {
 
 function startsWithSameWords(value, prefix) {
   if (!value || !prefix) return false;
-  return value.toLowerCase().split(/\s+/).slice(0, 4).join(" ") === prefix.toLowerCase().split(/\s+/).slice(0, 4).join(" ");
+  return (
+    value.toLowerCase().split(/\s+/).slice(0, 4).join(" ") ===
+    prefix.toLowerCase().split(/\s+/).slice(0, 4).join(" ")
+  );
 }
 
 function dedupeVariants(variants) {
@@ -286,12 +388,18 @@ function cleanResearchText(value) {
 }
 
 function normalizeKey(value) {
-  return cleanResearchText(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return cleanResearchText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function truncateQuery(query) {
   if (query.length <= QUERY_MAX_LENGTH) return query;
-  return query.slice(0, QUERY_MAX_LENGTH).replace(/\s+\S*$/, "").trim();
+  return query
+    .slice(0, QUERY_MAX_LENGTH)
+    .replace(/\s+\S*$/, "")
+    .trim();
 }
 
 function positiveInteger(value, fallback) {

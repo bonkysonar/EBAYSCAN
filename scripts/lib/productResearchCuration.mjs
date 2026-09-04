@@ -1,3 +1,4 @@
+import { retailEligibility } from "./retailIdentity.mjs";
 import {
   buildEbayProductResearchUrl,
   buildEbayPublicSoldUrl,
@@ -11,7 +12,6 @@ const DAMAGED_PATTERN =
 const SIGNED_PATTERN = /\b(?:signed|autograph(?:ed)?)\b/i;
 const BOX_SET_PATTERN = /\b(?:box\s*set|boxset)\b/i;
 const PRODUCT_RESEARCH_PAGE_LIMIT = 50;
-const PRODUCT_RESEARCH_PERIOD_DAYS = 1095;
 const TOKEN_NOISE = new Set([
   "a",
   "album",
@@ -70,6 +70,11 @@ const IDENTITY_TERMS = [
 export function buildProductResearchPlan(finds, options = {}) {
   const maxEntries = finiteOr(options.maxEntries, finds.length);
   return finds
+    .filter(
+      (find) =>
+        retailEligibility(find).eligible &&
+        find.identityStatus !== "unresolved",
+    )
     .filter(isResearchableFind)
     .map((find) => {
       const variants = researchVariantDetails(find);
@@ -95,7 +100,9 @@ export function buildProductResearchPlan(finds, options = {}) {
 
 export function curateResearchForFind(find, rawResearch, now = new Date()) {
   const entries = researchEntries(rawResearch);
-  const exactEntries = entries.filter((entry) => isExactResearchEntry(find, entry));
+  const exactEntries = entries.filter((entry) =>
+    isExactResearchEntry(find, entry),
+  );
   const candidates = (exactEntries.length > 0 ? exactEntries : entries)
     .map((entry) => ({
       entry,
@@ -122,7 +129,9 @@ export function curateResearchForFind(find, rawResearch, now = new Date()) {
     if (
       !best ||
       evidence.totalSoldCount > best.totalSoldCount ||
-      (evidence.totalSoldCount === best.totalSoldCount && evidence.matchScore > best.matchScore)
+      (evidence.totalSoldCount === best.totalSoldCount &&
+        (evidence.matchScore > best.matchScore ||
+          (evidence.status === "failed" && best.status === "no_rows")))
     ) {
       best = evidence;
     }
@@ -131,7 +140,12 @@ export function curateResearchForFind(find, rawResearch, now = new Date()) {
   return best;
 }
 
-export function bestEvidenceForEntry(find, entry, now = new Date(), options = {}) {
+export function bestEvidenceForEntry(
+  find,
+  entry,
+  now = new Date(),
+  options = {},
+) {
   const variants = entry.runs.map((run) => run.query).filter(Boolean);
   const exactEntry = options.exactEntry === true;
   let best = null;
@@ -142,20 +156,37 @@ export function bestEvidenceForEntry(find, entry, now = new Date(), options = {}
       researchQuery: find.researchQuery || run.query,
       researchRunQuery: run.query,
     };
-    const rows = (run.rows ?? [])
+    const queryFailed =
+      Boolean(run.error) ||
+      ["failed", "unavailable", "blocked"].includes(run.status);
+    const rows = (queryFailed ? [] : (run.rows ?? []))
       .map(parseProductResearchRow)
       .filter((row) => row.totalSold > 0 && row.avgSoldPrice !== null)
-      .map((row) => ({ ...row, matchScore: productResearchRowMatchScore(matchFind, row.title) }))
+      .map((row) => ({
+        ...row,
+        matchScore: productResearchRowMatchScore(matchFind, row.title),
+      }))
       .filter((row) => row.matchScore >= 0.68);
 
     const datedSales = exactEntry ? datedSingleUnitSales(rows, run, now) : null;
-    const aggregatePeriodDays = exactEntry && rows.length ? productResearchPeriodDays(run) : null;
+    const aggregatePeriodDays =
+      exactEntry && rows.length ? productResearchPeriodDays(run) : null;
     const totalSoldCount = rows.reduce((sum, row) => sum + row.totalSold, 0);
     const averageSoldPrice = weightedAverage(rows, "avgSoldPrice");
     const averageSoldShipping = weightedAverage(rows, "avgShipping");
-    const latestSoldDate = rows.map((row) => row.dateLastSold).filter(Boolean).sort().at(-1) ?? null;
-    const oneSellerSoldCount = rows.reduce((maximum, row) => Math.max(maximum, row.totalSold), 0);
-    const matchScore = rows.length ? weightedAverage(rows, "matchScore") ?? 0 : 0;
+    const latestSoldDate =
+      rows
+        .map((row) => row.dateLastSold)
+        .filter(Boolean)
+        .sort()
+        .at(-1) ?? null;
+    const oneSellerSoldCount = rows.reduce(
+      (maximum, row) => Math.max(maximum, row.totalSold),
+      0,
+    );
+    const matchScore = rows.length
+      ? (weightedAverage(rows, "matchScore") ?? 0)
+      : 0;
     const evidence = {
       aggregatePeriodDays,
       aggregateUnitsSold: exactEntry && rows.length ? totalSoldCount : null,
@@ -170,17 +201,26 @@ export function bestEvidenceForEntry(find, entry, now = new Date(), options = {}
       sales30Days: datedSales?.sales30Days ?? null,
       sales90Days: datedSales?.sales90Days ?? null,
       sales365Days: datedSales?.sales365Days ?? null,
-      status: rows.length ? "validated" : "no_rows",
+      status: rows.length
+        ? "validated"
+        : run.error || ["failed", "unavailable", "blocked"].includes(run.status)
+          ? "failed"
+          : run.status === "pending"
+            ? "pending"
+            : "no_rows",
       totalSoldCount,
       url: run.url ?? "",
       variants,
-      velocityStatus: datedSales ? "dated_single_unit_rows" : "unknown_from_aggregate_rows",
+      velocityStatus: datedSales
+        ? "dated_single_unit_rows"
+        : "unknown_from_aggregate_rows",
     };
 
     if (
       !best ||
       evidence.totalSoldCount > best.totalSoldCount ||
-      (evidence.totalSoldCount === best.totalSoldCount && evidence.matchScore > best.matchScore)
+      (evidence.totalSoldCount === best.totalSoldCount &&
+        evidence.matchScore > best.matchScore)
     ) {
       best = evidence;
     }
@@ -201,7 +241,7 @@ export function bestEvidenceForEntry(find, entry, now = new Date(), options = {}
       sales30Days: null,
       sales90Days: null,
       sales365Days: null,
-      status: "no_rows",
+      status: "pending",
       totalSoldCount: 0,
       url: entry.runs[0]?.url ?? "",
       variants,
@@ -225,7 +265,12 @@ export function parseProductResearchRow(row) {
 
 export function productResearchRowMatchScore(find, rowTitleValue) {
   const rowTitle = cleanText(rowTitleValue);
-  if (!rowTitle || NON_RECORD_PATTERN.test(rowTitle) || DAMAGED_PATTERN.test(rowTitle)) return 0;
+  if (
+    !rowTitle ||
+    NON_RECORD_PATTERN.test(rowTitle) ||
+    DAMAGED_PATTERN.test(rowTitle)
+  )
+    return 0;
 
   const originalCandidateText = cleanText(
     `${find.artist ?? ""} ${find.title ?? ""} ${find.sourceListingTitle ?? ""}`,
@@ -236,7 +281,9 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
     `${originalCandidateText} ${find.researchQuery ?? ""} ${find.researchRunQuery ?? ""}`,
   );
   const artistTokens = usefulTokens(meaningfulArtist(find.artist));
-  const originalTitleTokens = usefulTokens(normalizeResearchTitle(preferredResearchTitle(find)));
+  const originalTitleTokens = usefulTokens(
+    normalizeResearchTitle(preferredResearchTitle(find)),
+  );
   const titleTokens =
     originalTitleTokens.length > 0
       ? originalTitleTokens
@@ -246,14 +293,29 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
   if (titleTokens.length === 0) return 0;
 
   const titleCoverage = overlapRatio(titleTokens, rowTokens);
-  const artistCoverage = artistTokens.length ? overlapRatio(artistTokens, rowTokens) : 1;
-  const requiredTitleCoverage = titleTokens.length <= 2 ? 1 : titleTokens.length <= 4 ? 0.67 : 0.55;
+  const artistCoverage = artistTokens.length
+    ? overlapRatio(artistTokens, rowTokens)
+    : 1;
+  const requiredTitleCoverage =
+    titleTokens.length <= 2 ? 1 : titleTokens.length <= 4 ? 0.67 : 0.55;
   if (titleCoverage < requiredTitleCoverage) return 0;
-  if (titleTokens.length === 2 && !containsContiguousTokens(rowTokenList, titleTokens)) return 0;
-  if (artistTokens.length && artistCoverage === 0 && titleTokens.length < 5) return 0;
+  if (
+    titleTokens.length === 2 &&
+    !containsContiguousTokens(rowTokenList, titleTokens)
+  )
+    return 0;
+  if (artistTokens.length && artistCoverage === 0 && titleTokens.length < 5)
+    return 0;
 
   const candidateIdentity = identityTerms(candidateText);
   const rowIdentity = new Set(identityTerms(rowTitle));
+  // A generic edition cannot inherit the resale price of an unconfirmed premium pressing.
+  const unconfirmedEdition = [...rowIdentity].some(
+    (term) =>
+      !["black", "stereo", "remaster", "remastered"].includes(term) &&
+      !candidateIdentity.includes(term),
+  );
+  if (unconfirmedEdition) return Math.min(0.66, titleCoverage);
   const identityConflict =
     candidateIdentity.length > 0 &&
     rowIdentity.size > 0 &&
@@ -262,15 +324,42 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
       candidateText,
     );
   if (identityConflict) return 0;
-  if (!SIGNED_PATTERN.test(candidateText) && SIGNED_PATTERN.test(rowTitle)) return Math.min(0.66, titleCoverage);
+  if (!SIGNED_PATTERN.test(candidateText) && SIGNED_PATTERN.test(rowTitle))
+    return Math.min(0.66, titleCoverage);
 
   const formatBonus = /\b(?:vinyl|lp|record)\b/i.test(rowTitle) ? 0.06 : 0;
-  const identityBonus = candidateIdentity.some((term) => rowIdentity.has(term)) ? 0.06 : 0;
-  return Math.min(1, titleCoverage * 0.68 + artistCoverage * 0.2 + formatBonus + identityBonus);
+  const identityBonus = candidateIdentity.some((term) => rowIdentity.has(term))
+    ? 0.06
+    : 0;
+  return Math.min(
+    1,
+    titleCoverage * 0.68 + artistCoverage * 0.2 + formatBonus + identityBonus,
+  );
 }
 
 export function researchVariants(find) {
   return researchVariantDetails(find).map((variant) => variant.query);
+}
+
+export function researchCheckpointComplete(planEntry, entry) {
+  const successful = new Set(
+    (entry?.runs ?? [])
+      .filter(
+        (run) =>
+          !run.error &&
+          !["failed", "pending", "blocked", "unavailable"].includes(
+            run.status,
+          ) &&
+          Array.isArray(run.rows),
+      )
+      .map((run) => cleanText(run.query).toLowerCase()),
+  );
+  return (
+    planEntry.variants.length > 0 &&
+    planEntry.variants.every((variant) =>
+      successful.has(cleanText(variant.query).toLowerCase()),
+    )
+  );
 }
 
 export function buildProductResearchUrl(query) {
@@ -319,7 +408,11 @@ function researchEntryScore(find, entry) {
     `${meaningfulArtist(find.artist)} ${normalizeResearchTitle(preferredResearchTitle(find))}`,
   );
   if (!targetTokens.length || !titleTokens.length) return 0;
-  const entryText = [entry.key, entry.title, ...entry.runs.map((run) => run.query)].join(" ");
+  const entryText = [
+    entry.key,
+    entry.title,
+    ...entry.runs.map((run) => run.query),
+  ].join(" ");
   const entryTokenList = uniqueTokens(entryText);
   const entryTokens = new Set(entryTokenList);
   const targetTokenSet = new Set(targetTokens);
@@ -330,12 +423,15 @@ function researchEntryScore(find, entry) {
       ? (2 * titleCoverage * entryCoverage) / (titleCoverage + entryCoverage)
       : 0;
 
-  if (entryTokenList.length >= 2 && entryCoverage === 1) return Math.max(0.92, titleCoverage);
+  if (entryTokenList.length >= 2 && entryCoverage === 1)
+    return Math.max(0.92, titleCoverage);
   return Math.max(titleCoverage, entryCoverage * 0.9, harmonicCoverage);
 }
 
 function isExactResearchEntry(find, entry) {
-  return Boolean(find?.id && (entry.findId === find.id || entry.key === find.id));
+  return Boolean(
+    find?.id && (entry.findId === find.id || entry.key === find.id),
+  );
 }
 
 function isResearchableFind(find) {
@@ -343,7 +439,9 @@ function isResearchableFind(find) {
     find &&
     find.opportunityType !== "sitewide_sale" &&
     Number(find.purchasePrice) > 0 &&
-    cleanQuery(`${meaningfulArtist(find.artist)} ${normalizeResearchTitle(find.title || find.sourceListingTitle || "")}`).length >= 3
+    cleanQuery(
+      `${meaningfulArtist(find.artist)} ${normalizeResearchTitle(find.title || find.sourceListingTitle || "")}`,
+    ).length >= 3
   );
 }
 
@@ -351,10 +449,22 @@ function normalizeResearchTitle(value) {
   return cleanText(value)
     .replace(/\$\s*[0-9.,]+/g, " ")
     .replace(/\bfree\s+shipping\b.*$/gi, " ")
-    .replace(/\bat\s+(?:amazon|target|walmart|urban\s+outfitters|barnes\s*&\s*noble|deep\s+discount)\b.*$/gi, " ")
-    .replace(/\b(?:music\s+(?:on|and|from|by|performance)|was\s*\/\s*ea)\b.*$/gi, " ")
-    .replace(/\b(?:pre[-\s]?order|sale|clearance|new|sealed|brand\s+new|staff\s+pick)\b/gi, " ")
-    .replace(/\b(?:vinyl|record|records|album|[1-9]?\s*[-x]?\s*lps?|ep|single)\b/gi, " ")
+    .replace(
+      /\bat\s+(?:amazon|target|walmart|urban\s+outfitters|barnes\s*&\s*noble|deep\s+discount)\b.*$/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:music\s+(?:on|and|from|by|performance)|was\s*\/\s*ea)\b.*$/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:pre[-\s]?order|sale|clearance|new|sealed|brand\s+new|staff\s+pick)\b/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:vinyl|record|records|album|[1-9]?\s*[-x]?\s*lps?|ep|single)\b/gi,
+      " ",
+    )
     .replace(/\b(?:180g|180\s*grams?|180grams|heavyweight)\b/gi, " ")
     .replace(/\[[^\]]*\]/g, " ")
     .replace(/[()]/g, " ");
@@ -365,19 +475,29 @@ function preferredResearchTitle(find) {
   const listing = cleanText(find?.sourceListingTitle);
   if (!listing) return title;
   if (!title) return listing;
-  return usefulTokens(listing).length > usefulTokens(title).length ? listing : title;
+  return usefulTokens(listing).length > usefulTokens(title).length
+    ? listing
+    : title;
 }
 
 function meaningfulArtist(value) {
   const artist = cleanQuery(value);
   if (/^(?:unknown\s+artist|various\s+artists?)$/i.test(artist)) return "";
   if (uniqueTokens(artist).length > 6) return "";
-  if (/\b(?:album|motion\s+picture|soundtrack|vinyl|lp)\b/i.test(artist)) return "";
+  if (/\b(?:album|motion\s+picture|soundtrack|vinyl|lp)\b/i.test(artist))
+    return "";
   return artist;
 }
 
 function rowTitle(row) {
-  return cleanText(row?.title || String(row?.cells?.[0] || "").split("\n").filter(Boolean).pop() || "");
+  return cleanText(
+    row?.title ||
+      String(row?.cells?.[0] || "")
+        .split("\n")
+        .filter(Boolean)
+        .pop() ||
+      "",
+  );
 }
 
 function usefulTokens(value) {
@@ -396,7 +516,8 @@ function uniqueTokens(value) {
 function containsContiguousTokens(haystack, needle) {
   if (!needle.length || needle.length > haystack.length) return false;
   for (let index = 0; index <= haystack.length - needle.length; index += 1) {
-    if (needle.every((token, offset) => haystack[index + offset] === token)) return true;
+    if (needle.every((token, offset) => haystack[index + offset] === token))
+      return true;
   }
   return false;
 }
@@ -412,7 +533,9 @@ function withoutLeadingArtist(value, artist) {
 
 function identityTerms(value) {
   const text = cleanText(value).toLowerCase();
-  return IDENTITY_TERMS.filter((term) => new RegExp(`\\b${term}\\b`, "i").test(text));
+  return IDENTITY_TERMS.filter((term) =>
+    new RegExp(`\\b${term}\\b`, "i").test(text),
+  );
 }
 
 function hasIncompatibleRecordFormat(candidateText, rowTitle) {
@@ -427,7 +550,8 @@ function hasIncompatibleRecordFormat(candidateText, rowTitle) {
     /\b(?:vinyl\s+)?lp\b/i.test(candidateText) &&
     !candidateIsBoxSet;
 
-  if (candidateLooksLikeOrdinaryLp && rowLpCount !== null && rowLpCount > 1) return true;
+  if (candidateLooksLikeOrdinaryLp && rowLpCount !== null && rowLpCount > 1)
+    return true;
   return (
     candidateLpCount !== null &&
     rowLpCount !== null &&
@@ -446,6 +570,8 @@ function explicitLpCount(value) {
 
 function datedSingleUnitSales(rows, run, now) {
   if (!rows.length || !validDate(now)) return null;
+  const periodDays = productResearchPeriodDays(run);
+  if (!periodDays) return null;
   const runRows = Array.isArray(run?.rows) ? run.rows : [];
   const pageLimit = productResearchPageLimit(run?.url);
   if (runRows.length >= pageLimit) return null;
@@ -460,9 +586,15 @@ function datedSingleUnitSales(rows, run, now) {
     return null;
   }
 
-  const identities = rows.map((row) => productResearchListingIdentity(row.itemUrl));
+  const identities = rows.map((row) =>
+    productResearchListingIdentity(row.itemUrl),
+  );
   if (new Set(identities).size !== identities.length) return null;
-  const asOf = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const asOf = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
   const ages = rows.map((row) => {
     const soldAt = Date.parse(`${row.dateLastSold}T00:00:00Z`);
     return Math.floor((asOf - soldAt) / 86_400_000);
@@ -470,29 +602,37 @@ function datedSingleUnitSales(rows, run, now) {
   if (ages.some((age) => !Number.isFinite(age) || age < 0)) return null;
 
   return {
-    sales30Days: ages.filter((age) => age <= 30).length,
-    sales90Days: ages.filter((age) => age <= 90).length,
-    sales365Days: ages.filter((age) => age <= 365).length,
+    sales30Days:
+      periodDays >= 30 ? ages.filter((age) => age <= 30).length : null,
+    sales90Days:
+      periodDays >= 90 ? ages.filter((age) => age <= 90).length : null,
+    sales365Days:
+      periodDays >= 365 ? ages.filter((age) => age <= 365).length : null,
   };
 }
 
 function productResearchPageLimit(value) {
   try {
     const parsed = Number(new URL(value).searchParams.get("limit"));
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : PRODUCT_RESEARCH_PAGE_LIMIT;
+    return Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : PRODUCT_RESEARCH_PAGE_LIMIT;
   } catch {
     return PRODUCT_RESEARCH_PAGE_LIMIT;
   }
 }
 
 function productResearchPeriodDays(run) {
-  const direct = Number(run?.periodDays ?? run?.dayRange);
+  const direct = Number(run?.periodDays);
   if (Number.isFinite(direct) && direct > 0) return direct;
   try {
-    const parsed = Number(new URL(run?.url).searchParams.get("dayRange"));
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : PRODUCT_RESEARCH_PERIOD_DAYS;
+    const params = new URL(run?.url).searchParams;
+    const period =
+      (Number(params.get("endDate")) - Number(params.get("startDate"))) /
+      86400000;
+    return Number.isFinite(period) && period > 0 ? Math.round(period) : null;
   } catch {
-    return PRODUCT_RESEARCH_PERIOD_DAYS;
+    return null;
   }
 }
 
@@ -516,7 +656,9 @@ function weightedAverage(rows, field) {
   const usable = rows.filter((row) => Number.isFinite(row[field]));
   const weight = usable.reduce((sum, row) => sum + row.totalSold, 0);
   if (!weight) return null;
-  return roundMoney(usable.reduce((sum, row) => sum + row[field] * row.totalSold, 0) / weight);
+  return roundMoney(
+    usable.reduce((sum, row) => sum + row[field] * row.totalSold, 0) / weight,
+  );
 }
 
 function confidenceForScore(score) {
@@ -533,7 +675,11 @@ function money(value) {
 }
 
 function wholeNumber(value) {
-  const parsed = Number(String(value ?? "").replace(/,/g, "").trim());
+  const parsed = Number(
+    String(value ?? "")
+      .replace(/,/g, "")
+      .trim(),
+  );
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
 }
 

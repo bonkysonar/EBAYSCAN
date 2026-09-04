@@ -42,11 +42,16 @@ describe("arbitrage pages", () => {
     await render(<RetailArbitrage />);
 
     expect(container?.textContent).not.toContain("Runtime Test Album");
-    expect(container?.textContent).toContain("Cached recommendations stay hidden");
+    expect(container?.textContent).toContain(
+      "Cached recommendations stay hidden",
+    );
 
     await act(async () => {
       resolveLatest?.(
-        jsonResponse({ message: "No final publication is available.", status: "empty" }),
+        jsonResponse({
+          message: "No final publication is available.",
+          status: "empty",
+        }),
       );
       await flushAsyncWork();
     });
@@ -71,7 +76,10 @@ describe("arbitrage pages", () => {
             status: "available",
           });
         }
-        return jsonResponse({ message: "No final publication is available.", status: "empty" });
+        return jsonResponse({
+          message: "No final publication is available.",
+          status: "empty",
+        });
       }),
     );
 
@@ -81,8 +89,12 @@ describe("arbitrage pages", () => {
     await clickButton("Reload scan data");
 
     expect(container?.textContent).not.toContain("Runtime Test Album");
-    expect(container?.textContent).toContain("No final publication is available.");
-    expect(container?.textContent).toContain("No record candidates in this run");
+    expect(container?.textContent).toContain(
+      "No final publication is available.",
+    );
+    expect(container?.textContent).toContain(
+      "No records currently meet the decision-list requirements",
+    );
   });
 
   it("keeps the last verified retail publication when a refresh fails", async () => {
@@ -112,7 +124,9 @@ describe("arbitrage pages", () => {
     await clickButton("Reload scan data");
 
     expect(container?.textContent).toContain("Runtime Test Album");
-    expect(container?.textContent).toContain("keeping the last verified publication");
+    expect(container?.textContent).toContain(
+      "keeping the last verified publication",
+    );
   });
 
   it("keeps an explicit Shopify vinyl variant visible under mixed CD product metadata", async () => {
@@ -127,7 +141,8 @@ describe("arbitrage pages", () => {
               {
                 ...validatedBuyFind(),
                 shopifyVariantTitle: "2xLP",
-                sourceListingTitle: "Runtime Test Artist - Runtime Test Album (CD / Vinyl) - 2xLP",
+                sourceListingTitle:
+                  "Runtime Test Artist - Runtime Test Album (CD / Vinyl) - 2xLP",
               },
             ],
             phase: "final",
@@ -175,7 +190,9 @@ describe("arbitrage pages", () => {
 
     expect(container?.textContent).toContain("Amazon via Deal Feed");
     expect(container?.textContent).toContain("Purchase retailerAmazon");
-    expect(container?.textContent).toContain("Open offer: Amazon via Deal Feed");
+    expect(container?.textContent).toContain(
+      "Open offer: Amazon via Deal Feed",
+    );
     expect(
       Array.from(container?.querySelectorAll("select") ?? []).some((select) =>
         select.textContent?.includes("Amazon"),
@@ -213,7 +230,9 @@ describe("arbitrage pages", () => {
 
     await render(<RetailArbitrage />);
 
-    expect(container?.querySelector(".arbitrage-sort.active")?.textContent).toContain("Candidate");
+    expect(
+      container?.querySelector(".arbitrage-sort.active")?.textContent,
+    ).toContain("Candidate");
     expect(container?.textContent).toContain("Tier A · verified");
     expect(container?.textContent).toContain("Evidence: BUY");
     expect(container?.textContent).toContain("Buy options");
@@ -271,22 +290,34 @@ describe("arbitrage pages", () => {
 
     await render(<RetailArbitrage />);
 
-    const stats = Array.from(container?.querySelectorAll<HTMLElement>(".seller-stat") ?? []);
-    expect(stats.find((stat) => stat.textContent?.includes("Tier B · promising"))?.textContent).toContain("1");
-    expect(stats.find((stat) => stat.textContent?.includes("Tier C · research"))?.textContent).toContain("1");
-    expect(stats.find((stat) => stat.textContent?.includes("Automatic BUY"))?.textContent).toContain("0");
+    const stats = Array.from(
+      container?.querySelectorAll<HTMLElement>(".seller-stat") ?? [],
+    );
     expect(
-      Array.from(container?.querySelectorAll<HTMLElement>(".arbitrage-find-row .arbitrage-title strong") ?? []).map(
-        (element) => element.textContent,
-      ),
-    ).toEqual([
-      "Runtime Test Artist — Promising Candidate",
-      "Runtime Test Artist — Research Candidate",
-    ]);
+      stats.find((stat) => stat.textContent?.includes("Tier B · promising"))
+        ?.textContent,
+    ).toContain("1");
+    expect(
+      stats.find((stat) => stat.textContent?.includes("Tier C · research"))
+        ?.textContent,
+    ).toContain("1");
+    expect(
+      stats.find((stat) => stat.textContent?.includes("Automatic BUY"))
+        ?.textContent,
+    ).toContain("0");
+    expect(
+      Array.from(
+        container?.querySelectorAll<HTMLElement>(
+          ".arbitrage-find-row .arbitrage-title strong",
+        ) ?? [],
+      ).map((element) => element.textContent),
+    ).toEqual(["Runtime Test Artist — Promising Candidate"]);
     expect(container?.textContent).toContain("Why this candidate surfaced");
     expect(container?.textContent).toContain("Evidence: REVIEW");
 
-    const queue = container?.querySelector<HTMLSelectElement>(".seller-controls select");
+    const queue = container?.querySelector<HTMLSelectElement>(
+      ".seller-controls select",
+    );
     await act(async () => {
       if (queue) {
         queue.value = "C";
@@ -336,18 +367,24 @@ describe("arbitrage pages", () => {
 
     expect(container?.textContent).toContain("Check the sold market");
     expect(container?.textContent).toContain("Exact edition query");
-    expect(container?.textContent).toContain("Try 2 alternate sold-search queries");
-    const productAnchor = Array.from(container?.querySelectorAll<HTMLAnchorElement>("a") ?? []).find(
-      (anchor) => anchor.textContent?.includes("eBay Product Research"),
+    expect(container?.textContent).toContain(
+      "Try 2 alternate sold-search queries",
     );
-    const publicAnchor = Array.from(container?.querySelectorAll<HTMLAnchorElement>("a") ?? []).find(
-      (anchor) => anchor.textContent?.includes("Public sold listings"),
-    );
+    const productAnchor = Array.from(
+      container?.querySelectorAll<HTMLAnchorElement>("a") ?? [],
+    ).find((anchor) => anchor.textContent?.includes("eBay Product Research"));
+    const publicAnchor = Array.from(
+      container?.querySelectorAll<HTMLAnchorElement>("a") ?? [],
+    ).find((anchor) => anchor.textContent?.includes("Public sold listings"));
     expect(productAnchor?.target).toBe("_blank");
     expect(publicAnchor?.target).toBe("_blank");
     expect(productAnchor?.rel).toContain("noreferrer");
     expect(publicAnchor?.rel).toContain("noreferrer");
-    expect(new URL(productAnchor?.href ?? "https://invalid.example").searchParams.get("keywords")).toBe(
+    expect(
+      new URL(
+        productAnchor?.href ?? "https://invalid.example",
+      ).searchParams.get("keywords"),
+    ).toBe(
       "The Jimi Hendrix Experience Are You Experienced yellow walmart exclusive",
     );
     const publicUrl = new URL(publicAnchor?.href ?? "https://invalid.example");
@@ -427,8 +464,10 @@ describe("arbitrage pages", () => {
       await vi.advanceTimersByTimeAsync(60_000);
       await flushAsyncWork();
     });
-    expect(container?.textContent).toContain("Runtime Test Album");
-    expect(container?.textContent).toContain("Needs validation");
+    expect(container?.querySelector(".arbitrage-find-row")).toBeNull();
+    expect(container?.textContent).toContain(
+      "No records currently meet the decision-list requirements",
+    );
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(4 * 60_000);
@@ -488,7 +527,9 @@ describe("arbitrage pages", () => {
               directProductiveSourceCount: 1,
               directSourceCount: 2,
               publishable: true,
-              reasons: ["Only 50% of direct retailers produced parsed products; target is 40%."],
+              reasons: [
+                "Only 50% of direct retailers produced parsed products; target is 40%.",
+              ],
               status: "degraded",
             },
             selectionDiagnostics: {
@@ -538,11 +579,21 @@ describe("arbitrage pages", () => {
       container?.querySelectorAll<HTMLElement>(".seller-stat") ?? [],
     ).find((stat) => stat.textContent?.includes("Product coverage"));
     expect(productCoverage?.textContent).toContain("1/2");
-    expect(container?.textContent).toContain("1 healthy · 1 degraded · 0 blocked");
-    expect(container?.textContent).toContain("Product yield 1/2; 1 parser-empty, 0 unavailable.");
-    expect(container?.textContent).toContain("Degraded run · catalog reach 2/2");
-    expect(container?.textContent).toContain("Selected from 1/2 eligible sources; largest source 100%");
-    expect(container?.textContent).toContain("What the scanner actually checked");
+    expect(container?.textContent).toContain(
+      "1 healthy · 1 degraded · 0 blocked",
+    );
+    expect(container?.textContent).toContain(
+      "Product yield 1/2; 1 parser-empty, 0 unavailable.",
+    );
+    expect(container?.textContent).toContain(
+      "Degraded run · catalog reach 2/2",
+    );
+    expect(container?.textContent).toContain(
+      "Selected from 1/2 eligible sources; largest source 100%",
+    );
+    expect(container?.textContent).toContain(
+      "What the scanner actually checked",
+    );
     expect(container?.textContent).toContain("Runtime Records");
     expect(container?.textContent).toContain("HTTP Healthy Empty Store");
     expect(container?.textContent).toContain("zero qualifying products parsed");
@@ -558,7 +609,11 @@ describe("arbitrage pages", () => {
             campaigns: [campaign],
             events: [
               transition("older", "first_seen", "2026-07-10T12:00:00.000Z"),
-              transition("newer", "discount_changed", "2026-07-15T12:00:00.000Z"),
+              transition(
+                "newer",
+                "discount_changed",
+                "2026-07-15T12:00:00.000Z",
+              ),
             ],
             runId: "sale-run",
             status: "available",
@@ -654,7 +709,8 @@ describe("arbitrage pages", () => {
       ...changed,
       id: "sale-store-page-two",
       saleCampaignId: "campaign-changed-page-two",
-      sourceUrl: "https://sale-store.example/collections/summer-sale/format_tape?page=2&sort_by=best-selling",
+      sourceUrl:
+        "https://sale-store.example/collections/summer-sale/format_tape?page=2&sort_by=best-selling",
     };
     const ongoing = {
       ...saleCampaign(),
@@ -688,7 +744,12 @@ describe("arbitrage pages", () => {
             saleEvents: campaigns,
             saleObservations: campaigns,
             sourceReports: [
-              { id: "healthy", name: "Healthy", productParseHealth: "productive", status: "candidates" },
+              {
+                id: "healthy",
+                name: "Healthy",
+                productParseHealth: "productive",
+                status: "candidates",
+              },
               {
                 catalogHealth: "healthy",
                 catalogPageAttemptCount: 2,
@@ -697,7 +758,12 @@ describe("arbitrage pages", () => {
                 productParseHealth: "empty",
                 status: "empty",
               },
-              { catalogHealth: "failed", id: "blocked", name: "Blocked", status: "error" },
+              {
+                catalogHealth: "failed",
+                id: "blocked",
+                name: "Blocked",
+                status: "error",
+              },
               {
                 catalogHealth: "healthy",
                 catalogPageAvailableCount: 1,
@@ -724,13 +790,28 @@ describe("arbitrage pages", () => {
     expect(siteSaleStat("Empty")).toBe("1");
     expect(siteSaleStat("Blocked")).toBe("1");
     expect(siteSaleStat("Degraded")).toBe("1");
-    const failedSaleSource = Array.from(container?.querySelectorAll<HTMLAnchorElement>(".site-sale-coverage-list a") ?? [])
-      .find((anchor) => anchor.textContent?.includes("Sale Pages Failed"));
+    const failedSaleSource = Array.from(
+      container?.querySelectorAll<HTMLAnchorElement>(
+        ".site-sale-coverage-list a",
+      ) ?? [],
+    ).find((anchor) => anchor.textContent?.includes("Sale Pages Failed"));
     expect(failedSaleSource?.textContent).toContain("sale-page checks failed");
     expect(failedSaleSource?.textContent).not.toContain("pages reached");
-    const shelves = Array.from(container?.querySelectorAll<HTMLDetailsElement>("details.site-sale-shelf") ?? []);
-    expect(shelves.find((shelf) => shelf.querySelector("summary")?.textContent?.includes("Ongoing"))?.open).toBe(true);
-    expect(shelves.find((shelf) => shelf.querySelector("summary")?.textContent?.includes("Evergreen"))?.open).toBe(true);
+    const shelves = Array.from(
+      container?.querySelectorAll<HTMLDetailsElement>(
+        "details.site-sale-shelf",
+      ) ?? [],
+    );
+    expect(
+      shelves.find((shelf) =>
+        shelf.querySelector("summary")?.textContent?.includes("Ongoing"),
+      )?.open,
+    ).toBe(true);
+    expect(
+      shelves.find((shelf) =>
+        shelf.querySelector("summary")?.textContent?.includes("Evergreen"),
+      )?.open,
+    ).toBe(true);
   });
 
   it("returns a changed sale campaign to the priority queue despite older review feedback", async () => {
@@ -786,8 +867,12 @@ describe("arbitrage pages", () => {
 
     await render(<SiteWideSales />);
 
-    expect(container?.querySelector(".site-sale-priority .site-sale-card")).toBeTruthy();
-    expect(container?.querySelector(".site-sale-feedback button.active")).toBeNull();
+    expect(
+      container?.querySelector(".site-sale-priority .site-sale-card"),
+    ).toBeTruthy();
+    expect(
+      container?.querySelector(".site-sale-feedback button.active"),
+    ).toBeNull();
   });
 
   it("renders embedded campaigns without waiting for history and ignores a mismatched history run", async () => {
@@ -857,7 +942,8 @@ describe("arbitrage pages", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((url: string) => {
-        if (String(url).includes("/history")) return new Promise<Response>(() => {});
+        if (String(url).includes("/history"))
+          return new Promise<Response>(() => {});
         return Promise.resolve(
           jsonResponse({
             fileName: "retail-arbitrage-sales.json",
@@ -1029,11 +1115,18 @@ describe("arbitrage pages", () => {
     await clickButton("Reload scan data");
 
     expect(container?.textContent).toContain("Sale Store");
-    expect(container?.textContent).toContain("keeping the last verified publication");
+    expect(container?.textContent).toContain(
+      "keeping the last verified publication",
+    );
   });
 });
 
 async function render(component: React.ReactNode) {
+  const publicationFetch = globalThis.fetch;
+  vi.stubGlobal("fetch", ((...args: Parameters<typeof fetch>) =>
+    String(args[0]).includes("/operations")
+      ? Promise.resolve(jsonResponse({ status: "unknown" }))
+      : publicationFetch(...args)) as typeof fetch);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -1044,9 +1137,9 @@ async function render(component: React.ReactNode) {
 }
 
 async function clickButton(label: string) {
-  const button = Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).find(
-    (candidate) => candidate.textContent?.includes(label),
-  );
+  const button = Array.from(
+    container?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+  ).find((candidate) => candidate.textContent?.includes(label));
   expect(button).toBeTruthy();
   await act(async () => {
     button?.click();
@@ -1144,10 +1237,15 @@ function saleCampaign() {
 }
 
 function siteSaleStat(label: string): string | undefined {
-  return Array.from(container?.querySelectorAll<HTMLElement>(".site-sale-stats .seller-stat") ?? [])
-    .find((stat) => stat.querySelector("span")?.textContent === label)
-    ?.querySelector("strong")
-    ?.textContent ?? undefined;
+  return (
+    Array.from(
+      container?.querySelectorAll<HTMLElement>(
+        ".site-sale-stats .seller-stat",
+      ) ?? [],
+    )
+      .find((stat) => stat.querySelector("span")?.textContent === label)
+      ?.querySelector("strong")?.textContent ?? undefined
+  );
 }
 
 function transition(id: string, reason: string, at: string) {

@@ -45,7 +45,11 @@ export type RankableCandidate = RecordCandidateSource & {
   id?: string;
   listPrice?: number | null;
   purchasePrice?: number;
-  purchaseOfferVerification?: "campaign_advertised" | "direct_retailer" | "discovery_lead" | "official_api";
+  purchaseOfferVerification?:
+    | "campaign_advertised"
+    | "direct_retailer"
+    | "discovery_lead"
+    | "official_api";
   retailerBestSeller?: boolean;
   retailerCustomerPick?: boolean;
   retailerReviewCount?: number | null;
@@ -127,7 +131,10 @@ export type CandidateSourceSelectionDiagnostics = {
   selectedByPhase: Record<CandidateSelectionPhase, number>;
   selectedCandidateCount: number;
   selectedShare: number;
-  selectionStatus: "selected" | "not_selected" | CandidateSelectionExclusionReason;
+  selectionStatus:
+    | "selected"
+    | "not_selected"
+    | CandidateSelectionExclusionReason;
   sourceId: string;
 };
 
@@ -210,21 +217,31 @@ export function assessRecordCandidate(input?: {
   url?: string;
 }): RecordCandidateAssessment;
 export function candidateQualityScore(candidate: RankableCandidate): number;
-export function applyVerifiedSaleCampaigns<T extends RankableCandidate>(
-  candidates: T[],
-  campaigns: VerifiedSaleCampaign[],
-): Array<T & RankableCandidate>;
 export function purchaseOfferVerificationForSource(
-  candidate?: Pick<RankableCandidate, "purchaseOfferVerification" | "retailerSoldBySource">,
+  candidate?: Pick<
+    RankableCandidate,
+    "purchaseOfferVerification" | "retailerSoldBySource"
+  >,
   source?: RecordCandidateSource,
-): "campaign_advertised" | "direct_retailer" | "discovery_lead" | "official_api";
+):
+  | "campaign_advertised"
+  | "direct_retailer"
+  | "discovery_lead"
+  | "official_api";
 export function isHighSignalProductFind(find: HighSignalProductFind): boolean;
 export function rankAndSelectCandidates<T extends RankableCandidate>(
   candidates: T[],
   options?: CandidateSelectionOptions<T>,
 ): T[];
-export function rankAndSelectCandidatesWithDiagnostics<T extends RankableCandidate>(
+export function rankAndSelectCandidatesWithDiagnostics<
+  T extends RankableCandidate,
+>(
   candidates: T[],
   options?: CandidateSelectionOptions<T>,
 ): { diagnostics: CandidateSelectionDiagnostics; selected: T[] };
 export function sourceMetadataScore(source: RecordCandidateSource): number;
+
+export function selectResearchCandidates<T extends RankableCandidate>(
+  candidates: T[],
+  options?: { limit?: number },
+): ReturnType<typeof rankAndSelectCandidatesWithDiagnostics<T>>;

@@ -9,7 +9,8 @@
     "arbitrage:upload": "node scripts/uploadLatestArbitrageFinds.mjs",
     "sold-history:sync": "node scripts/syncEbaySoldHistory.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "arbitrage:daily": "node scripts/runRetailWorkflow.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.5.0",

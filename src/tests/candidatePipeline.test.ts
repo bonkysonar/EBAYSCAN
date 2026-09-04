@@ -1,6 +1,6 @@
+import { applyCampaignOffers } from "../../scripts/lib/campaignOffers.mjs";
 import { describe, expect, it } from "vitest";
 import {
-  applyVerifiedSaleCampaigns,
   assessRecordCandidate,
   candidateQualityScore,
   isHighSignalProductFind,
@@ -10,7 +10,12 @@ import {
 
 describe("retail candidate pipeline", () => {
   it("rejects obvious retail noise and navigation before research", () => {
-    const source = { id: "vinyl-deals", name: "Vinyl Deals", priority: 1, saleLikelihood: "high" };
+    const source = {
+      id: "vinyl-deals",
+      name: "Vinyl Deals",
+      priority: 1,
+      saleLikelihood: "high",
+    };
 
     expect(
       assessRecordCandidate({
@@ -18,7 +23,10 @@ describe("retail candidate pipeline", () => {
         title: "Anker USB-C Fast Charger",
         url: "https://shop.example/products/anker-charger",
       }),
-    ).toMatchObject({ accepted: false, reasons: ["non_music_retail_category"] });
+    ).toMatchObject({
+      accepted: false,
+      reasons: ["non_music_retail_category"],
+    });
     expect(
       assessRecordCandidate({
         context: "Vinyl records and LPs",
@@ -30,11 +38,18 @@ describe("retail candidate pipeline", () => {
     expect(
       assessRecordCandidate({
         context: "Flash deals",
-        source: { id: "walmart", name: "Walmart", sourceType: "marketplace_retailer" },
+        source: {
+          id: "walmart",
+          name: "Walmart",
+          sourceType: "marketplace_retailer",
+        },
         title: "Best seller Smart Watch for Women and Men",
         url: "https://www.walmart.com/ip/smart-watch/123",
       }),
-    ).toMatchObject({ accepted: false, reasons: ["marketplace_requires_explicit_vinyl"] });
+    ).toMatchObject({
+      accepted: false,
+      reasons: ["marketplace_requires_explicit_vinyl"],
+    });
     expect(
       assessRecordCandidate({
         context: "Coupons and deals",
@@ -58,7 +73,10 @@ describe("retail candidate pipeline", () => {
         title: "Get a Magic Eraser ($10.60 for 8)",
         url: "https://www.amazon.com/gp/product/B0170A169Q",
       }),
-    ).toMatchObject({ accepted: false, reasons: ["deal_aggregator_requires_record_title"] });
+    ).toMatchObject({
+      accepted: false,
+      reasons: ["deal_aggregator_requires_record_title"],
+    });
     for (const title of [
       "Artist Vinyl T-Shirt",
       "Artist Album Vinyl + CD Bundle",
@@ -77,7 +95,7 @@ describe("retail candidate pipeline", () => {
       ).toMatchObject({ accepted: false, reasons: ["non_vinyl_format"] });
     }
     for (const title of [
-      "12\" Chocolate Donut Slip Mat",
+      '12" Chocolate Donut Slip Mat',
       "Vinyl Record Tote Bag",
       "M Bird Vinyl Record Paper Label Decal 4-inch",
       "The Beatles - Sgt Pepper Vinyl LP Platter Mat New",
@@ -159,7 +177,11 @@ describe("retail candidate pipeline", () => {
     ]) {
       const result = assessRecordCandidate({
         context: "Music deals",
-        source: { id: "walmart", name: "Walmart", sourceType: "marketplace_retailer" },
+        source: {
+          id: "walmart",
+          name: "Walmart",
+          sourceType: "marketplace_retailer",
+        },
         title,
         url: "https://www.walmart.com/ip/frank-sinatra-vinyl/123",
       });
@@ -249,7 +271,8 @@ describe("retail candidate pipeline", () => {
         sourceCurrency: "USD",
         sourceDomain: "walmart.com",
         sourceId: "walmart",
-        sourceListingTitle: "Creedence Clearwater Revival - Chronicle (Vinyl LP)",
+        sourceListingTitle:
+          "Creedence Clearwater Revival - Chronicle (Vinyl LP)",
         sourceName: "Walmart",
         sourceOriginalPrice: null,
         sourceUrl: "https://www.walmart.com/ip/chronicle/789",
@@ -266,7 +289,8 @@ describe("retail candidate pipeline", () => {
         sourceCurrency: "USD",
         sourceDomain: "walmart.com",
         sourceId: "walmart",
-        sourceListingTitle: "Creedence Clearwater Revival - Chronicle (Vinyl LP)",
+        sourceListingTitle:
+          "Creedence Clearwater Revival - Chronicle (Vinyl LP)",
         sourceName: "Walmart",
         sourceUrl: "https://www.walmart.com/ip/chronicle/789",
       }),
@@ -301,7 +325,8 @@ describe("retail candidate pipeline", () => {
         purchasePrice: 13,
         sourceDomain: "barnesandnoble.com",
         sourceId: "barnes-noble",
-        sourceListingTitle: "Creedence Clearwater Revival - Chronicle [Vinyl LP]",
+        sourceListingTitle:
+          "Creedence Clearwater Revival - Chronicle [Vinyl LP]",
         sourceName: "Barnes & Noble",
         sourceRetailType: "marketplace_retailer",
         sourceUrl: "https://www.barnesandnoble.com/w/chronicle/123",
@@ -338,7 +363,12 @@ describe("retail candidate pipeline", () => {
       sourceUrl: "https://records.example/products/artist-album",
     };
 
-    expect(isHighSignalProductFind({ ...directOffer, condition: "used - near mint" })).toBe(false);
+    expect(
+      isHighSignalProductFind({
+        ...directOffer,
+        condition: "used - near mint",
+      }),
+    ).toBe(false);
     expect(
       isHighSignalProductFind({
         ...directOffer,
@@ -346,7 +376,9 @@ describe("retail candidate pipeline", () => {
         sourceCurrency: "GBP",
       }),
     ).toBe(false);
-    expect(isHighSignalProductFind({ ...directOffer, sourceCurrency: "CAD" })).toBe(false);
+    expect(
+      isHighSignalProductFind({ ...directOffer, sourceCurrency: "CAD" }),
+    ).toBe(false);
     expect(
       isHighSignalProductFind({
         ...directOffer,
@@ -387,7 +419,9 @@ describe("retail candidate pipeline", () => {
     };
 
     expect(isHighSignalProductFind(helluvaBoss)).toBe(true);
-    expect(isHighSignalProductFind({ ...helluvaBoss, purchasePrice: 20.01 })).toBe(false);
+    expect(
+      isHighSignalProductFind({ ...helluvaBoss, purchasePrice: 20.01 }),
+    ).toBe(false);
     expect(
       isHighSignalProductFind({
         ...helluvaBoss,
@@ -471,7 +505,9 @@ describe("retail candidate pipeline", () => {
       title: "Duke Ellington - Album",
     };
 
-    expect(candidateQualityScore(evergreen)).toBe(candidateQualityScore(obscure));
+    expect(candidateQualityScore(evergreen)).toBe(
+      candidateQualityScore(obscure),
+    );
   });
 
   it("keeps singles, bundles, unknown artists, and high buy costs available but ranks them below comparable LPs", () => {
@@ -489,7 +525,7 @@ describe("retail candidate pipeline", () => {
         ...base,
         artist: "Unknown Artist",
         purchasePrice: 36,
-        title: "Rolling Stones Singles Bundle 7\"",
+        title: 'Rolling Stones Singles Bundle 7"',
       }),
     ).toBeLessThan(candidateQualityScore(base));
   });
@@ -503,9 +539,27 @@ describe("retail candidate pipeline", () => {
       title: `Aggregator ${index}`,
     }));
     const direct = [
-      { candidateQualityScore: 80, id: "a", sourceId: "store-a", sourceName: "Store A", title: "A" },
-      { candidateQualityScore: 75, id: "b", sourceId: "store-b", sourceName: "Store B", title: "B" },
-      { candidateQualityScore: 70, id: "c", sourceId: "store-c", sourceName: "Store C", title: "C" },
+      {
+        candidateQualityScore: 80,
+        id: "a",
+        sourceId: "store-a",
+        sourceName: "Store A",
+        title: "A",
+      },
+      {
+        candidateQualityScore: 75,
+        id: "b",
+        sourceId: "store-b",
+        sourceName: "Store B",
+        title: "B",
+      },
+      {
+        candidateQualityScore: 70,
+        id: "c",
+        sourceId: "store-c",
+        sourceName: "Store C",
+        title: "C",
+      },
     ];
 
     const selected = rankAndSelectCandidates([...aggregator, ...direct], {
@@ -515,8 +569,12 @@ describe("retail candidate pipeline", () => {
     });
 
     expect(selected).toHaveLength(5);
-    expect(selected.filter((candidate) => candidate.sourceId === "slickdeals")).toHaveLength(2);
-    expect(new Set(selected.map((candidate) => candidate.sourceId)).size).toBeGreaterThanOrEqual(2);
+    expect(
+      selected.filter((candidate) => candidate.sourceId === "slickdeals"),
+    ).toHaveLength(2);
+    expect(
+      new Set(selected.map((candidate) => candidate.sourceId)).size,
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it("uses source caps as guardrails instead of forcing equal quotas into a small queue", () => {
@@ -541,7 +599,9 @@ describe("retail candidate pipeline", () => {
     });
 
     expect(selected).toHaveLength(8);
-    expect(selected.filter((candidate) => candidate.sourceId === "strong-store")).toHaveLength(5);
+    expect(
+      selected.filter((candidate) => candidate.sourceId === "strong-store"),
+    ).toHaveLength(5);
   });
 
   it("deduplicates the same pressing across retailers and retains the better purchase offer", () => {
@@ -568,7 +628,9 @@ describe("retail candidate pipeline", () => {
       sourceUrl: "https://b.example/chronicle",
     };
 
-    const selected = rankAndSelectCandidates([expensive, cheaper], { limit: 80 });
+    const selected = rankAndSelectCandidates([expensive, cheaper], {
+      limit: 80,
+    });
 
     expect(selected).toHaveLength(1);
     expect(selected[0]).toMatchObject({
@@ -604,7 +666,10 @@ describe("retail candidate pipeline", () => {
       { limit: 80 },
     );
 
-    expect(selected.map((candidate) => candidate.id).sort()).toEqual(["blue", "red"]);
+    expect(selected.map((candidate) => candidate.id).sort()).toEqual([
+      "blue",
+      "red",
+    ]);
   });
 
   it("conservatively deduplicates normalized artist-title matches when a barcode is absent", () => {
@@ -650,7 +715,8 @@ describe("retail candidate pipeline", () => {
           purchasePrice: 12,
           sourceId: "shop",
           sourceName: "Shop",
-          sourceUrl: "https://shop.example/collections/sale/products/mcgruffs-smart-kids?utm_source=x",
+          sourceUrl:
+            "https://shop.example/collections/sale/products/mcgruffs-smart-kids?utm_source=x",
           title: "McGruff's Smart Kids",
         },
         {
@@ -660,7 +726,8 @@ describe("retail candidate pipeline", () => {
           purchasePrice: 12,
           sourceId: "shop",
           sourceName: "Shop",
-          sourceUrl: "https://shop.example/collections/cassettes/products/mcgruffs-smart-kids",
+          sourceUrl:
+            "https://shop.example/collections/cassettes/products/mcgruffs-smart-kids",
           title: "McGruff's Smart Kids",
         },
       ],
@@ -699,14 +766,23 @@ describe("retail candidate pipeline", () => {
       sourceRetailType: "major_label_store",
     });
 
-    const selected = rankAndSelectCandidates([...shopify, ...marketplaces, ...labelStores], {
-      limit: 80,
-    });
+    const selected = rankAndSelectCandidates(
+      [...shopify, ...marketplaces, ...labelStores],
+      {
+        limit: 80,
+      },
+    );
 
     expect(selected).toHaveLength(80);
-    expect(selected.filter((candidate) => candidate.family === "shopify").length).toBeLessThanOrEqual(40);
-    expect(selected.some((candidate) => candidate.family === "marketplace")).toBe(true);
-    expect(selected.some((candidate) => candidate.family === "label")).toBe(true);
+    expect(
+      selected.filter((candidate) => candidate.family === "shopify").length,
+    ).toBeLessThanOrEqual(40);
+    expect(
+      selected.some((candidate) => candidate.family === "marketplace"),
+    ).toBe(true);
+    expect(selected.some((candidate) => candidate.family === "label")).toBe(
+      true,
+    );
   });
 
   it("still fills the requested limit when scanning a deliberately narrow source subset", () => {
@@ -758,9 +834,15 @@ describe("retail candidate pipeline", () => {
     );
 
     expect(selected).toHaveLength(80);
-    expect(selected.some((candidate) => candidate.id === "dominant-0")).toBe(true);
-    expect(selected.some((candidate) => candidate.sourceId === "sound-of-vinyl")).toBe(true);
-    expect(selected.filter((candidate) => candidate.sourceId === "dominant-store")).toHaveLength(16);
+    expect(selected.some((candidate) => candidate.id === "dominant-0")).toBe(
+      true,
+    );
+    expect(
+      selected.some((candidate) => candidate.sourceId === "sound-of-vinyl"),
+    ).toBe(true);
+    expect(
+      selected.filter((candidate) => candidate.sourceId === "dominant-store"),
+    ).toHaveLength(16);
     expect(diagnostics).toMatchObject({
       eligibleSourceCount: 10,
       largestSourceSelectedCount: 16,
@@ -771,7 +853,9 @@ describe("retail candidate pipeline", () => {
       unrepresentedEligibleSourceCount: 0,
     });
     expect(
-      diagnostics.sources.find((source) => source.sourceId === "sound-of-vinyl"),
+      diagnostics.sources.find(
+        (source) => source.sourceId === "sound-of-vinyl",
+      ),
     ).toMatchObject({
       eligibleCandidateCount: 40,
       selectedCandidateCount: 16,
@@ -815,11 +899,13 @@ describe("retail candidate pipeline", () => {
       preserveTopShare: 1,
     });
 
-    expect(selected.map((candidate) => candidate.id)).toEqual(["validated-buy"]);
+    expect(selected.map((candidate) => candidate.id)).toEqual([
+      "validated-buy",
+    ]);
   });
 
   it("applies an exact Sound of Vinyl collection discount before ranking", () => {
-    const [adjusted] = applyVerifiedSaleCampaigns(
+    const [adjusted] = applyCampaignOffers(
       [
         {
           artist: "Artist",
@@ -828,7 +914,8 @@ describe("retail candidate pipeline", () => {
             "deep-cuts-40-off-select-items",
             "50-off-select-vinyl",
           ],
-          discoveryUrl: "https://thesoundofvinyl.us/collections/deep-cuts-40-off-select-items",
+          discoveryUrl:
+            "https://thesoundofvinyl.us/collections/deep-cuts-40-off-select-items",
           discoveryUrls: [
             "https://thesoundofvinyl.us/collections/deep-cuts-40-off-select-items",
             "https://thesoundofvinyl.us/collections/50-off-select-vinyl",
@@ -842,12 +929,19 @@ describe("retail candidate pipeline", () => {
       ],
       [
         {
+          campaignTerms: {
+            version: 1,
+            kind: "percent",
+            stacking: "unknown",
+            priceMode: "advertised",
+          },
           discountPercent: 50,
           evidence: "50% off select vinyl",
           saleCampaignId: "campaign-sound-50",
           scope: "deal-source",
           sourceId: "sound-of-vinyl",
-          sourceUrl: "https://thesoundofvinyl.us/collections/50-off-select-vinyl",
+          sourceUrl:
+            "https://thesoundofvinyl.us/collections/50-off-select-vinyl",
           verification: "retailer-page",
         },
       ],
@@ -860,13 +954,19 @@ describe("retail candidate pipeline", () => {
       listPrice: 29.99,
       purchasePrice: 15,
       purchaseOfferVerification: "campaign_advertised",
-      sourceDiscountPercent: 50,
+      sourceDiscountPercent: 49.98,
       sourceOriginalPrice: 29.99,
     });
   });
 
   it("does not spread conditional or up-to sales, collection sales, or existing markdowns beyond verified scope", () => {
     const campaign = {
+      campaignTerms: {
+        version: 1,
+        kind: "percent",
+        stacking: "unknown",
+        priceMode: "advertised",
+      },
       discountPercent: 50,
       evidence: "50% off select vinyl",
       id: "sound-50",
@@ -875,7 +975,13 @@ describe("retail candidate pipeline", () => {
       sourceUrl: "https://thesoundofvinyl.us/collections/50-off-select-vinyl",
       verification: "retailer-page",
     };
-    const [otherCollection, alreadyMarkedDown, upTo, membersOnly, spendThreshold] = applyVerifiedSaleCampaigns(
+    const [
+      otherCollection,
+      alreadyMarkedDown,
+      upTo,
+      membersOnly,
+      spendThreshold,
+    ] = applyCampaignOffers(
       [
         {
           collectionContext: "vinyl",
@@ -913,18 +1019,24 @@ describe("retail candidate pipeline", () => {
         campaign,
         {
           ...campaign,
+          discountQualifier: "up_to",
           evidence: "Up to 60% off select vinyl",
           id: "up-to-60",
           sourceUrl: "https://thesoundofvinyl.us/collections/up-to-sale",
         },
         {
           ...campaign,
+          campaignTerms: {
+            ...campaign.campaignTerms,
+            membershipRequired: true,
+          },
           evidence: "Members only: 50% off select vinyl",
           id: "members-only-50",
           sourceUrl: "https://thesoundofvinyl.us/collections/members-only",
         },
         {
           ...campaign,
+          campaignTerms: { ...campaign.campaignTerms, minimumSpend: 100 },
           evidence: "Spend $100 and save 50% on select vinyl",
           id: "spend-threshold-50",
           sourceUrl: "https://thesoundofvinyl.us/collections/spend-threshold",

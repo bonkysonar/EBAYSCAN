@@ -1,11 +1,21 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const projectWorkspace = process.cwd();
-const scriptPath = join(projectWorkspace, "scripts", "curateRetailArbitrageRun.mjs");
+const scriptPath = join(
+  projectWorkspace,
+  "scripts",
+  "curateRetailArbitrageRun.mjs",
+);
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -55,7 +65,10 @@ describe("retail arbitrage curation CLI", () => {
 
     expect(result.status, result.stderr).toBe(0);
     const finalPayload = JSON.parse(
-      readFileSync(join(outputDirectory, "retail-arbitrage-2026-07-22.json"), "utf8"),
+      readFileSync(
+        join(outputDirectory, "retail-arbitrage-final-scan-pending-test.json"),
+        "utf8",
+      ),
     );
     expect(finalPayload).toMatchObject({
       phase: "final",

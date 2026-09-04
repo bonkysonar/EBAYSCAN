@@ -1,3 +1,5 @@
+import { retailEligibility, shopifyIdentity } from "./retailIdentity.mjs";
+
 const SHOPIFY_COLLECTION_EXCLUSION =
   /\b(?:accessor(?:y|ies)|apparel|bags?|blu\s*ray|books?|cartridges?|cassettes?|cds?|cleaning|clothing|damaged|defective|dvds?|equipment|frames?|gift\s*cards?|gimmicks?|hats?|hoodies?|merch(?:andise)?|movies?|needles?|posters?|pre\s*owned|second\s*hand|shirts?|slipmats?|speakers?|storage|styl(?:us|i)|tapes?|toys?|turntables?|used)\b/i;
 const SHOPIFY_SALE_COLLECTION =
@@ -10,24 +12,25 @@ export function selectShopifyCollectionLanes(values, configuredUrl, limit = 6) {
 
   for (const value of [configuredUrl, ...(values ?? [])]) {
     const collection = shopifyCollection(value);
-    if (!collection || (expectedOrigin && collection.origin !== expectedOrigin)) continue;
+    if (!collection || (expectedOrigin && collection.origin !== expectedOrigin))
+      continue;
     const key = collection.context.toLowerCase();
     if (!byContext.has(key)) byContext.set(key, collection);
   }
 
   const configuredKey = configured?.context.toLowerCase() ?? null;
-  const assessed = [...byContext.entries()]
-    .map(([key, collection]) => ({
-      ...collection,
-      configured: key === configuredKey,
-      excluded: SHOPIFY_COLLECTION_EXCLUSION.test(collection.evidence),
-      score: shopifyCollectionScore(collection.evidence),
-    }));
+  const assessed = [...byContext.entries()].map(([key, collection]) => ({
+    ...collection,
+    configured: key === configuredKey,
+    excluded: SHOPIFY_COLLECTION_EXCLUSION.test(collection.evidence),
+    score: shopifyCollectionScore(collection.evidence),
+  }));
   const ranked = assessed
     .filter(
       (collection) =>
         !collection.excluded &&
-        (collection.configured || SHOPIFY_SALE_COLLECTION.test(collection.evidence)),
+        (collection.configured ||
+          SHOPIFY_SALE_COLLECTION.test(collection.evidence)),
     )
     .sort(
       (left, right) =>
@@ -39,10 +42,16 @@ export function selectShopifyCollectionLanes(values, configuredUrl, limit = 6) {
     ? Math.max(0, Math.floor(limit))
     : ranked.length;
   const selected = ranked.slice(0, normalizedLimit);
-  const selectedContexts = new Set(selected.map((collection) => collection.context.toLowerCase()));
-  const eligibleContexts = new Set(ranked.map((collection) => collection.context.toLowerCase()));
+  const selectedContexts = new Set(
+    selected.map((collection) => collection.context.toLowerCase()),
+  );
+  const eligibleContexts = new Set(
+    ranked.map((collection) => collection.context.toLowerCase()),
+  );
   const omitted = assessed
-    .filter((collection) => !selectedContexts.has(collection.context.toLowerCase()))
+    .filter(
+      (collection) => !selectedContexts.has(collection.context.toLowerCase()),
+    )
     .map((collection) => ({
       context: collection.context,
       reason: collection.excluded
@@ -54,17 +63,20 @@ export function selectShopifyCollectionLanes(values, configuredUrl, limit = 6) {
     }))
     .sort(
       (left, right) =>
-        left.reason.localeCompare(right.reason) || left.url.localeCompare(right.url),
+        left.reason.localeCompare(right.reason) ||
+        left.url.localeCompare(right.url),
     );
 
   return {
     candidateCount: byContext.size,
-    excludedCount: [...byContext.entries()].filter(
-      ([, collection]) => SHOPIFY_COLLECTION_EXCLUSION.test(collection.evidence),
+    excludedCount: [...byContext.entries()].filter(([, collection]) =>
+      SHOPIFY_COLLECTION_EXCLUSION.test(collection.evidence),
     ).length,
     configuredExcluded:
       configuredKey !== null &&
-      SHOPIFY_COLLECTION_EXCLUSION.test(byContext.get(configuredKey)?.evidence ?? ""),
+      SHOPIFY_COLLECTION_EXCLUSION.test(
+        byContext.get(configuredKey)?.evidence ?? "",
+      ),
     eligibleCount: ranked.length,
     omitted,
     omittedCount: omitted.length,
@@ -74,7 +86,9 @@ export function selectShopifyCollectionLanes(values, configuredUrl, limit = 6) {
         ? "lane_limit_reached"
         : ranked.length === 0
           ? configuredKey !== null &&
-            SHOPIFY_COLLECTION_EXCLUSION.test(byContext.get(configuredKey)?.evidence ?? "")
+            SHOPIFY_COLLECTION_EXCLUSION.test(
+              byContext.get(configuredKey)?.evidence ?? "",
+            )
             ? "configured_collection_excluded"
             : "no_sale_relevant_collections"
           : null,
@@ -84,16 +98,34 @@ export function selectShopifyCollectionLanes(values, configuredUrl, limit = 6) {
 export function shopifyCatalogUrls(source, page, limit = 250, options = {}) {
   const configured = new URL(source.url ?? source.baseUrl);
   const origin = configured.origin;
-  const collection = configured.pathname.match(/\/collections\/([^/?#]+)/)?.[1] ?? null;
+  const collection =
+    configured.pathname.match(/\/collections\/([^/?#]+)/)?.[1] ?? null;
   const query = `limit=${limit}&page=${page}`;
-  const includeRootCatalog = options.includeRootCatalog !== false || collection === null;
+  const includeRootCatalog =
+    options.includeRootCatalog !== false || collection === null;
   return [
-    ...(collection ? [{ collectionContext: collection, url: `${origin}/collections/${collection}/products.json?${query}` }] : []),
-    ...(includeRootCatalog ? [{ collectionContext: null, url: `${origin}/products.json?${query}` }] : []),
+    ...(collection
+      ? [
+          {
+            collectionContext: collection,
+            url: `${origin}/collections/${collection}/products.json?${query}`,
+          },
+        ]
+      : []),
+    ...(includeRootCatalog
+      ? [{ collectionContext: null, url: `${origin}/products.json?${query}` }]
+      : []),
   ];
 }
 
-export function normalizeShopifyProducts({ assessment, collectionContext = null, currency = null, origin, products = [], source }) {
+export function normalizeShopifyProducts({
+  assessment,
+  collectionContext = null,
+  currency = null,
+  origin,
+  products = [],
+  source,
+}) {
   const candidates = [];
   for (const product of products) {
     // Shopify feeds occasionally retain a retired product handle after the
@@ -105,7 +137,10 @@ export function normalizeShopifyProducts({ assessment, collectionContext = null,
     if (shopifyHandleTitleMismatch(product.handle, product.title)) continue;
     const pricedVariants = (product.variants ?? [])
       .filter((variant) => variant.available !== false)
-      .map((variant) => ({ ...variant, numericPrice: finiteNumber(variant.price) }))
+      .map((variant) => ({
+        ...variant,
+        numericPrice: finiteNumber(variant.price),
+      }))
       .filter((variant) => variant.numericPrice !== null);
     const normalizedVariants = pricedVariants
       .map((variant) => {
@@ -116,27 +151,52 @@ export function normalizeShopifyProducts({ assessment, collectionContext = null,
           variant.id === null || variant.id === undefined
             ? baseProductUrl
             : `${baseProductUrl}?variant=${encodeURIComponent(String(variant.id))}`;
-        const explicitVinylVariant = variantExplicitlyIdentifiesVinyl(variantTitle);
+        const explicitVinylVariant =
+          variantExplicitlyIdentifiesVinyl(variantTitle);
+        if (
+          !retailEligibility({
+            ...shopifyIdentity(product, variant, source),
+            sourceListingTitle: listingTitle,
+            shopifyVariantTitle: variantTitle,
+          }).eligible
+        )
+          return null;
         const recordAssessment = assessment({
-          context: explicitVinylVariant ? product.vendor ?? "" : product.body_html ?? product.vendor ?? "",
-          productType: explicitVinylVariant ? variantTitle : `${product.product_type ?? ""} ${variantTitle ?? ""}`,
+          context: explicitVinylVariant
+            ? (product.vendor ?? "")
+            : (product.body_html ?? product.vendor ?? ""),
+          productType: explicitVinylVariant
+            ? variantTitle
+            : `${product.product_type ?? ""} ${variantTitle ?? ""}`,
           source,
           tags: explicitVinylVariant
             ? ""
             : Array.isArray(product.tags)
               ? product.tags.join(" ")
-              : product.tags ?? "",
+              : (product.tags ?? ""),
           title: explicitVinylVariant ? variantTitle : listingTitle,
           url: productUrl,
         });
         return recordAssessment.accepted
-          ? { listingTitle, productUrl, recordAssessment, variant, variantTitle }
+          ? {
+              listingTitle,
+              productUrl,
+              recordAssessment,
+              variant,
+              variantTitle,
+            }
           : null;
       })
       .filter(Boolean);
 
     for (const normalized of normalizedVariants) {
-      const { listingTitle, productUrl, recordAssessment, variant, variantTitle } = normalized;
+      const {
+        listingTitle,
+        productUrl,
+        recordAssessment,
+        variant,
+        variantTitle,
+      } = normalized;
       const compareAtPrice = finiteNumber(variant.compare_at_price);
       const inventoryQuantity = finiteNumber(variant.inventory_quantity);
       candidates.push({
@@ -145,11 +205,18 @@ export function normalizeShopifyProducts({ assessment, collectionContext = null,
         candidateQualityReasons: recordAssessment.reasons,
         candidateQualityScore: recordAssessment.score,
         collectionContext,
-        compareAtPrice: compareAtPrice !== null && compareAtPrice > variant.numericPrice ? compareAtPrice : null,
-        currency: cleanCurrency(product.currency ?? variant.currency ?? currency),
+        compareAtPrice:
+          compareAtPrice !== null && compareAtPrice > variant.numericPrice
+            ? compareAtPrice
+            : null,
+        currency: cleanCurrency(
+          product.currency ?? variant.currency ?? currency,
+        ),
         handle: product.handle,
         inventoryQuantity:
-          inventoryQuantity !== null && inventoryQuantity >= 0 ? inventoryQuantity : null,
+          inventoryQuantity !== null && inventoryQuantity >= 0
+            ? inventoryQuantity
+            : null,
         listingTitle,
         price: variant.numericPrice,
         product,
@@ -169,7 +236,9 @@ export function extractShopifyCurrency(htmlPages) {
     const match =
       source.match(/Shopify\.currency\.active\s*=\s*["']([A-Z]{3})["']/i) ??
       source.match(/["']currency["']\s*:\s*["']([A-Z]{3})["']/i) ??
-      source.match(/property=["'](?:og:)?price:currency["'][^>]*content=["']([A-Z]{3})["']/i);
+      source.match(
+        /property=["'](?:og:)?price:currency["'][^>]*content=["']([A-Z]{3})["']/i,
+      );
     if (match) return match[1].toUpperCase();
   }
   return null;
@@ -233,7 +302,9 @@ function cleanIdentifier(value) {
 }
 
 function cleanCurrency(value) {
-  const cleaned = String(value ?? "").trim().toUpperCase();
+  const cleaned = String(value ?? "")
+    .trim()
+    .toUpperCase();
   return /^[A-Z]{3}$/.test(cleaned) ? cleaned : null;
 }
 
@@ -245,7 +316,8 @@ function variantExplicitlyIdentifiesVinyl(value) {
 
 function combinedVariantTitle(productTitle, variantTitle) {
   const title = String(productTitle ?? "").trim();
-  if (!variantTitle || title.toLowerCase().includes(variantTitle.toLowerCase())) return title;
+  if (!variantTitle || title.toLowerCase().includes(variantTitle.toLowerCase()))
+    return title;
   return `${title} - ${variantTitle}`;
 }
 

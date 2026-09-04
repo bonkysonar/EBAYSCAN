@@ -1,3 +1,5 @@
+import { RetailScanStatus } from "./RetailScanStatus";
+import { CampaignRecordResults } from "./CampaignRecordResults";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   loadReviewFeedback,
@@ -21,7 +23,13 @@ import {
 import type { ArbitrageImportPayload } from "../lib/arbitrage/types";
 import { readJsonResponse } from "../lib/http/jsonResponse";
 
-type CampaignStatus = "changed" | "ended" | "evergreen" | "new" | "ongoing" | "unknown";
+type CampaignStatus =
+  | "changed"
+  | "ended"
+  | "evergreen"
+  | "new"
+  | "ongoing"
+  | "unknown";
 type SaleCampaign = SaleObservation;
 type DisplaySaleCampaign = NormalizedSaleCampaign;
 type SaleHistoryEvent = {
@@ -37,7 +45,10 @@ type SaleHistoryEvent = {
 type PayloadWithSales = ArbitrageImportPayload & {
   phase?: string;
   runId?: string;
-  saleCampaignLedger?: { campaigns?: SaleCampaign[]; history?: SaleHistoryEvent[] };
+  saleCampaignLedger?: {
+    campaigns?: SaleCampaign[];
+    history?: SaleHistoryEvent[];
+  };
   saleObservations?: SaleCampaign[];
   sourceReports?: SaleSourceReport[];
 };
@@ -70,8 +81,12 @@ export function SiteWideSales() {
   const [campaigns, setCampaigns] = useState<SaleCampaign[]>([]);
   const [historyEvents, setHistoryEvents] = useState<SaleHistoryEvent[]>([]);
   const [sourceReports, setSourceReports] = useState<SaleSourceReport[]>([]);
-  const [latestPayload, setLatestPayload] = useState<PayloadWithSales | null>(null);
-  const [feedback, setFeedback] = useState<ReviewFeedback>(() => loadReviewFeedback());
+  const [latestPayload, setLatestPayload] = useState<PayloadWithSales | null>(
+    null,
+  );
+  const [feedback, setFeedback] = useState<ReviewFeedback>(() =>
+    loadReviewFeedback(),
+  );
   const [latestMessage, setLatestMessage] = useState<string | null>(null);
   const [isLoadingLatest, setIsLoadingLatest] = useState(true);
   const hasLoadedLatestRef = useRef(false);
@@ -79,17 +94,39 @@ export function SiteWideSales() {
   const latestRequestRef = useRef(0);
 
   const normalizedSales = useMemo(
-    () => normalizeSaleCampaigns(campaigns, latestPayload?.saleObservations ?? (latestPayload?.saleEvents as SaleCampaign[] | undefined) ?? []),
+    () =>
+      normalizeSaleCampaigns(
+        campaigns,
+        latestPayload?.saleObservations ??
+          (latestPayload?.saleEvents as SaleCampaign[] | undefined) ??
+          [],
+      ),
     [campaigns, latestPayload],
   );
-  const grouped = useMemo(() => groupCampaigns(normalizedSales.campaigns, feedback), [normalizedSales.campaigns, feedback]);
-  const activeCampaigns = [...grouped.new, ...grouped.changed, ...grouped.ongoing, ...grouped.evergreen];
-  const activeRetailers = new Set(activeCampaigns.map((campaign) => campaign.sourceId)).size;
-  const coverage = useMemo(() => summarizeSourceCoverage(sourceReports), [sourceReports]);
+  const grouped = useMemo(
+    () => groupCampaigns(normalizedSales.campaigns, feedback),
+    [normalizedSales.campaigns, feedback],
+  );
+  const activeCampaigns = [
+    ...grouped.new,
+    ...grouped.changed,
+    ...grouped.ongoing,
+    ...grouped.evergreen,
+  ];
+  const activeRetailers = new Set(
+    activeCampaigns.map((campaign) => campaign.sourceId),
+  ).size;
+  const coverage = useMemo(
+    () => summarizeSourceCoverage(sourceReports),
+    [sourceReports],
+  );
   const historyByCampaign = useMemo(() => {
     const historyByRawCampaign = new Map<string, SaleHistoryEvent[]>();
     for (const event of historyEvents) {
-      historyByRawCampaign.set(event.campaignId, [...(historyByRawCampaign.get(event.campaignId) ?? []), event]);
+      historyByRawCampaign.set(event.campaignId, [
+        ...(historyByRawCampaign.get(event.campaignId) ?? []),
+        event,
+      ]);
     }
     const groupedHistory = new Map<string, SaleHistoryEvent[]>();
     for (const campaign of normalizedSales.campaigns) {
@@ -100,7 +137,11 @@ export function SiteWideSales() {
           : [];
       const events = ids
         .flatMap((id) => historyByRawCampaign.get(id) ?? [])
-        .filter((event, index, values) => values.findIndex((candidate) => candidate.id === event.id) === index)
+        .filter(
+          (event, index, values) =>
+            values.findIndex((candidate) => candidate.id === event.id) ===
+            index,
+        )
         .sort((left, right) => Date.parse(right.at) - Date.parse(left.at));
       groupedHistory.set(campaignKey(campaign), events);
     }
@@ -135,13 +176,15 @@ export function SiteWideSales() {
     const requestId = ++latestRequestRef.current;
     setIsLoadingLatest(true);
     try {
-      const latestResponse = await fetch(`/api/arbitrage/latest?ts=${Date.now()}`, {
-        cache: "no-store",
-      });
-      const latest = await readJsonResponse<ErrorResponse | LatestFindsResponse>(
-        latestResponse,
-        "Latest sales endpoint",
+      const latestResponse = await fetch(
+        `/api/arbitrage/latest?ts=${Date.now()}`,
+        {
+          cache: "no-store",
+        },
       );
+      const latest = await readJsonResponse<
+        ErrorResponse | LatestFindsResponse
+      >(latestResponse, "Latest sales endpoint");
       if (requestId !== latestRequestRef.current) return;
       if ("error" in latest) throw new Error(latest.error);
       if (!latestResponse.ok) throw new Error("Latest sale load failed.");
@@ -157,12 +200,15 @@ export function SiteWideSales() {
 
       const fallbackCampaigns = mergeCampaigns([
         ...(latest.payload.saleCampaignLedger?.campaigns ?? []),
-        ...((latest.payload.saleEvents ?? latest.payload.finds) as SaleCampaign[]),
+        ...((latest.payload.saleEvents ??
+          latest.payload.finds) as SaleCampaign[]),
       ]);
       const embeddedEvents = latest.payload.saleCampaignLedger?.history ?? [];
       const normalized = normalizeSaleCampaigns(
         fallbackCampaigns,
-        latest.payload.saleObservations ?? ((latest.payload.saleEvents ?? latest.payload.finds) as SaleCampaign[]),
+        latest.payload.saleObservations ??
+          ((latest.payload.saleEvents ??
+            latest.payload.finds) as SaleCampaign[]),
       );
       const baseMessage = `Loaded ${normalized.uniqueOfferCount} active offers from ${normalized.retailerCount} retailers across ${normalized.pageCount} sale pages (${normalized.rawObservationCount} raw observations) from ${latest.fileName}.`;
       setCampaigns(fallbackCampaigns);
@@ -170,12 +216,15 @@ export function SiteWideSales() {
       setSourceReports(latest.payload.sourceReports ?? []);
       setLatestPayload(latest.payload);
       hasLoadedLatestRef.current = true;
-      setFeedback((current) => pruneStaleSaleFeedback(current, fallbackCampaigns));
+      setFeedback((current) =>
+        pruneStaleSaleFeedback(current, fallbackCampaigns),
+      );
       setLatestMessage(baseMessage);
       void loadHistoryForLatest(latest.payload.runId, requestId, baseMessage);
     } catch (caught) {
       if (requestId !== latestRequestRef.current) return;
-      const message = caught instanceof Error ? caught.message : "Latest sale load failed.";
+      const message =
+        caught instanceof Error ? caught.message : "Latest sale load failed.";
       if (!hasLoadedLatestRef.current) {
         setCampaigns([]);
         setHistoryEvents([]);
@@ -183,7 +232,9 @@ export function SiteWideSales() {
         setLatestPayload(null);
         setLatestMessage(message);
       } else {
-        setLatestMessage(`Refresh failed; keeping the last verified publication. ${message}`);
+        setLatestMessage(
+          `Refresh failed; keeping the last verified publication. ${message}`,
+        );
       }
     } finally {
       if (requestId === latestRequestRef.current) setIsLoadingLatest(false);
@@ -197,7 +248,9 @@ export function SiteWideSales() {
   ) {
     if (!expectedRunId) {
       if (requestId === latestRequestRef.current) {
-        setLatestMessage(`${baseMessage} Campaign history was not used because the latest run has no run ID.`);
+        setLatestMessage(
+          `${baseMessage} Campaign history was not used because the latest run has no run ID.`,
+        );
       }
       return;
     }
@@ -236,7 +289,10 @@ export function SiteWideSales() {
     }
   }
 
-  function reviewCampaign(campaign: DisplaySaleCampaign, outcome: SaleReviewOutcome | null) {
+  function reviewCampaign(
+    campaign: DisplaySaleCampaign,
+    outcome: SaleReviewOutcome | null,
+  ) {
     const key = saleFeedbackKey(campaign);
     setFeedback((current) =>
       setSaleOutcome(
@@ -253,49 +309,95 @@ export function SiteWideSales() {
     <section className="site-sales-page">
       <div className="seller-hero panel compact-seller-hero site-sale-hero">
         <div>
-          <span className="eyebrow">Campaign lifecycle, not a repeated snapshot</span>
+          <span className="eyebrow">
+            Campaign lifecycle, not a repeated snapshot
+          </span>
           <h2>Site-wide Sales</h2>
           <p>
-            New and changed campaigns lead, while every active ongoing and evergreen offer remains
-            open below. Page, sort, and collection-tag duplicates are combined without merging distinct
-            offers from the same retailer.
+            New and changed campaigns lead, while every active ongoing and
+            evergreen offer remains open below. Page, sort, and collection-tag
+            duplicates are combined without merging distinct offers from the
+            same retailer.
           </p>
         </div>
         <div className="seller-actions">
-          <button type="button" onClick={loadLatestSales} disabled={isLoadingLatest}>
+          <button
+            type="button"
+            onClick={loadLatestSales}
+            disabled={isLoadingLatest}
+          >
             {isLoadingLatest ? "Loading..." : "Reload scan data"}
           </button>
         </div>
       </div>
 
-      {latestMessage ? <div className="warning-box">{latestMessage}</div> : null}
+      {latestMessage &&
+      (!latestMessage.startsWith("Loaded ") ||
+        latestMessage.includes("unavailable") ||
+        latestMessage.includes("not used") ||
+        latestMessage.includes("ignored")) ? (
+        <div className="warning-box">{latestMessage}</div>
+      ) : null}
+      <RetailScanStatus payload={latestPayload} />
+      <CampaignRecordResults payload={latestPayload} />
 
-      <div className="seller-stats compact-seller-stats site-sale-stats">
-        <Stat label="Active retailers" value={activeRetailers} />
-        <Stat label="Unique offers" value={activeCampaigns.length} />
-        <Stat label="Sale pages" value={normalizedSales.pageCount} />
-        <Stat label="Raw observations" value={normalizedSales.rawObservationCount} />
-        <Stat label="New / changed" value={grouped.new.length + grouped.changed.length} tone="new" />
-        <Stat label="Healthy" value={coverage.healthy} />
-        <Stat label="Degraded" value={coverage.degraded} tone={coverage.degraded ? "warn" : undefined} />
-        <Stat label="Empty" value={coverage.empty} tone={coverage.empty ? "warn" : undefined} />
-        <Stat label="Blocked" value={coverage.blocked} tone={coverage.blocked ? "warn" : undefined} />
-      </div>
+      <details className="panel retail-diagnostics">
+        <summary>
+          Coverage diagnostics · {activeRetailers} retailers with active offers
+        </summary>
+        <div className="seller-stats compact-seller-stats site-sale-stats">
+          <Stat label="Active retailers" value={activeRetailers} />
+          <Stat label="Unique offers" value={activeCampaigns.length} />
+          <Stat label="Sale pages" value={normalizedSales.pageCount} />
+          <Stat
+            label="Raw observations"
+            value={normalizedSales.rawObservationCount}
+          />
+          <Stat
+            label="New / changed"
+            value={grouped.new.length + grouped.changed.length}
+            tone="new"
+          />
+          <Stat label="Healthy" value={coverage.healthy} />
+          <Stat
+            label="Degraded"
+            value={coverage.degraded}
+            tone={coverage.degraded ? "warn" : undefined}
+          />
+          <Stat
+            label="Empty"
+            value={coverage.empty}
+            tone={coverage.empty ? "warn" : undefined}
+          />
+          <Stat
+            label="Blocked"
+            value={coverage.blocked}
+            tone={coverage.blocked ? "warn" : undefined}
+          />
+        </div>
 
-      <section className="panel site-sale-run-strip">
-        <div>
-          <strong>{latestPayload?.runId ?? "No run loaded"}</strong>
-          <span>{latestPayload ? `Last scan ${formatAge(latestPayload.createdAt)}` : "No scan time"}</span>
-        </div>
-        <div>
-          <strong>Automation target: daily at 5:30 local</strong>
-          <span>
-            {coverage.total
-              ? `${coverage.healthy} healthy · ${coverage.degraded} degraded · ${coverage.empty} empty · ${coverage.blocked} blocked · ${coverage.not_checked} not checked`
-              : "Source coverage unavailable"}
-          </span>
-        </div>
-      </section>
+        <section className="panel site-sale-run-strip">
+          <div>
+            <strong>{latestPayload?.runId ?? "No run loaded"}</strong>
+            <span>
+              {latestPayload
+                ? `Last scan ${formatAge(latestPayload.createdAt)}`
+                : "No scan time"}
+            </span>
+          </div>
+          <div>
+            <strong>
+              Broad scan daily at 5:30 local; active campaigns rechecked every
+              two hours
+            </strong>
+            <span>
+              {coverage.total
+                ? `${coverage.healthy} healthy · ${coverage.degraded} degraded · ${coverage.empty} empty · ${coverage.blocked} blocked · ${coverage.not_checked} not checked`
+                : "Source coverage unavailable"}
+            </span>
+          </div>
+        </section>
+      </details>
 
       {grouped.new.length + grouped.changed.length > 0 ? (
         <section className="site-sale-priority">
@@ -320,7 +422,10 @@ export function SiteWideSales() {
       ) : (
         <section className="empty-state site-sale-empty">
           <h2>No new or changed campaigns</h2>
-          <p>The scanner still tracks ongoing, evergreen, unknown, and ended campaigns below.</p>
+          <p>
+            The scanner still tracks ongoing, evergreen, unknown, and ended
+            campaigns below.
+          </p>
         </section>
       )}
 
@@ -365,7 +470,9 @@ export function SiteWideSales() {
             <span>
               <strong>Source coverage</strong>
               <small>
-                {coverage.total} sources · {coverage.healthy} healthy · {coverage.degraded} degraded · {coverage.empty} empty · {coverage.blocked} blocked · {coverage.not_checked} not checked
+                {coverage.total} sources · {coverage.healthy} healthy ·{" "}
+                {coverage.degraded} degraded · {coverage.empty} empty ·{" "}
+                {coverage.blocked} blocked · {coverage.not_checked} not checked
               </small>
             </span>
             <span>Inspect</span>
@@ -408,7 +515,10 @@ function CampaignShelf({
   campaigns: DisplaySaleCampaign[];
   feedback: ReviewFeedback;
   historyByCampaign: Map<string, SaleHistoryEvent[]>;
-  onReview: (campaign: DisplaySaleCampaign, outcome: SaleReviewOutcome | null) => void;
+  onReview: (
+    campaign: DisplaySaleCampaign,
+    outcome: SaleReviewOutcome | null,
+  ) => void;
   open?: boolean;
   subtitle: string;
   title: string;
@@ -460,12 +570,16 @@ function SaleCard({
     >
       <div className="site-sale-card-header">
         <div>
-          <span className={`site-sale-status status-${campaign.saleStatus ?? "ongoing"}`}>
+          <span
+            className={`site-sale-status status-${campaign.saleStatus ?? "ongoing"}`}
+          >
             {campaign.saleStatus ?? "ongoing"}
           </span>
           <h3>{campaign.sourceName}</h3>
           <small>
-            {campaign.saleVerification === "discovery-lead" ? "Unverified discovery lead" : "Retailer evidence"}
+            {campaign.saleVerification === "discovery-lead"
+              ? "Unverified discovery lead"
+              : "Retailer evidence"}
             {" · "}
             {campaign.saleScope ?? "sale"}
           </small>
@@ -473,12 +587,22 @@ function SaleCard({
         <strong>{saleDiscountLabel(campaign)}</strong>
       </div>
 
-      <p>{campaign.saleSignal ?? campaign.sourceListingTitle ?? campaign.title}</p>
-      {campaign.saleEvidence ? <blockquote>{campaign.saleEvidence}</blockquote> : null}
+      <p>
+        {campaign.saleSignal ?? campaign.sourceListingTitle ?? campaign.title}
+      </p>
+      {campaign.saleEvidence ? (
+        <blockquote>{campaign.saleEvidence}</blockquote>
+      ) : null}
 
       <dl className="site-sale-meta">
-        <Metric label="First seen" value={formatDate(campaign.firstSeenAt ?? campaign.capturedAt)} />
-        <Metric label="Last seen" value={formatDate(campaign.lastSeenAt ?? campaign.capturedAt)} />
+        <Metric
+          label="First seen"
+          value={formatDate(campaign.firstSeenAt ?? campaign.capturedAt)}
+        />
+        <Metric
+          label="Last seen"
+          value={formatDate(campaign.lastSeenAt ?? campaign.capturedAt)}
+        />
         <Metric label="Successful scans" value={campaign.saleScanCount ?? 1} />
         <Metric
           label="Raw evidence"
@@ -486,7 +610,11 @@ function SaleCard({
         />
         <Metric
           label="Confidence"
-          value={campaign.saleVerification === "retailer-page" ? "Retailer-confirmed" : "Needs confirmation"}
+          value={
+            campaign.saleVerification === "retailer-page"
+              ? "Retailer-confirmed"
+              : "Needs confirmation"
+          }
         />
         <Metric
           label="Latest change"
@@ -512,9 +640,13 @@ function SaleCard({
 
       <div className="site-sale-card-actions">
         <a href={campaign.sourceUrl} target="_blank" rel="noreferrer">
-          {campaign.saleVerification === "discovery-lead" ? "Open lead" : "Open evidence"}
+          {campaign.saleVerification === "discovery-lead"
+            ? "Open lead"
+            : "Open evidence"}
         </a>
-        <small>{history.length} lifecycle event{history.length === 1 ? "" : "s"}</small>
+        <small>
+          {history.length} lifecycle event{history.length === 1 ? "" : "s"}
+        </small>
       </div>
 
       <div className="site-sale-feedback">
@@ -523,7 +655,9 @@ function SaleCard({
             className={outcome === option.value ? "active" : ""}
             type="button"
             key={option.value}
-            onClick={() => onReview(outcome === option.value ? null : option.value)}
+            onClick={() =>
+              onReview(outcome === option.value ? null : option.value)
+            }
           >
             {option.label}
           </button>
@@ -533,16 +667,20 @@ function SaleCard({
   );
 }
 
-function groupCampaigns(campaigns: DisplaySaleCampaign[], feedback: ReviewFeedback) {
-  const groups: Record<CampaignStatus | "reviewedOut", DisplaySaleCampaign[]> = {
-    changed: [],
-    ended: [],
-    evergreen: [],
-    new: [],
-    ongoing: [],
-    reviewedOut: [],
-    unknown: [],
-  };
+function groupCampaigns(
+  campaigns: DisplaySaleCampaign[],
+  feedback: ReviewFeedback,
+) {
+  const groups: Record<CampaignStatus | "reviewedOut", DisplaySaleCampaign[]> =
+    {
+      changed: [],
+      ended: [],
+      evergreen: [],
+      new: [],
+      ongoing: [],
+      reviewedOut: [],
+      unknown: [],
+    };
   for (const campaign of campaigns) {
     const outcome = saleOutcomeForCampaign(feedback, campaign);
     if (outcome && outcome !== "confirmed") {
@@ -581,7 +719,10 @@ function campaignPriority(campaign: SaleCampaign): number {
   );
 }
 
-function compareCampaigns(left: DisplaySaleCampaign, right: DisplaySaleCampaign): number {
+function compareCampaigns(
+  left: DisplaySaleCampaign,
+  right: DisplaySaleCampaign,
+): number {
   return (
     statusPriority(right.saleStatus) - statusPriority(left.saleStatus) ||
     new Date(right.lastSeenAt ?? right.capturedAt).getTime() -
@@ -599,25 +740,49 @@ function statusPriority(status?: CampaignStatus): number {
   return 0;
 }
 
-function coverageLabel(report: SaleSourceReport, state: ReturnType<typeof summarizeSourceCoverage>["sources"][number]["state"]): string {
-  const prefix = state === "not_checked" ? "Not checked" : `${state[0].toUpperCase()}${state.slice(1)}`;
-  if (["blocked", "error", "failed", "timeout", "unavailable", "unknown"].includes(coverageHealthStatus(report.salePageHealth))) {
+function coverageLabel(
+  report: SaleSourceReport,
+  state: ReturnType<typeof summarizeSourceCoverage>["sources"][number]["state"],
+): string {
+  const prefix =
+    state === "not_checked"
+      ? "Not checked"
+      : `${state[0].toUpperCase()}${state.slice(1)}`;
+  if (
+    [
+      "blocked",
+      "error",
+      "failed",
+      "timeout",
+      "unavailable",
+      "unknown",
+    ].includes(coverageHealthStatus(report.salePageHealth))
+  ) {
     return `${prefix} · sale-page checks failed`;
   }
-  if (state === "blocked") return `${prefix} · ${report.error ?? "source fetch failed"}`;
-  const recovery = report.pageErrors?.some((error) => error.failureKind === "not_found")
+  if (state === "blocked")
+    return `${prefix} · ${report.error ?? "source fetch failed"}`;
+  const recovery = report.pageErrors?.some(
+    (error) => error.failureKind === "not_found",
+  )
     ? " · stale URL bypassed"
     : "";
   if ((report.saleEventCount ?? 0) > 0) {
     return `${prefix} · ${report.saleEventCount} parsed sale signal${report.saleEventCount === 1 ? "" : "s"}${recovery}`;
   }
-  if ((report.candidateCount ?? 0) > 0) return `${prefix} · ${report.candidateCount} parsed products${recovery}`;
-  if (state === "empty") return `${prefix} · pages reached, no parsed offers or products${recovery}`;
+  if ((report.candidateCount ?? 0) > 0)
+    return `${prefix} · ${report.candidateCount} parsed products${recovery}`;
+  if (state === "empty")
+    return `${prefix} · pages reached, no parsed offers or products${recovery}`;
   return `${prefix}${recovery}`;
 }
 
 function saleSignalLabel(sale: DisplaySaleCampaign): string {
-  if (/\b(?:bogo|buy\s+one|buy\s+1|2\s+for\s+1|two\s+for\s+one)\b/i.test(sale.saleSignal ?? "")) {
+  if (
+    /\b(?:bogo|buy\s+one|buy\s+1|2\s+for\s+1|two\s+for\s+one)\b/i.test(
+      sale.saleSignal ?? "",
+    )
+  ) {
     return "BOGO";
   }
   if (/\b(?:code|coupon|promo)\b/i.test(sale.saleSignal ?? "")) return "Code";
@@ -626,12 +791,24 @@ function saleSignalLabel(sale: DisplaySaleCampaign): string {
 
 function saleDiscountLabel(sale: DisplaySaleCampaign): string {
   if (!sale.saleDiscountPercent) return saleSignalLabel(sale);
-  const evidence = [sale.saleEvidence, sale.saleSignal, sale.sourceListingTitle, sale.title].filter(Boolean).join(" ");
+  const evidence = [
+    sale.saleEvidence,
+    sale.saleSignal,
+    sale.sourceListingTitle,
+    sale.title,
+  ]
+    .filter(Boolean)
+    .join(" ");
   const escapedDiscount = String(sale.saleDiscountPercent).replace(".", "\\.");
   const upTo =
     sale.saleDiscountQualifier === "up_to" ||
-    new RegExp(`\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`, "i").test(evidence);
-  return upTo ? `Up to ${sale.saleDiscountPercent}% off` : `${sale.saleDiscountPercent}% off`;
+    new RegExp(
+      `\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`,
+      "i",
+    ).test(evidence);
+  return upTo
+    ? `Up to ${sale.saleDiscountPercent}% off`
+    : `${sale.saleDiscountPercent}% off`;
 }
 
 async function fetchWithTimeout(
@@ -670,11 +847,17 @@ function formatAge(value: string): string {
 function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return date.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function humanize(value: string): string {
-  return value.replace(/_/g, " ").replace(/^./, (letter) => letter.toUpperCase());
+  return value
+    .replace(/_/g, " ")
+    .replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function Metric({ label, value }: { label: string; value: number | string }) {

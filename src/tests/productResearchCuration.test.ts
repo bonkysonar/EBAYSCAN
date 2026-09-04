@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildProductResearchPlan,
+  researchCheckpointComplete,
   curateResearchForFind,
   productResearchRowMatchScore,
   researchVariants,
@@ -54,7 +55,9 @@ describe("generic Product Research curation", () => {
     }));
 
     expect(buildProductResearchPlan(finds)).toHaveLength(45);
-    expect(buildProductResearchPlan(finds, { maxEntries: 10 })).toHaveLength(10);
+    expect(buildProductResearchPlan(finds, { maxEntries: 10 })).toHaveLength(
+      10,
+    );
   });
 
   it("removes numeric LP format text from research queries", () => {
@@ -77,18 +80,38 @@ describe("generic Product Research curation", () => {
           rows: [
             {
               title: "Mother Love Bone - Shine [New Vinyl LP] 180 Gram",
-              cells: ["", "", "$22.00", "$4.00", "4", "$88.00", "", "Jul 12, 2026"],
+              cells: [
+                "",
+                "",
+                "$22.00",
+                "$4.00",
+                "4",
+                "$88.00",
+                "",
+                "Jul 12, 2026",
+              ],
             },
             {
               title: "Mother Love Bone Shine New Vinyl LP",
-              cells: ["", "", "$24.00", "$0.00", "1", "$24.00", "", "Jun 10, 2026"],
+              cells: [
+                "",
+                "",
+                "$24.00",
+                "$0.00",
+                "1",
+                "$24.00",
+                "",
+                "Jun 10, 2026",
+              ],
             },
           ],
         },
       ],
     };
 
-    expect(curateResearchForFind(find, raw, new Date("2026-07-15T15:00:00Z"))).toMatchObject({
+    expect(
+      curateResearchForFind(find, raw, new Date("2026-07-15T15:00:00Z")),
+    ).toMatchObject({
       averageSoldPrice: 22.4,
       averageSoldShipping: 3.2,
       latestSoldDate: "2026-07-12",
@@ -130,13 +153,31 @@ describe("generic Product Research curation", () => {
                   href: "https://www.ebay.com/itm/111111111111",
                   title:
                     "Evanescence - Fallen 20th Anniversary 2 LP Blue Smoke Vinyl Target Ex New Sealed",
-                  cells: ["", "", "$30.95", "$5.99", "2", "$61.90", "", "Jul 4, 2026"],
+                  cells: [
+                    "",
+                    "",
+                    "$30.95",
+                    "$5.99",
+                    "2",
+                    "$61.90",
+                    "",
+                    "Jul 4, 2026",
+                  ],
                 },
                 {
                   href: "https://www.ebay.com/itm/222222222222",
                   title:
                     "LIMITED EDITION-Evanescence FALLEN 20th Anniversary SUPER DELUXE EDITION BOXSET",
-                  cells: ["", "", "$600.00", "$0.00", "1", "$600.00", "", "Jun 25, 2026"],
+                  cells: [
+                    "",
+                    "",
+                    "$600.00",
+                    "$0.00",
+                    "1",
+                    "$600.00",
+                    "",
+                    "Jun 25, 2026",
+                  ],
                 },
               ],
             },
@@ -145,7 +186,13 @@ describe("generic Product Research curation", () => {
       ],
     };
 
-    expect(curateResearchForFind(amalgamutFind, raw, new Date("2026-07-16T15:00:00Z"))).toMatchObject({
+    expect(
+      curateResearchForFind(
+        amalgamutFind,
+        raw,
+        new Date("2026-07-16T15:00:00Z"),
+      ),
+    ).toMatchObject({
       query: "The Amalgamut 20th Anniversary Edition",
       rows: [],
       status: "no_rows",
@@ -197,25 +244,46 @@ describe("generic Product Research curation", () => {
     const raw = {
       "scan-sam-and-dave": [
         {
+          periodDays: 1095,
           query: "Sam & Dave Hold On I'm Comin'",
           url: "https://www.ebay.com/sh/research?limit=50",
           rows: [
             {
               href: "https://www.ebay.com/itm/111111111111",
               title: "Sam & Dave - Hold On, I'm Comin' [New Vinyl LP]",
-              cells: ["", "", "$23.51", "$5.13", "1", "$23.51", "", "Jul 12, 2026"],
+              cells: [
+                "",
+                "",
+                "$23.51",
+                "$5.13",
+                "1",
+                "$23.51",
+                "",
+                "Jul 12, 2026",
+              ],
             },
             {
               href: "https://www.ebay.com/itm/222222222222",
               title: "Sam & Dave - Hold On, I'm Comin' [New Vinyl LP]",
-              cells: ["", "", "$31.98", "$3.99", "1", "$31.98", "", "Jul 8, 2026"],
+              cells: [
+                "",
+                "",
+                "$31.98",
+                "$3.99",
+                "1",
+                "$31.98",
+                "",
+                "Jul 8, 2026",
+              ],
             },
           ],
         },
       ],
     };
 
-    expect(curateResearchForFind(samAndDave, raw, new Date("2026-07-16T15:00:00Z"))).toMatchObject({
+    expect(
+      curateResearchForFind(samAndDave, raw, new Date("2026-07-16T15:00:00Z")),
+    ).toMatchObject({
       aggregatePeriodDays: 1095,
       aggregateUnitsSold: 2,
       sales30Days: 2,
@@ -231,19 +299,31 @@ describe("generic Product Research curation", () => {
     const raw = {
       [find.id]: [
         {
+          periodDays: 1095,
           query: "Mother Love Bone Shine",
           rows: [
             {
               href: "https://www.ebay.com/itm/111111111111",
               title: "Mother Love Bone - Shine [New Vinyl LP] 180 Gram",
-              cells: ["", "", "$22.00", "$4.00", "4", "$88.00", "", "Jul 12, 2026"],
+              cells: [
+                "",
+                "",
+                "$22.00",
+                "$4.00",
+                "4",
+                "$88.00",
+                "",
+                "Jul 12, 2026",
+              ],
             },
           ],
         },
       ],
     };
 
-    expect(curateResearchForFind(find, raw, new Date("2026-07-15T15:00:00Z"))).toMatchObject({
+    expect(
+      curateResearchForFind(find, raw, new Date("2026-07-15T15:00:00Z")),
+    ).toMatchObject({
       aggregatePeriodDays: 1095,
       aggregateUnitsSold: 4,
       sales30Days: null,
@@ -255,14 +335,27 @@ describe("generic Product Research curation", () => {
   });
 
   it("rejects non-record, damaged, and mismatched-title Product Research rows", () => {
-    expect(productResearchRowMatchScore(find, "Mother Love Bone Shine New Vinyl LP")).toBeGreaterThan(0.68);
-    expect(productResearchRowMatchScore(find, "Mother Love Bone Shine T-Shirt")).toBe(0);
-    expect(productResearchRowMatchScore(find, "Mother Love Bone Shine Vinyl - Damaged Jacket")).toBe(0);
-    expect(productResearchRowMatchScore(find, "Pearl Jam Ten New Vinyl LP")).toBe(0);
+    expect(
+      productResearchRowMatchScore(find, "Mother Love Bone Shine New Vinyl LP"),
+    ).toBeGreaterThan(0.68);
+    expect(
+      productResearchRowMatchScore(find, "Mother Love Bone Shine T-Shirt"),
+    ).toBe(0);
+    expect(
+      productResearchRowMatchScore(
+        find,
+        "Mother Love Bone Shine Vinyl - Damaged Jacket",
+      ),
+    ).toBe(0);
+    expect(
+      productResearchRowMatchScore(find, "Pearl Jam Ten New Vinyl LP"),
+    ).toBe(0);
   });
 
   it("keeps unmatched candidates pending instead of converting them to rejects", () => {
-    expect(curateResearchForFind(find, {}, new Date("2026-07-15T15:00:00Z"))).toMatchObject({
+    expect(
+      curateResearchForFind(find, {}, new Date("2026-07-15T15:00:00Z")),
+    ).toMatchObject({
       rows: [],
       status: "pending",
     });
@@ -272,7 +365,8 @@ describe("generic Product Research curation", () => {
     expect(
       researchVariants({
         artist: "Lionel Richie",
-        sourceListingTitle: "Lionel Richie: Limited Edition (180 Grams Vinyl LP Album)",
+        sourceListingTitle:
+          "Lionel Richie: Limited Edition (180 Grams Vinyl LP Album)",
         title: "(180 Grams)",
       }),
     ).toContain("Lionel Richie self titled");
@@ -285,7 +379,8 @@ describe("generic Product Research curation", () => {
       purchasePrice: 5,
       sourceListingTitle:
         'Anthony Ramos "Love And Lies" (Black/Platinum Swirl Vinyl LP) $5 + Free Shipping w/ Prime',
-      title: 'Anthony Ramos "Love And Lies" (Black/Platinum Swirl) + Free Shipping w/ Prime',
+      title:
+        'Anthony Ramos "Love And Lies" (Black/Platinum Swirl) + Free Shipping w/ Prime',
     };
     const raw = {
       "anthony-ramos-love-and-lies": [
@@ -293,17 +388,119 @@ describe("generic Product Research curation", () => {
           query: "Anthony Ramos Love And Lies",
           rows: [
             {
-              title: "Anthony Ramos - Love & Lies (LP, Signed, Limited Edition, Sealed)",
-              cells: ["", "", "$26.99", "$0.00", "1", "$26.99", "", "Jul 9, 2026"],
+              title:
+                "Anthony Ramos - Love & Lies (LP, Signed, Limited Edition, Sealed)",
+              cells: [
+                "",
+                "",
+                "$26.99",
+                "$0.00",
+                "1",
+                "$26.99",
+                "",
+                "Jul 9, 2026",
+              ],
             },
           ],
         },
       ],
     };
 
-    expect(curateResearchForFind(noisyFind, raw, new Date("2026-07-15T15:00:00Z"))).toMatchObject({
+    expect(
+      curateResearchForFind(noisyFind, raw, new Date("2026-07-15T15:00:00Z")),
+    ).toMatchObject({
       status: "no_rows",
       totalSoldCount: 0,
     });
   });
+});
+
+describe("research checkpoint and edition safeguards", () => {
+  it("does not finish a multi-query search after only one empty query", () => {
+    const [plan] = buildProductResearchPlan([find]);
+    const runs = plan.variants.map((variant) => ({
+      query: variant.query,
+      rows: [],
+      status: "complete",
+    }));
+    expect(researchCheckpointComplete(plan, { runs: runs.slice(0, 1) })).toBe(
+      false,
+    );
+    expect(researchCheckpointComplete(plan, { runs })).toBe(true);
+    expect(
+      researchCheckpointComplete(plan, {
+        runs: runs.map((run, i) => (i ? { ...run, status: "failed" } : run)),
+      }),
+    ).toBe(false);
+  });
+  it("does not validate partial rows from a failed request or a never-started entry", () => {
+    const failed = curateResearchForFind(find, {
+      entries: [
+        {
+          findId: find.id,
+          runs: [
+            {
+              query: "Mother Love Bone Shine",
+              status: "failed",
+              rows: [
+                {
+                  title: "Mother Love Bone Shine Vinyl LP New Sealed",
+                  avgSoldPrice: 40,
+                  totalSold: 5,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(failed.status).toBe("failed");
+    expect(failed.totalSoldCount).toBe(0);
+    expect(
+      curateResearchForFind(find, { entries: [{ findId: find.id, runs: [] }] })
+        .status,
+    ).toBe("pending");
+  });
+  it("does not use an Apple Red pressing to price an unspecified standard edition", () => {
+    expect(
+      productResearchRowMatchScore(
+        {
+          artist: "Quinn XCII",
+          title: "The People's Champ",
+          sourceListingTitle: "The People's Champ Standard Version Vinyl",
+        },
+        "Quinn XCII The People's Champ RARE Apple Red Color Vinyl LP BRAND NEW SEALED",
+      ),
+    ).toBeLessThan(0.68);
+  });
+});
+
+it("does not infer the observed period from the dayRange label alone", () => {
+  const run = {
+    query: "Mother Love Bone Shine",
+    url: "https://www.ebay.com/sh/research?dayRange=1095",
+    rows: [
+      {
+        title: "Mother Love Bone Shine New Vinyl LP",
+        avgSoldPrice: 40,
+        totalSold: 1,
+        dateLastSold: "2026-07-12",
+        itemUrl: "https://www.ebay.com/itm/111111111111",
+      },
+    ],
+  };
+  const unknown = curateResearchForFind(
+    find,
+    { entries: [{ findId: find.id, runs: [run] }] },
+    new Date("2026-07-16"),
+  );
+  expect(unknown.aggregatePeriodDays).toBeNull();
+  expect(unknown.sales90Days).toBeNull();
+  const thirty = curateResearchForFind(
+    find,
+    { entries: [{ findId: find.id, runs: [{ ...run, periodDays: 30 }] }] },
+    new Date("2026-07-16"),
+  );
+  expect(thirty.sales30Days).toBe(1);
+  expect(thirty.sales90Days).toBeNull();
 });

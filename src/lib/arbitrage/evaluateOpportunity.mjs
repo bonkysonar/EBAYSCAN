@@ -1,4 +1,6 @@
-export const EVALUATION_VERSION = 7;
+import { retailEligibility } from "../../../scripts/lib/retailIdentity.mjs";
+
+export const EVALUATION_VERSION = 8;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -48,7 +50,11 @@ export const defaultArbitrageSettings = Object.freeze({
   watchMinRoiRatio: 0.15,
 });
 
-export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new Date()) {
+export function evaluateOpportunity(
+  find,
+  settingsOverrides = {},
+  nowInput = new Date(),
+) {
   const settings = normalizedSettings(settingsOverrides);
   const sourceMinNetProfit = finiteNonNegative(find.sourceMinNetProfit);
   const sourceMinRoi = finiteNonNegative(find.sourceMinROI);
@@ -58,7 +64,9 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
       ...find,
       allInCost: 0,
       cashReturnPer30Days: null,
-      candidateReasons: ["This is a broad sale alert, not an individual record candidate."],
+      candidateReasons: [
+        "This is a broad sale alert, not an individual record candidate.",
+      ],
       candidateScore: 0,
       candidateTier: "REJECT",
       costLedger: buildCostLedger(
@@ -88,7 +96,9 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
       profitPer30Days: null,
       reasonCodes: ["SITEWIDE_SALE_REQUIRES_PRODUCT_REVIEW"],
       reasons: [
-        find.saleSignal ? `Sale signal: ${find.saleSignal}` : "Site-wide or broad sale detected.",
+        find.saleSignal
+          ? `Sale signal: ${find.saleSignal}`
+          : "Site-wide or broad sale detected.",
         "Review individual records before buying; this alert has no record-level market evidence.",
       ],
       recommendedMaxPurchasePrice: null,
@@ -108,7 +118,8 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
       : finitePositive(find.lowestActivePrice);
   const resalePrice = canonicalResalePrice(find);
   const sourceCurrency =
-    normalizeCurrency(find.sourceCurrency) ?? defaultCurrencyForCountry(find.sourceCountry);
+    normalizeCurrency(find.sourceCurrency) ??
+    defaultCurrencyForCountry(find.sourceCountry);
   const sourceCurrencyUnknown = sourceCurrency === null;
   const sourcePurchasePrice = finiteNonNegative(find.purchasePrice);
   const conversionRate = finitePositive(find.currencyConversionRate);
@@ -124,7 +135,8 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     conversionAgeDays !== null &&
     conversionAgeDays <= settings.maxEvidenceAgeDays;
   const currencyConversionRequired =
-    sourceCurrencyUnknown || Boolean(sourceCurrency !== "USD" && !conversionFresh);
+    sourceCurrencyUnknown ||
+    Boolean(sourceCurrency !== "USD" && !conversionFresh);
   const purchasePriceForLedger =
     sourceCurrency && sourceCurrency !== "USD" && conversionFresh
       ? convertedPurchasePrice
@@ -137,9 +149,14 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
   );
   const sellThroughRate =
     sold.units90 !== null && active.exactCount !== null
-      ? ratio(sold.units90, sold.units90 + active.exactCount, sold.units90 === 0 && active.exactCount === 0 ? 0 : null)
+      ? ratio(
+          sold.units90,
+          sold.units90 + active.exactCount,
+          sold.units90 === 0 && active.exactCount === 0 ? 0 : null,
+        )
       : finiteNonNegative(find.sellThroughRate);
-  const salesPerMonth = sold.salesPerMonth ?? finiteNonNegative(find.salesPerMonth);
+  const salesPerMonth =
+    sold.salesPerMonth ?? finiteNonNegative(find.salesPerMonth);
   const activeSupplyMonths =
     active.exactCount !== null && salesPerMonth !== null
       ? salesPerMonth > 0
@@ -162,6 +179,10 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     longTermSupplyMonths,
     salesPerMonth,
     longTermSalesPerMonth,
+    sold.velocityValidated &&
+      sold.status === "validated" &&
+      active.searchComplete &&
+      active.matchConfidence >= settings.minBuyMatchConfidence,
   );
   const profitPer30Days =
     costLedger.expectedNetProfit !== null && estimatedDaysToSell !== null
@@ -180,13 +201,19 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     activeEvidenceAge <= settings.maxEvidenceAgeDays;
   const offerAge = ageInDays(find.capturedAt, now);
   const offerFreshness =
-    offerAge !== null &&
-    offerAge <= settings.maxOfferAgeDays;
-  const purchaseOfferVerified = ["direct_retailer", "official_api"].includes(
-    String(find.purchaseOfferVerification ?? "").trim().toLowerCase(),
-  );
+    offerAge !== null && offerAge <= settings.maxOfferAgeDays;
+  const purchaseOfferVerified =
+    ["direct_retailer", "official_api"].includes(
+      String(find.purchaseOfferVerification ?? "")
+        .trim()
+        .toLowerCase(),
+    ) &&
+    (!find.requiresRetailVerification ||
+      find.retailVerification?.status === "verified" ||
+      find.purchaseOfferVerification === "official_api");
   const evidenceFreshness = marketEvidenceFreshness && offerFreshness;
-  const soldConditionMatches = sold.condition === expectedSoldCondition(find.condition);
+  const soldConditionMatches =
+    sold.condition === expectedSoldCondition(find.condition);
   const soldEvidence =
     sold.status === "validated" &&
     sold.units90 !== null &&
@@ -268,7 +295,7 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     soldEvidence,
     supply,
   };
-  const { decision, reasonCodes } = decideOpportunity({
+  let { decision, reasonCodes } = decideOpportunity({
     active,
     activeEvidence,
     costLedger,
@@ -293,6 +320,14 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     strategyOptions,
     supply,
   });
+  const eligibility = retailEligibility(find);
+  if (!eligibility.eligible) {
+    decision = "REJECT";
+    reasonCodes = ["RETAIL_PRODUCT_INELIGIBLE", eligibility.reason];
+  } else if (find.identityStatus === "unresolved") {
+    decision = "REVIEW";
+    reasonCodes = [...reasonCodes, "PRODUCT_IDENTITY_UNRESOLVED"];
+  }
   const reasons = describeDecision({
     active,
     activeEvidenceAge,
@@ -372,7 +407,9 @@ export function evaluateOpportunity(find, settingsOverrides = {}, nowInput = new
     soldUnits1095Days: sold.units1095,
     sourceCurrency,
     purchasePriceUsd:
-      sourceCurrency && sourceCurrency !== "USD" ? convertedPurchasePrice : find.purchasePriceUsd,
+      sourceCurrency && sourceCurrency !== "USD"
+        ? convertedPurchasePrice
+        : find.purchasePriceUsd,
     status: decision,
     strategyOptions,
   };
@@ -391,8 +428,12 @@ const CANDIDATE_HARD_REJECT_REASONS = new Set([
  * artist popularity is intentionally excluded.
  */
 export function assessCandidateOpportunity(find) {
-  const decision = String(find.decision ?? find.status ?? "REVIEW").toUpperCase();
-  const reasonCodes = new Set(Array.isArray(find.reasonCodes) ? find.reasonCodes : []);
+  const decision = String(
+    find.decision ?? find.status ?? "REVIEW",
+  ).toUpperCase();
+  const reasonCodes = new Set(
+    Array.isArray(find.reasonCodes) ? find.reasonCodes : [],
+  );
   const candidateReasons = [];
 
   if (
@@ -400,7 +441,9 @@ export function assessCandidateOpportunity(find) {
     [...CANDIDATE_HARD_REJECT_REASONS].some((reason) => reasonCodes.has(reason))
   ) {
     return {
-      candidateReasons: ["Validated evidence or an explicit preference rules this offer out."],
+      candidateReasons: [
+        "Validated evidence or an explicit preference rules this offer out.",
+      ],
       candidateScore: 0,
       candidateTier: "REJECT",
     };
@@ -420,11 +463,15 @@ export function assessCandidateOpportunity(find) {
       : find.currencyConversionRequired === false
         ? convertedPurchasePrice
         : null;
-  const originalPrice = finitePositive(find.sourceOriginalPrice ?? find.listPrice);
+  const originalPrice = finitePositive(
+    find.sourceOriginalPrice ?? find.listPrice,
+  );
   const explicitDiscount = finiteNonNegative(find.sourceDiscountPercent);
   const discountPercent =
     explicitDiscount ??
-    (purchasePrice !== null && originalPrice !== null && originalPrice > purchasePrice
+    (purchasePrice !== null &&
+    originalPrice !== null &&
+    originalPrice > purchasePrice
       ? ((originalPrice - purchasePrice) / originalPrice) * 100
       : 0);
   if (discountPercent >= 50) score += 18;
@@ -433,7 +480,9 @@ export function assessCandidateOpportunity(find) {
   else if (discountPercent >= 15) score += 5;
   if (discountPercent >= 25) {
     dealSignal = true;
-    candidateReasons.push(`${Math.round(discountPercent)}% below the source reference price.`);
+    candidateReasons.push(
+      `${Math.round(discountPercent)}% below the source reference price.`,
+    );
   }
 
   if (purchasePrice !== null) {
@@ -442,9 +491,15 @@ export function assessCandidateOpportunity(find) {
     else if (purchasePrice <= 20) score += 3;
     if (purchasePrice <= 15) {
       dealSignal = true;
-      candidateReasons.push(`Low acquisition price at ${money(purchasePrice)}.`);
+      candidateReasons.push(
+        `Low acquisition price at ${money(purchasePrice)}.`,
+      );
     }
-  } else if (sourcePurchasePrice !== null && sourceCurrency && sourceCurrency !== "USD") {
+  } else if (
+    sourcePurchasePrice !== null &&
+    sourceCurrency &&
+    sourceCurrency !== "USD"
+  ) {
     candidateReasons.push(
       `${sourceMoney(sourcePurchasePrice, sourceCurrency)} source offer; a fresh USD conversion is still needed.`,
     );
@@ -486,7 +541,9 @@ export function assessCandidateOpportunity(find) {
     else if (soldUnits90Days >= 1) score += 10;
     if (soldUnits90Days > 0) {
       productDemandSignal = true;
-      candidateReasons.push(`${Math.round(soldUnits90Days)} exact units sold in the last 90 days.`);
+      candidateReasons.push(
+        `${Math.round(soldUnits90Days)} exact units sold in the last 90 days.`,
+      );
     }
   }
 
@@ -508,14 +565,20 @@ export function assessCandidateOpportunity(find) {
     else if (exactActiveCount <= 25) score += 3;
     else if (exactActiveCount > 50) score -= 12;
     if (exactActiveCount <= 10) {
-      candidateReasons.push(`${Math.round(exactActiveCount)} exact active listings.`);
+      candidateReasons.push(
+        `${Math.round(exactActiveCount)} exact active listings.`,
+      );
     }
   }
 
-  const verification = String(find.purchaseOfferVerification ?? "").toLowerCase();
+  const verification = String(
+    find.purchaseOfferVerification ?? "",
+  ).toLowerCase();
   if (verification === "direct_retailer" || verification === "official_api") {
     score += 7;
-    candidateReasons.push("Offer came directly from the retailer or an official marketplace API.");
+    candidateReasons.push(
+      "Offer came directly from the retailer or an official marketplace API.",
+    );
   } else if (verification === "campaign_advertised") {
     score += 3;
   } else if (verification === "discovery_lead") {
@@ -527,7 +590,10 @@ export function assessCandidateOpportunity(find) {
 
   if (decision === "BUY") {
     return {
-      candidateReasons: ["All automatic evidence gates passed.", ...candidateReasons],
+      candidateReasons: [
+        "All automatic evidence gates passed.",
+        ...candidateReasons,
+      ],
       candidateScore: Math.max(90, clamp(Math.round(score), 0, 100)),
       candidateTier: "A",
     };
@@ -536,7 +602,9 @@ export function assessCandidateOpportunity(find) {
     return {
       candidateReasons: candidateReasons.length
         ? candidateReasons
-        : ["The record has useful evidence, but the current source price needs to improve."],
+        : [
+            "The record has useful evidence, but the current source price needs to improve.",
+          ],
       candidateScore: clamp(Math.round(score), 0, 100),
       candidateTier: "WATCH",
     };
@@ -547,12 +615,17 @@ export function assessCandidateOpportunity(find) {
   // still be a genuinely promising option, but incomplete timing, identity,
   // supply, or offer evidence caps it at B.
   const candidateTier =
-    ((economicsSignal && productDemandSignal && candidateScore >= 50) ||
-      (dealSignal && productDemandSignal && candidateScore >= 30))
+    economicsSignal &&
+    productDemandSignal &&
+    candidateScore >= 50 &&
+    find.identityStatus !== "unresolved" &&
+    find.gates?.offerFreshness === true
       ? "B"
       : "C";
   if (candidateReasons.length === 0) {
-    candidateReasons.push("Credible record offer; sold-market confirmation is still needed.");
+    candidateReasons.push(
+      "Credible record offer; sold-market confirmation is still needed.",
+    );
   }
   if (candidateTier === "C") {
     candidateReasons.push("Treat this as a research lead, not a value claim.");
@@ -596,30 +669,72 @@ function sourceMoney(value, currency) {
   }
 }
 
-export function buildCostLedger(purchasePrice, expectedResalePrice, costs = {}, settingsOverrides = {}) {
+export function buildCostLedger(
+  purchasePrice,
+  expectedResalePrice,
+  costs = {},
+  settingsOverrides = {},
+) {
   const settings = normalizedSettings(settingsOverrides);
   const price = finiteNonNegative(purchasePrice) ?? 0;
   const resale = finiteNonNegative(expectedResalePrice);
-  const taxRatePercent = finiteNonNegative(costs?.taxRatePercent) ?? settings.sourceTaxRatePercent;
+  const taxRatePercent =
+    finiteNonNegative(costs?.taxRatePercent) ?? settings.sourceTaxRatePercent;
   const salesTax =
     finiteNonNegative(costs?.taxAmount) ??
     roundMoney(price * (taxRatePercent / 100));
-  const inboundShipping = amount(costs?.inboundShipping, settings.defaultInboundShipping);
+  const inboundShipping = amount(
+    costs?.inboundShipping,
+    settings.defaultInboundShipping,
+  );
   const duty = amount(costs?.duty, settings.defaultDuty);
   const fxFees = amount(costs?.fxFees, settings.defaultFxFees);
-  const otherAcquisitionCosts = amount(costs?.otherAcquisitionCosts, settings.defaultOtherAcquisitionCosts);
-  const marketplaceFeeRate = rate(costs?.marketplaceFeeRate, settings.defaultMarketplaceFeeRate);
-  const marketplaceFeeFixed = amount(costs?.marketplaceFeeFixed, settings.defaultMarketplaceFeeFixed);
-  const promotedListingRate = rate(costs?.promotedListingRate, settings.defaultPromotedListingRate);
-  const outboundShipping = amount(costs?.outboundShipping, settings.defaultOutboundShipping);
+  const otherAcquisitionCosts = amount(
+    costs?.otherAcquisitionCosts,
+    settings.defaultOtherAcquisitionCosts,
+  );
+  const marketplaceFeeRate = rate(
+    costs?.marketplaceFeeRate,
+    settings.defaultMarketplaceFeeRate,
+  );
+  const marketplaceFeeFixed = amount(
+    costs?.marketplaceFeeFixed,
+    settings.defaultMarketplaceFeeFixed,
+  );
+  const promotedListingRate = rate(
+    costs?.promotedListingRate,
+    settings.defaultPromotedListingRate,
+  );
+  const outboundShipping = amount(
+    costs?.outboundShipping,
+    settings.defaultOutboundShipping,
+  );
   const packaging = amount(costs?.packaging, settings.defaultPackaging);
-  const returnsReserveRate = rate(costs?.returnsReserveRate, settings.defaultReturnsReserveRate);
-  const otherSellingCosts = amount(costs?.otherSellingCosts, settings.defaultOtherSellingCosts);
-  const returnsReserveAmount = amount(costs?.returnsReserveAmount, settings.defaultReturnsReserveAmount);
-  const landedCost = roundMoney(price + salesTax + inboundShipping + duty + fxFees + otherAcquisitionCosts);
-  const marketplaceFee = resale === null ? 0 : roundMoney(resale * marketplaceFeeRate + marketplaceFeeFixed);
-  const promotedListingFee = resale === null ? 0 : roundMoney(resale * promotedListingRate);
-  const returnsReserve = resale === null ? returnsReserveAmount : roundMoney(resale * returnsReserveRate + returnsReserveAmount);
+  const returnsReserveRate = rate(
+    costs?.returnsReserveRate,
+    settings.defaultReturnsReserveRate,
+  );
+  const otherSellingCosts = amount(
+    costs?.otherSellingCosts,
+    settings.defaultOtherSellingCosts,
+  );
+  const returnsReserveAmount = amount(
+    costs?.returnsReserveAmount,
+    settings.defaultReturnsReserveAmount,
+  );
+  const landedCost = roundMoney(
+    price + salesTax + inboundShipping + duty + fxFees + otherAcquisitionCosts,
+  );
+  const marketplaceFee =
+    resale === null
+      ? 0
+      : roundMoney(resale * marketplaceFeeRate + marketplaceFeeFixed);
+  const promotedListingFee =
+    resale === null ? 0 : roundMoney(resale * promotedListingRate);
+  const returnsReserve =
+    resale === null
+      ? returnsReserveAmount
+      : roundMoney(resale * returnsReserveRate + returnsReserveAmount);
   const sellingCosts = roundMoney(
     marketplaceFee +
       promotedListingFee +
@@ -629,9 +744,16 @@ export function buildCostLedger(purchasePrice, expectedResalePrice, costs = {}, 
       otherSellingCosts,
   );
   const totalCost = roundMoney(landedCost + sellingCosts);
-  const expectedNetProfit = resale === null ? null : roundMoney(resale - totalCost);
-  const roiRatio = expectedNetProfit === null || landedCost <= 0 ? null : round(expectedNetProfit / landedCost, 4);
-  const marginRatio = expectedNetProfit === null || resale === null || resale <= 0 ? null : round(expectedNetProfit / resale, 4);
+  const expectedNetProfit =
+    resale === null ? null : roundMoney(resale - totalCost);
+  const roiRatio =
+    expectedNetProfit === null || landedCost <= 0
+      ? null
+      : round(expectedNetProfit / landedCost, 4);
+  const marginRatio =
+    expectedNetProfit === null || resale === null || resale <= 0
+      ? null
+      : round(expectedNetProfit / resale, 4);
 
   return {
     duty,
@@ -666,7 +788,7 @@ function canonicalSoldEvidence(find, now) {
   const latestSaleDate = isoDate(
     hasStructuredEvidence
       ? evidence.latestSaleDate
-      : find.latestSoldDate ?? find.ebayResearchLatestSaleDate,
+      : (find.latestSoldDate ?? find.ebayResearchLatestSaleDate),
   );
   const units90 = finiteNonNegative(
     hasStructuredEvidence ? evidence.unitsSold90Days : find.soldUnits90Days,
@@ -675,19 +797,20 @@ function canonicalSoldEvidence(find, now) {
     hasStructuredEvidence ? evidence.daysSinceLastSale : find.daysSinceLastSale,
   );
   const daysSinceLastSale =
-    latestSaleDate !== null
-      ? daysBetween(latestSaleDate, now)
-      : evidenceDays;
+    latestSaleDate !== null ? daysBetween(latestSaleDate, now) : evidenceDays;
   return {
     capturedAt: isoTimestamp(
       hasStructuredEvidence ? evidence.capturedAt : find.ebayResearchUpdatedAt,
     ),
     condition:
-      (hasStructuredEvidence ? evidence.condition : find.ebaySoldCondition) ?? "unknown",
+      (hasStructuredEvidence ? evidence.condition : find.ebaySoldCondition) ??
+      "unknown",
     daysSinceLastSale,
     latestSaleDate,
     matchConfidence: confidenceScore(
-      hasStructuredEvidence ? evidence.matchConfidence : find.ebaySoldMatchConfidence,
+      hasStructuredEvidence
+        ? evidence.matchConfidence
+        : find.ebaySoldMatchConfidence,
     ),
     salesPerMonth:
       monthlyVelocity(units90, 3) ??
@@ -695,7 +818,8 @@ function canonicalSoldEvidence(find, now) {
         hasStructuredEvidence ? evidence.salesPerMonth : find.salesPerMonth,
       ),
     status:
-      (hasStructuredEvidence ? evidence.status : find.ebayResearchStatus) ?? "pending",
+      (hasStructuredEvidence ? evidence.status : find.ebayResearchStatus) ??
+      "pending",
     units30: finiteNonNegative(
       hasStructuredEvidence ? evidence.unitsSold30Days : find.soldUnits30Days,
     ),
@@ -704,7 +828,9 @@ function canonicalSoldEvidence(find, now) {
       hasStructuredEvidence ? evidence.unitsSold365Days : find.soldUnits365Days,
     ),
     units1095: finiteNonNegative(
-      hasStructuredEvidence ? evidence.unitsSold1095Days : find.soldUnits1095Days,
+      hasStructuredEvidence
+        ? evidence.unitsSold1095Days
+        : find.soldUnits1095Days,
     ),
     velocityValidated:
       hasStructuredEvidence &&
@@ -718,7 +844,9 @@ function canonicalActiveEvidence(find) {
   const hasStructuredEvidence = isStructuredEvidence(find.activeEvidence);
   const evidence = hasStructuredEvidence ? find.activeEvidence : {};
   const explicitExact = finiteNonNegative(
-    hasStructuredEvidence ? evidence.exactMatchedListingCount : find.exactActiveListingCount,
+    hasStructuredEvidence
+      ? evidence.exactMatchedListingCount
+      : find.exactActiveListingCount,
   );
   const legacyExact =
     !hasStructuredEvidence && find.activeListingCountIsExactMatch
@@ -726,18 +854,24 @@ function canonicalActiveEvidence(find) {
       : null;
   return {
     capturedAt: isoTimestamp(
-      hasStructuredEvidence ? evidence.capturedAt : find.ebayActiveSearchUpdatedAt,
+      hasStructuredEvidence
+        ? evidence.capturedAt
+        : find.ebayActiveSearchUpdatedAt,
     ),
     exactCount: explicitExact ?? legacyExact,
     matchConfidence: confidenceScore(
-      hasStructuredEvidence ? evidence.matchConfidence : find.ebayActiveMatchConfidence,
+      hasStructuredEvidence
+        ? evidence.matchConfidence
+        : find.ebayActiveMatchConfidence,
     ),
     searchComplete:
       (hasStructuredEvidence
         ? evidence.searchComplete
-        : find.ebayActiveSearchComplete ?? find.activeListingCountIsExactMatch) ?? false,
-    status:
-      hasStructuredEvidence ? evidence.status : find.ebayActiveSearchStatus,
+        : (find.ebayActiveSearchComplete ??
+          find.activeListingCountIsExactMatch)) ?? false,
+    status: hasStructuredEvidence
+      ? evidence.status
+      : find.ebayActiveSearchStatus,
   };
 }
 
@@ -757,7 +891,10 @@ function canonicalResalePrice(find) {
     const price = finiteNonNegative(row.avgSoldPrice);
     if (price === null) continue;
     const total = roundMoney(price + (finiteNonNegative(row.avgShipping) ?? 0));
-    const quantity = Math.max(1, Math.floor(finiteNonNegative(row.totalSold) ?? 1));
+    const quantity = Math.max(
+      1,
+      Math.floor(finiteNonNegative(row.totalSold) ?? 1),
+    );
     rowPrices.push({ quantity, value: total });
   }
   if (rowPrices.length > 0) return weightedPercentile(rowPrices, 0.25);
@@ -765,7 +902,9 @@ function canonicalResalePrice(find) {
   if (hasStructuredEvidence) return null;
   const averagePrice = finiteNonNegative(find.averageSoldPrice);
   if (averagePrice === null) return null;
-  return roundMoney((averagePrice + (finiteNonNegative(find.averageSoldShipping) ?? 0)) * 0.85);
+  return roundMoney(
+    (averagePrice + (finiteNonNegative(find.averageSoldShipping) ?? 0)) * 0.85,
+  );
 }
 
 function decideOpportunity(context) {
@@ -805,8 +944,9 @@ function decideOpportunity(context) {
     soldEvidence &&
     active.exactCount !== null &&
     active.exactCount > settings.maxActiveListings &&
-    estimatedDaysToSell !== null &&
-    estimatedDaysToSell > settings.highMarginMaxDaysToSell;
+    (sold.units90 === 0 ||
+      (estimatedDaysToSell !== null &&
+        estimatedDaysToSell > settings.highMarginMaxDaysToSell));
   const activeMarketBelowBuyCost =
     !currencyConversionRequired &&
     activeEvidence &&
@@ -840,16 +980,22 @@ function decideOpportunity(context) {
 
   const missingEvidence = [];
   if (sourceCurrencyUnknown) missingEvidence.push("SOURCE_CURRENCY_UNKNOWN");
-  else if (currencyConversionRequired) missingEvidence.push("SOURCE_CURRENCY_UNCONVERTED");
+  else if (currencyConversionRequired)
+    missingEvidence.push("SOURCE_CURRENCY_UNCONVERTED");
   if (!soldEvidence) missingEvidence.push("SOLD_EVIDENCE_INCOMPLETE");
-  if (!sold.velocityValidated) missingEvidence.push("SOLD_VELOCITY_UNVALIDATED");
+  if (!sold.velocityValidated)
+    missingEvidence.push("SOLD_VELOCITY_UNVALIDATED");
   if (!activeEvidence) missingEvidence.push("ACTIVE_EVIDENCE_INCOMPLETE");
-  if (!marketEvidenceFreshness) missingEvidence.push("EVIDENCE_STALE_OR_UNDATED");
+  if (!marketEvidenceFreshness)
+    missingEvidence.push("EVIDENCE_STALE_OR_UNDATED");
   if (!offerFreshness) missingEvidence.push("OFFER_STALE_OR_UNDATED");
-  if (!purchaseOfferVerified) missingEvidence.push("ACQUISITION_OFFER_UNVERIFIED");
+  if (!purchaseOfferVerified)
+    missingEvidence.push("ACQUISITION_OFFER_UNVERIFIED");
   if (!soldConditionMatches) missingEvidence.push("SOLD_CONDITION_MISMATCH");
-  if (sold.matchConfidence < settings.minBuyMatchConfidence) missingEvidence.push("SOLD_MATCH_CONFIDENCE_LOW");
-  if (active.matchConfidence < settings.minBuyMatchConfidence) missingEvidence.push("ACTIVE_MATCH_CONFIDENCE_LOW");
+  if (sold.matchConfidence < settings.minBuyMatchConfidence)
+    missingEvidence.push("SOLD_MATCH_CONFIDENCE_LOW");
+  if (active.matchConfidence < settings.minBuyMatchConfidence)
+    missingEvidence.push("ACTIVE_MATCH_CONFIDENCE_LOW");
   if (resalePrice === null) missingEvidence.push("CONSERVATIVE_RESALE_MISSING");
 
   if (missingEvidence.length > 0) {
@@ -868,7 +1014,10 @@ function decideOpportunity(context) {
   ) {
     return {
       decision: "BUY",
-      reasonCodes: ["ADAPTIVE_STRATEGY_PASSED", `STRATEGY_${recommendedStrategy.toUpperCase()}`],
+      reasonCodes: [
+        "ADAPTIVE_STRATEGY_PASSED",
+        `STRATEGY_${recommendedStrategy.toUpperCase()}`,
+      ],
     };
   }
   if (
@@ -877,7 +1026,10 @@ function decideOpportunity(context) {
   ) {
     return {
       decision: "REVIEW",
-      reasonCodes: ["TEST_ONE_OPTION", `STRATEGY_${recommendedStrategy.toUpperCase()}`],
+      reasonCodes: [
+        "TEST_ONE_OPTION",
+        `STRATEGY_${recommendedStrategy.toUpperCase()}`,
+      ],
     };
   }
   if (recommendedStrategy) {
@@ -952,23 +1104,31 @@ function describeDecision(context) {
     );
   }
 
-  if (resalePrice !== null) reasons.push(`Conservative resale estimate: ${money(resalePrice)}.`);
+  if (resalePrice !== null)
+    reasons.push(`Conservative resale estimate: ${money(resalePrice)}.`);
   else reasons.push("No conservative resale estimate is available.");
 
   if (!currencyConversionRequired) {
     reasons.push(
       `Expected net profit after tax, inbound shipping, marketplace fees, ads, outbound shipping, packaging, returns reserve, FX, and duty: ${
-        costLedger.expectedNetProfit === null ? "n/a" : money(costLedger.expectedNetProfit)
+        costLedger.expectedNetProfit === null
+          ? "n/a"
+          : money(costLedger.expectedNetProfit)
       }.`,
     );
     reasons.push(
       `Cost ledger: ${money(costLedger.landedCost)} landed cost + ${money(costLedger.sellingCosts)} selling costs = ${money(costLedger.totalCost)} total.`,
     );
-    if (costLedger.roiRatio !== null) reasons.push(`Expected ROI on landed cost: ${percent(costLedger.roiRatio)}.`);
+    if (costLedger.roiRatio !== null)
+      reasons.push(
+        `Expected ROI on landed cost: ${percent(costLedger.roiRatio)}.`,
+      );
     if (estimatedDaysToSell !== null) {
       reasons.push(
         `Estimated turn: about ${estimatedDaysToSell} days; velocity-adjusted profit ${
-          profitPer30Days === null ? "n/a" : `${money(profitPer30Days)} per 30 days`
+          profitPer30Days === null
+            ? "n/a"
+            : `${money(profitPer30Days)} per 30 days`
         }.`,
       );
     }
@@ -985,7 +1145,9 @@ function describeDecision(context) {
   if (sold.units90 !== null) {
     reasons.push(
       `${sold.units90} condition-matched units sold in 90 days (${salesPerMonth === null ? "n/a" : salesPerMonth.toFixed(1)} per month); last sale ${
-        sold.daysSinceLastSale === null ? "n/a" : `${sold.daysSinceLastSale} days ago`
+        sold.daysSinceLastSale === null
+          ? "n/a"
+          : `${sold.daysSinceLastSale} days ago`
       }.`,
     );
   } else {
@@ -1004,7 +1166,9 @@ function describeDecision(context) {
   if (sold.units1095 !== null) {
     reasons.push(
       `${sold.units1095} exact matched units across the three-year research window (${longTermSalesPerMonth === null ? "n/a" : `${longTermSalesPerMonth.toFixed(2)}/mo`}); long-term supply ${
-        longTermSupplyMonths === null ? "n/a" : `${longTermSupplyMonths.toFixed(1)} months`
+        longTermSupplyMonths === null
+          ? "n/a"
+          : `${longTermSupplyMonths.toFixed(1)} months`
       }.`,
     );
   }
@@ -1012,8 +1176,11 @@ function describeDecision(context) {
     `Priority ${priority.band} (${priority.score}/100): demand ${priority.breakdown.demandDurability}/30, economics ${priority.breakdown.economics}/30, supply ${priority.breakdown.competitionAndSupply}/20, evergreen ${priority.breakdown.evergreenPrior}/15, evidence ${priority.breakdown.evidenceQuality}/5.`,
   );
   if (recommendedStrategy) {
-    const option = strategyOptions.find((candidate) => candidate.id === recommendedStrategy);
-    if (option) reasons.push(`Recommended option: ${option.label}. ${option.reason}`);
+    const option = strategyOptions.find(
+      (candidate) => candidate.id === recommendedStrategy,
+    );
+    if (option)
+      reasons.push(`Recommended option: ${option.label}. ${option.reason}`);
   } else if (strategyOptions.length > 0) {
     reasons.push(
       `No automatic strategy currently clears both demand and economics. ${strategyOptions
@@ -1022,7 +1189,8 @@ function describeDecision(context) {
     );
   }
 
-  if (!soldConditionMatches) reasons.push("Sold evidence does not match the source record's condition.");
+  if (!soldConditionMatches)
+    reasons.push("Sold evidence does not match the source record's condition.");
   if (!marketEvidenceFreshness) {
     reasons.push(
       `Market evidence must be dated within ${settings.maxEvidenceAgeDays} days (sold ${
@@ -1042,13 +1210,23 @@ function describeDecision(context) {
       "The acquisition price is an advertised campaign estimate or discovery-feed lead; confirm the live retailer price and availability before buying.",
     );
   }
-  if (reasonCodes.includes("SOLD_MATCH_CONFIDENCE_LOW")) reasons.push("Sold-listing match confidence is too low for an automatic buy.");
-  if (reasonCodes.includes("ACTIVE_MATCH_CONFIDENCE_LOW")) reasons.push("Active-listing match confidence is too low for an automatic buy.");
+  if (reasonCodes.includes("SOLD_MATCH_CONFIDENCE_LOW"))
+    reasons.push(
+      "Sold-listing match confidence is too low for an automatic buy.",
+    );
+  if (reasonCodes.includes("ACTIVE_MATCH_CONFIDENCE_LOW"))
+    reasons.push(
+      "Active-listing match confidence is too low for an automatic buy.",
+    );
   if (reasonCodes.includes("SOLD_VELOCITY_UNVALIDATED")) {
-    reasons.push("Recent sold counts must come from dated transactions; an aggregate total plus latest-sale date cannot prove 30/90-day velocity.");
+    reasons.push(
+      "Recent sold counts must come from dated transactions; an aggregate total plus latest-sale date cannot prove 30/90-day velocity.",
+    );
   }
   if (reasonCodes.includes("ECONOMICS_HARD_FAIL")) {
-    reasons.push("The conservative scenario loses money, so no margin/velocity tradeoff can rescue it.");
+    reasons.push(
+      "The conservative scenario loses money, so no margin/velocity tradeoff can rescue it.",
+    );
   }
   if (reasonCodes.includes("SUPPLY_HARD_FAIL")) {
     reasons.push(
@@ -1064,19 +1242,29 @@ function describeDecision(context) {
     );
   }
   if (reasonCodes.includes("ADAPTIVE_STRATEGY_PASSED")) {
-    reasons.push("At least one velocity-sensitive strategy clears its demand, supply, evidence, and economics requirements.");
+    reasons.push(
+      "At least one velocity-sensitive strategy clears its demand, supply, evidence, and economics requirements.",
+    );
   }
   if (reasonCodes.includes("TEST_ONE_OPTION")) {
-    reasons.push("The evidence supports a one-copy test, but the overall priority score is not high enough for a normal restock.");
+    reasons.push(
+      "The evidence supports a one-copy test, but the overall priority score is not high enough for a normal restock.",
+    );
   }
   if (reasonCodes.includes("LOW_PRIORITY_WATCH")) {
-    reasons.push("A velocity-sensitive option passes, but the broader durability score is too low for even a one-copy test; keep it on the watch list.");
+    reasons.push(
+      "A velocity-sensitive option passes, but the broader durability score is too low for even a one-copy test; keep it on the watch list.",
+    );
   }
   if (reasonCodes.includes("PRICE_TARGET_WATCH")) {
-    reasons.push("Demand supports an option, but the current price misses its velocity-adjusted economics; watch for the displayed maximum buy price.");
+    reasons.push(
+      "Demand supports an option, but the current price misses its velocity-adjusted economics; watch for the displayed maximum buy price.",
+    );
   }
   if (reasonCodes.includes("SLOW_DEMAND_HIGH_MARGIN_WATCH")) {
-    reasons.push("The higher-margin economics are close enough to monitor, but item-level velocity is too thin for an automatic buy.");
+    reasons.push(
+      "The higher-margin economics are close enough to monitor, but item-level velocity is too thin for an automatic buy.",
+    );
   }
   if (reasonCodes.includes("USER_AVOID_PREFERENCE")) {
     reasons.push("This artist or catalog was marked as an avoid preference.");
@@ -1237,9 +1425,7 @@ function buildStrategyOptions(context) {
       evidenceReady,
       estimatedDaysToSell,
       id: "balanced",
-      label: balancedEvergreenFlex
-        ? "Evergreen balanced buy"
-        : "Balanced buy",
+      label: balancedEvergreenFlex ? "Evergreen balanced buy" : "Balanced buy",
       maxDaysToSell: settings.balancedMaxDaysToSell,
       minNetProfitDollars: balancedMinNetProfitDollars,
       minRoiRatio: balancedMinRoiRatio,
@@ -1313,7 +1499,8 @@ function strategyOption({
   const eligible = evidenceReady && demandQualified && economicsQualified;
   let reason;
   if (!evidenceReady) {
-    reason = "Needs exact, fresh sold and active evidence before it can become actionable.";
+    reason =
+      "Needs exact, fresh sold and active evidence before it can become actionable.";
   } else if (!demandQualified) {
     if (partialDemand && (economicsQualified || nearEconomics)) {
       reason = `The observed turn only partially supports this option, so the economics are watch-list evidence rather than an automatic buy.`;
@@ -1362,10 +1549,14 @@ function evergreenSupport(find, sold, longTermSalesPerMonth) {
 
   if (sold.units365 !== null && sold.units365 >= 24) {
     strength += 2;
-    reasons.push(`${sold.units365} condition-matched item sales in the last year.`);
+    reasons.push(
+      `${sold.units365} condition-matched item sales in the last year.`,
+    );
   } else if (sold.units365 !== null && sold.units365 >= 12) {
     strength += 1;
-    reasons.push(`${sold.units365} condition-matched item sales in the last year.`);
+    reasons.push(
+      `${sold.units365} condition-matched item sales in the last year.`,
+    );
   }
   if (
     sold.units1095 !== null &&
@@ -1380,7 +1571,9 @@ function evergreenSupport(find, sold, longTermSalesPerMonth) {
   }
   if (longTermSalesPerMonth !== null && longTermSalesPerMonth >= 0.67) {
     strength += 1;
-    reasons.push(`${round(longTermSalesPerMonth, 2)} exact item sales per month over the long term.`);
+    reasons.push(
+      `${round(longTermSalesPerMonth, 2)} exact item sales per month over the long term.`,
+    );
   }
 
   return {
@@ -1456,19 +1649,16 @@ function buildPriorityScore(context) {
     evergreenPrior: clamp(evergreenPrior, 0, 15),
     evidenceQuality: clamp(evidenceQuality, 0, 5),
   };
-  let score = Math.round(Object.values(breakdown).reduce((sum, value) => sum + value, 0));
-  if (/^unknown artist$/i.test(String(find.artist ?? "").trim())) score = Math.max(0, score - 3);
+  let score = Math.round(
+    Object.values(breakdown).reduce((sum, value) => sum + value, 0),
+  );
+  if (/^unknown artist$/i.test(String(find.artist ?? "").trim()))
+    score = Math.max(0, score - 3);
   if (currencyConversionRequired) score = Math.max(0, score - 3);
   const avoided = preference === "avoid";
   if (avoided) score = Math.min(score, 49);
   const band =
-    score >= 80
-      ? "A"
-      : score >= 65
-        ? "B"
-        : score >= 50
-          ? "C"
-          : "REJECT";
+    score >= 80 ? "A" : score >= 65 ? "B" : score >= 50 ? "C" : "REJECT";
   return { avoided, band, breakdown, score };
 }
 
@@ -1478,13 +1668,16 @@ function estimateDaysToSell(
   longTermSupplyMonths,
   salesPerMonth,
   longTermSalesPerMonth,
+  validatedRecentVelocity,
 ) {
-  if (exactActiveCount === 0 && (salesPerMonth > 0 || longTermSalesPerMonth > 0)) return 7;
-  const supplyMonths =
-    activeSupplyMonths ??
-    longTermSupplyMonths;
-  if (supplyMonths === null || supplyMonths === undefined) return null;
-  return Math.max(7, Math.round(supplyMonths * 30));
+  if (
+    !validatedRecentVelocity ||
+    !(salesPerMonth > 0) ||
+    exactActiveCount === null
+  )
+    return null;
+  // Include our proposed copy; zero current competitors is not a seven-day sale.
+  return Math.max(7, Math.round(((exactActiveCount + 1) / salesPerMonth) * 30));
 }
 
 function recencyPoints(daysSinceLastSale) {
@@ -1570,13 +1763,22 @@ function maximumPurchasePrice(
 function normalizedSettings(settingsOverrides = {}) {
   const settings = { ...defaultArbitrageSettings, ...settingsOverrides };
   if (
-    !Object.prototype.hasOwnProperty.call(settingsOverrides, "balancedMinNetProfitDollars") &&
-    Object.prototype.hasOwnProperty.call(settingsOverrides, "minNetProfitDollars")
+    !Object.prototype.hasOwnProperty.call(
+      settingsOverrides,
+      "balancedMinNetProfitDollars",
+    ) &&
+    Object.prototype.hasOwnProperty.call(
+      settingsOverrides,
+      "minNetProfitDollars",
+    )
   ) {
     settings.balancedMinNetProfitDollars = settings.minNetProfitDollars;
   }
   if (
-    !Object.prototype.hasOwnProperty.call(settingsOverrides, "balancedMinRoiRatio") &&
+    !Object.prototype.hasOwnProperty.call(
+      settingsOverrides,
+      "balancedMinRoiRatio",
+    ) &&
     Object.prototype.hasOwnProperty.call(settingsOverrides, "minRoiRatio")
   ) {
     settings.balancedMinRoiRatio = settings.minRoiRatio;
@@ -1587,8 +1789,14 @@ function normalizedSettings(settingsOverrides = {}) {
 }
 
 function expectedSoldCondition(condition) {
-  if (/\b(?:new|sealed|factory sealed|brand new)\b/i.test(String(condition ?? ""))) return "new_sealed";
-  if (/\b(?:used|vg|good|fair|poor|nm|near mint)\b/i.test(String(condition ?? ""))) return "used";
+  if (
+    /\b(?:new|sealed|factory sealed|brand new)\b/i.test(String(condition ?? ""))
+  )
+    return "new_sealed";
+  if (
+    /\b(?:used|vg|good|fair|poor|nm|near mint)\b/i.test(String(condition ?? ""))
+  )
+    return "used";
   return "unknown";
 }
 
@@ -1614,12 +1822,16 @@ function confidenceScore(value) {
 }
 
 function normalizeCurrency(value) {
-  const currency = String(value ?? "").trim().toUpperCase();
+  const currency = String(value ?? "")
+    .trim()
+    .toUpperCase();
   return /^[A-Z]{3}$/.test(currency) ? currency : null;
 }
 
 function defaultCurrencyForCountry(value) {
-  const country = String(value ?? "").trim().toUpperCase();
+  const country = String(value ?? "")
+    .trim()
+    .toUpperCase();
   if (["US", "USA", "UNITED STATES"].includes(country)) return "USD";
   if (["UK", "GB", "UNITED KINGDOM"].includes(country)) return "GBP";
   if (["CA", "CANADA"].includes(country)) return "CAD";
@@ -1634,11 +1846,16 @@ function monthlyVelocity(units, months) {
 }
 
 function amount(value, fallback) {
-  return roundMoney(finiteNonNegative(value) ?? finiteNonNegative(fallback) ?? 0);
+  return roundMoney(
+    finiteNonNegative(value) ?? finiteNonNegative(fallback) ?? 0,
+  );
 }
 
 function rate(value, fallback) {
-  return round(Math.min(1, finiteNonNegative(value) ?? finiteNonNegative(fallback) ?? 0), 6);
+  return round(
+    Math.min(1, finiteNonNegative(value) ?? finiteNonNegative(fallback) ?? 0),
+    6,
+  );
 }
 
 function finiteNonNegative(value) {

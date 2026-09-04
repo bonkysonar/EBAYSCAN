@@ -25,7 +25,12 @@ import {
 } from "./lib/bulkBuy/calculateBulkBuy";
 import { EbayClient } from "./lib/ebay/client";
 import { MockEbayClient } from "./lib/ebay/mockClient";
-import type { DiscogsMarketSnapshot, DiscogsSalesStats, SearchInput, SearchResult } from "./lib/ebay/types";
+import type {
+  DiscogsMarketSnapshot,
+  DiscogsSalesStats,
+  SearchInput,
+  SearchResult,
+} from "./lib/ebay/types";
 import { readJsonResponse } from "./lib/http/jsonResponse";
 import { scoreRecord } from "./lib/scoring/scoreRecord";
 import type { ScoringSettings, TriageDecision } from "./lib/scoring/types";
@@ -33,14 +38,18 @@ import { loadSettings, saveSettings } from "./lib/storage/localSettings";
 
 export function App() {
   const [route, setRoute] = useState<AppRoute>(() => routeFromHash());
-  const [settings, setSettings] = useState<ScoringSettings>(() => loadSettings());
+  const [settings, setSettings] = useState<ScoringSettings>(() =>
+    loadSettings(),
+  );
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [decision, setDecision] = useState<TriageDecision | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TriageDecision[]>([]);
   const [bulkBuyRows, setBulkBuyRows] = useState<BulkBuyRow[]>([]);
-  const [savedBulkBuyBatches, setSavedBulkBuyBatches] = useState<BulkBuyBatch[]>(() => loadBulkBuyBatches());
+  const [savedBulkBuyBatches, setSavedBulkBuyBatches] = useState<
+    BulkBuyBatch[]
+  >(() => loadBulkBuyBatches());
   const ebayClient = useMemo(() => new EbayClient(), []);
   const mockClient = useMemo(() => new MockEbayClient(), []);
 
@@ -94,13 +103,17 @@ export function App() {
     try {
       return await ebayClient.search(input);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Unknown eBay error";
+      const message =
+        caught instanceof Error ? caught.message : "Unknown eBay error";
 
       if (shouldUseMockFallback(input)) {
         const fallback = await mockClient.search(input);
         return {
           ...fallback,
-          warnings: [`Real eBay lookup failed, showing demo mock fallback: ${message}`, ...fallback.warnings],
+          warnings: [
+            `Real eBay lookup failed, showing demo mock fallback: ${message}`,
+            ...fallback.warnings,
+          ],
         };
       }
 
@@ -110,7 +123,8 @@ export function App() {
         source: "ebay",
         timestamp: new Date().toISOString(),
         warnings: [liveLookupFailureWarning(message)],
-        rawSummary: "No live eBay results were shown because the real lookup failed.",
+        rawSummary:
+          "No live eBay results were shown because the real lookup failed.",
       };
     }
   }
@@ -134,7 +148,9 @@ export function App() {
 
     if (input.type === "manual") {
       const query = input.query.toLowerCase();
-      return query.includes("mixed ambiguous") || query.includes("promo white label");
+      return (
+        query.includes("mixed ambiguous") || query.includes("promo white label")
+      );
     }
 
     return false;
@@ -171,13 +187,18 @@ export function App() {
 
   function saveCurrentBulkBuyBatch(name: string) {
     if (bulkBuyRows.length === 0) return;
-    const nextBatches = [createBulkBuyBatch(bulkBuyRows, name), ...savedBulkBuyBatches].slice(0, 20);
+    const nextBatches = [
+      createBulkBuyBatch(bulkBuyRows, name),
+      ...savedBulkBuyBatches,
+    ].slice(0, 20);
     setSavedBulkBuyBatches(nextBatches);
     saveBulkBuyBatches(nextBatches);
   }
 
   function loadSavedBulkBuyBatch(batchId: string) {
-    const batch = savedBulkBuyBatches.find((candidate) => candidate.id === batchId);
+    const batch = savedBulkBuyBatches.find(
+      (candidate) => candidate.id === batchId,
+    );
     if (!batch) return;
     setBulkBuyRows(batch.rows);
   }
@@ -187,7 +208,9 @@ export function App() {
     applyDiscogsSalesStats(stats);
   }
 
-  async function pullDiscogsSalesStats(discogs: DiscogsMarketSnapshot): Promise<DiscogsSalesStats> {
+  async function pullDiscogsSalesStats(
+    discogs: DiscogsMarketSnapshot,
+  ): Promise<DiscogsSalesStats> {
     const response = await fetch("/api/discogs/stats", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -196,7 +219,9 @@ export function App() {
         releaseUrl: discogs.releaseUrl,
       }),
     });
-    const payload = await readJsonResponse<DiscogsSalesStats & { error?: string }>(response, "Discogs stats endpoint");
+    const payload = await readJsonResponse<
+      DiscogsSalesStats & { error?: string }
+    >(response, "Discogs stats endpoint");
 
     if (!response.ok) {
       throw new Error(payload.error ?? "Discogs stats pull failed.");
@@ -228,7 +253,14 @@ export function App() {
       setBulkBuyRows((current) =>
         current.map((row, index) =>
           index === 0 || bulkBuyRowMatchesDiscogs(row, discogs)
-            ? { ...updateBulkBuyRowFromDiscogs(row, discogs, nextDecision.priceSummary), searchResult: nextResult }
+            ? {
+                ...updateBulkBuyRowFromDiscogs(
+                  row,
+                  discogs,
+                  nextDecision.priceSummary,
+                ),
+                searchResult: nextResult,
+              }
             : row,
         ),
       );
@@ -245,8 +277,16 @@ export function App() {
 
     const previousDiscogs = searchResult.marketSnapshot.discogs;
     const isSamePressing =
-      Boolean(pressing.releaseId && previousDiscogs.releaseId && pressing.releaseId === previousDiscogs.releaseId) ||
-      Boolean(pressing.releaseUrl && previousDiscogs.releaseUrl && pressing.releaseUrl === previousDiscogs.releaseUrl);
+      Boolean(
+        pressing.releaseId &&
+          previousDiscogs.releaseId &&
+          pressing.releaseId === previousDiscogs.releaseId,
+      ) ||
+      Boolean(
+        pressing.releaseUrl &&
+          previousDiscogs.releaseUrl &&
+          pressing.releaseUrl === previousDiscogs.releaseUrl,
+      );
     const discogs: DiscogsMarketSnapshot = {
       ...previousDiscogs,
       matchedTitle: pressing.matchedTitle ?? previousDiscogs.matchedTitle,
@@ -261,8 +301,12 @@ export function App() {
         : isSamePressing
           ? previousDiscogs.salesStats
           : undefined,
-      suggestedPrice: isSamePressing ? previousDiscogs.suggestedPrice : undefined,
-      suggestedPriceCondition: isSamePressing ? previousDiscogs.suggestedPriceCondition : undefined,
+      suggestedPrice: isSamePressing
+        ? previousDiscogs.suggestedPrice
+        : undefined,
+      suggestedPriceCondition: isSamePressing
+        ? previousDiscogs.suggestedPriceCondition
+        : undefined,
       status: "available",
       warnings: [],
     };
@@ -281,7 +325,14 @@ export function App() {
       setBulkBuyRows((current) =>
         current.map((row, index) =>
           index === 0 || bulkBuyRowMatchesDiscogs(row, previousDiscogs)
-            ? { ...updateBulkBuyRowFromDiscogs(row, discogs, nextDecision.priceSummary), searchResult: nextResult }
+            ? {
+                ...updateBulkBuyRowFromDiscogs(
+                  row,
+                  discogs,
+                  nextDecision.priceSummary,
+                ),
+                searchResult: nextResult,
+              }
             : row,
         ),
       );
@@ -305,7 +356,7 @@ export function App() {
       ? "A fresh, evidence-first review queue for multi-record eBay listings."
       : isVinylLotArtistsRoute
         ? "Editable artist signals for the vinyl-lot review queue."
-      : "Fast conservative triage for vinyl resale decisions.";
+        : "Fast conservative triage for vinyl resale decisions.";
 
   return (
     <main className="app-shell">
@@ -315,95 +366,172 @@ export function App() {
           <p>{pageSubtitle}</p>
         </div>
         <nav className="app-nav" aria-label="App pages">
-          <a className={route === "scanner" ? "active" : ""} href="#/scanner">Scanner</a>
-          <a className={route === "bulkBuy" ? "active" : ""} href="#/bulk-buy">Bulk Buy</a>
-          <a className={route === "vinylLots" ? "active" : ""} href="#/vinyl-lots">Vinyl Lots</a>
-          <a className={route === "vinylLotArtists" ? "active" : ""} href="#/vinyl-lot-artists">Lot Artists</a>
-          <a className={route === "seller" ? "active" : ""} href="#/seller-prices">Seller Price Analyzer</a>
-          <a className={route === "arbitrage" ? "active" : ""} href="#/retail-arbitrage">Retail Arbitrage</a>
-          <a className={route === "siteSales" ? "active" : ""} href="#/site-wide-sales">Site-wide Sales</a>
-          <a className="extension-download-link" download href="/downloads/record-scanner-discogs-helper.zip">
+          <a className={route === "scanner" ? "active" : ""} href="#/scanner">
+            Scanner
+          </a>
+          <a className={route === "bulkBuy" ? "active" : ""} href="#/bulk-buy">
+            Bulk Buy
+          </a>
+          <a
+            className={route === "vinylLots" ? "active" : ""}
+            href="#/vinyl-lots"
+          >
+            Vinyl Lots
+          </a>
+          <a
+            className={route === "vinylLotArtists" ? "active" : ""}
+            href="#/vinyl-lot-artists"
+          >
+            Lot Artists
+          </a>
+          <a
+            className={route === "seller" ? "active" : ""}
+            href="#/seller-prices"
+          >
+            Seller Price Analyzer
+          </a>
+          <a
+            className={route === "arbitrage" ? "active" : ""}
+            href="#/retail-arbitrage"
+          >
+            Retail Arbitrage
+          </a>
+          <a
+            className={route === "siteSales" ? "active" : ""}
+            href="#/site-wide-sales"
+          >
+            Site-wide Sales
+          </a>
+          <a
+            className="extension-download-link"
+            download
+            href="/downloads/record-scanner-discogs-helper.zip"
+          >
             Download Chrome Extension
           </a>
         </nav>
         {isLookupRoute ? (
-          <button className="next-button" type="button" onClick={resetForNextRecord}>
+          <button
+            className="next-button"
+            type="button"
+            onClick={resetForNextRecord}
+          >
             Next Record
           </button>
         ) : null}
       </header>
 
-      {route === "vinylLots" ? <VinylLotFinder /> : route === "vinylLotArtists" ? <VinylLotArtists /> : route === "seller" ? <SellerPriceAnalyzer /> : route === "arbitrage" ? <RetailArbitrage /> : route === "siteSales" ? <SiteWideSales /> : <section className={`workbench-grid ${isBulkBuyRoute ? "bulk-buy-workbench" : "scanner-workbench"}`}>
-        <div className="panel stack">
-          <SearchInputPanel isSearching={isSearching} onSearch={runSearch} />
-          <SettingsPanel settings={settings} onChange={updateSettings} />
-        </div>
+      {route === "vinylLots" ? (
+        <VinylLotFinder />
+      ) : route === "vinylLotArtists" ? (
+        <VinylLotArtists />
+      ) : route === "seller" ? (
+        <SellerPriceAnalyzer />
+      ) : route === "arbitrage" ? (
+        <RetailArbitrage />
+      ) : route === "siteSales" ? (
+        <SiteWideSales />
+      ) : (
+        <section
+          className={`workbench-grid ${isBulkBuyRoute ? "bulk-buy-workbench" : "scanner-workbench"}`}
+        >
+          <div className="panel stack">
+            <SearchInputPanel isSearching={isSearching} onSearch={runSearch} />
+            <SettingsPanel settings={settings} onChange={updateSettings} />
+          </div>
 
-        <div className="stack result-column">
-          {error ? <div className="error-box">{error}</div> : null}
-          {decision ? (
-            <>
-              <DecisionBanner decision={decision} input={searchResult?.input ?? null} />
-              <PriceClusterSummary
-                discogs={searchResult?.marketSnapshot?.discogs}
-                ebayResearchKeywords={searchResult?.marketSnapshot?.ebayResearchKeywords}
-                ebayResearchUrl={searchResult?.marketSnapshot?.ebayResearchUrl}
-                onDiscogsSalesStatsImport={importDiscogsSalesStats}
-                onDiscogsPressingAccept={acceptDiscogsPressing}
-                onDiscogsSalesStatsPull={pullDiscogsSalesStats}
-                summary={decision.priceSummary}
+          <div className="stack result-column">
+            {error ? <div className="error-box">{error}</div> : null}
+            {decision ? (
+              <>
+                <DecisionBanner
+                  decision={decision}
+                  input={searchResult?.input ?? null}
+                />
+                <PriceClusterSummary
+                  discogs={searchResult?.marketSnapshot?.discogs}
+                  ebayResearchKeywords={
+                    searchResult?.marketSnapshot?.ebayResearchKeywords
+                  }
+                  ebayResearchUrl={
+                    searchResult?.marketSnapshot?.ebayResearchUrl
+                  }
+                  onDiscogsSalesStatsImport={importDiscogsSalesStats}
+                  onDiscogsPressingAccept={acceptDiscogsPressing}
+                  onDiscogsSalesStatsPull={pullDiscogsSalesStats}
+                  summary={decision.priceSummary}
+                />
+                <CandidateListingList listings={decision.topListings} />
+                <ReasonCodesPanel
+                  reasons={decision.reasons}
+                  warnings={decision.warnings}
+                />
+              </>
+            ) : (
+              <section className="empty-state">
+                <h2>Ready for the next record</h2>
+                <p>
+                  Scan a barcode, search a catalog number, type a manual search,
+                  or try the image placeholder. Enter submits text inputs.
+                </p>
+                <div className="demo-list">
+                  <span>Try: 012345LOW</span>
+                  <span>Try: 999999RARE</span>
+                  <span>Try catalog: 60296-1</span>
+                  <span>Try real search: fleetwood mac rumours</span>
+                </div>
+              </section>
+            )}
+          </div>
+
+          <aside className="stack">
+            {isBulkBuyRoute ? (
+              <BulkBuyLedger
+                rows={bulkBuyRows}
+                savedBatches={savedBulkBuyBatches}
+                onDelete={deleteBulkBuyRow}
+                onLoadBatch={loadSavedBulkBuyBatch}
+                onOpenRow={openBulkBuyRow}
+                onResetBatch={resetBulkBuyBatch}
+                onSaveBatch={saveCurrentBulkBuyBatch}
               />
-              <CandidateListingList listings={decision.topListings} />
-              <ReasonCodesPanel reasons={decision.reasons} warnings={decision.warnings} />
-            </>
-          ) : (
-            <section className="empty-state">
-              <h2>Ready for the next record</h2>
-              <p>Scan a barcode, search a catalog number, type a manual search, or try the image placeholder. Enter submits text inputs.</p>
-              <div className="demo-list">
-                <span>Try: 012345LOW</span>
-                <span>Try: 999999RARE</span>
-                <span>Try catalog: 60296-1</span>
-                <span>Try real search: fleetwood mac rumours</span>
-              </div>
+            ) : null}
+            <section className="panel history-panel">
+              <h2>Recent Decisions</h2>
+              {history.length === 0 ? (
+                <p className="muted">No records triaged yet.</p>
+              ) : null}
+              {history.map((item, index) => (
+                <div
+                  className={`history-item ${item.decision.toLowerCase()}`}
+                  key={`${item.decision}-${index}`}
+                >
+                  <strong>{item.decision}</strong>
+                  <span>{Math.round(item.confidence * 100)}% confidence</span>
+                  <small>{item.suggestedAction}</small>
+                </div>
+              ))}
             </section>
-          )}
-        </div>
-
-        <aside className="stack">
-          {isBulkBuyRoute ? (
-            <BulkBuyLedger
-              rows={bulkBuyRows}
-              savedBatches={savedBulkBuyBatches}
-              onDelete={deleteBulkBuyRow}
-              onLoadBatch={loadSavedBulkBuyBatch}
-              onOpenRow={openBulkBuyRow}
-              onResetBatch={resetBulkBuyBatch}
-              onSaveBatch={saveCurrentBulkBuyBatch}
-            />
-          ) : null}
-          <section className="panel history-panel">
-            <h2>Recent Decisions</h2>
-            {history.length === 0 ? <p className="muted">No records triaged yet.</p> : null}
-            {history.map((item, index) => (
-              <div className={`history-item ${item.decision.toLowerCase()}`} key={`${item.decision}-${index}`}>
-                <strong>{item.decision}</strong>
-                <span>{Math.round(item.confidence * 100)}% confidence</span>
-                <small>{item.suggestedAction}</small>
-              </div>
-            ))}
-          </section>
-        </aside>
-      </section>}
+          </aside>
+        </section>
+      )}
     </main>
   );
 }
 
-type AppRoute = "arbitrage" | "bulkBuy" | "scanner" | "seller" | "siteSales" | "vinylLotArtists" | "vinylLots";
+type AppRoute =
+  | "arbitrage"
+  | "bulkBuy"
+  | "scanner"
+  | "seller"
+  | "siteSales"
+  | "vinylLotArtists"
+  | "vinylLots";
 
 function routeFromHash(): AppRoute {
   if (window.location.hash === "#/seller-prices") return "seller";
-  if (window.location.hash === "#/retail-arbitrage") return "arbitrage";
+  if (window.location.hash.split("?")[0] === "#/retail-arbitrage")
+    return "arbitrage";
   if (window.location.hash === "#/site-wide-sales") return "siteSales";
   if (window.location.hash === "#/bulk-buy") return "bulkBuy";
   if (window.location.hash === "#/vinyl-lots") return "vinylLots";
@@ -414,4 +542,3 @@ function routeFromHash(): AppRoute {
 function nextBulkBuyOrder(rows: BulkBuyRow[]): number {
   return rows.reduce((max, row) => Math.max(max, row.order), 0) + 1;
 }
-
