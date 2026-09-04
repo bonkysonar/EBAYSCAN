@@ -340,3 +340,19 @@ it("does not identify a retailer vendor as the artist", () => {
   expect(identity.artist).toBe("Unknown Artist");
   expect(identity.identityStatus).toBe("unresolved");
 });
+
+it("uses a structured artist when a colon suffix contains only the vinyl format", () => {
+  const identity = shopifyIdentity(
+    {
+      title: "LA Divine: Vinyl 2LP",
+      vendor: "Cold War Kids",
+      type: "Vinyl 2LP",
+      tags: ["EMI Store"],
+    },
+    {},
+    { name: "EMI Store" },
+  );
+  expect(identity.artist).toBe("Cold War Kids");
+  expect(identity.title).toContain("LA Divine");
+  expect(identity.identityStatus).toBe("resolved");
+});

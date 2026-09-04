@@ -102,6 +102,7 @@ if (String(payload.runManifest?.scannerVersion ?? "").endsWith("/4")) {
     ),
   );
 }
+curatedProducts = curatedProducts.filter((find) => cleanText(find.title));
 const recommendedIds = new Set(
   selectDecisionList(curatedProducts).map((find) => find.id),
 );
