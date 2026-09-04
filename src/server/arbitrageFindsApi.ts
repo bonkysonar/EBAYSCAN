@@ -1,6 +1,6 @@
 import { selectDecisionList } from "../lib/arbitrage/decisionList.mjs";
-import { feedbackReceipt } from "./retailOperationsApi";
-import { mergeVerifiedSourceUpdates } from "./retailSourceUpdates";
+import { feedbackReceipt } from "./retailOperationsApi.js";
+import { mergeVerifiedSourceUpdates } from "./retailSourceUpdates.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
