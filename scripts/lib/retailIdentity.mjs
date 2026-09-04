@@ -80,6 +80,8 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
   if (
     knownArtist &&
     (taggedArtist ||
+      !title ||
+      variantOnly.test(title) ||
       (endsInVariant && parts.length === 2) ||
       artist === "Unknown Artist" ||
       rawTitle.toLowerCase().startsWith(knownArtist.toLowerCase()))
