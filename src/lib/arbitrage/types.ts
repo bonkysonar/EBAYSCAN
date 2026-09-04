@@ -99,7 +99,10 @@ export type ArbitrageSoldEvidence = {
   unitsSold90Days?: number | null;
   unitsSold365Days?: number | null;
   unitsSold1095Days?: number | null;
-  velocityEvidence?: "aggregate_last_sale_only" | "dated_transactions" | "unknown";
+  velocityEvidence?:
+    | "aggregate_last_sale_only"
+    | "dated_transactions"
+    | "unknown";
 };
 
 export type ArbitrageActiveEvidence = {
@@ -161,10 +164,49 @@ export type ArbitrageSettings = {
 };
 
 export type ArbitrageFind = {
+  basketScenario?: {
+    quantity: number;
+    currency: string;
+    total: number;
+    freeShipping: boolean;
+    additionalCash: number;
+    eligible: boolean;
+    reasons: string[];
+  };
+  requiresRetailVerification?: boolean;
+  physicalFormatConfirmed?: boolean;
+  identityStatus?: "resolved" | "unresolved";
+  identitySource?: string;
+  recordFormat?: string;
+  available?: boolean;
+  preorder?: boolean;
+  advertisedPurchasePrice?: number;
+  campaignTerms?: Record<string, unknown>;
+  campaignChecks?: Array<{ campaignId: string; reasons: string[] }>;
+  retailVerification?: {
+    status: "verified" | "needs_confirmation" | "failed" | "unavailable";
+    checkedAt: string;
+    reason: string;
+    advertisedPrice?: number;
+    expectedPrice?: number;
+    currency?: string;
+  };
+  learningEvidenceRevision?: string;
+  learningSuppressed?: boolean;
+  feedbackReceipt?: {
+    listRank: number | null;
+    run: string;
+    key: string;
+    observation: string;
+    expiresAt: string;
+    signature: string;
+  };
+
   activeEvidence?: ArbitrageActiveEvidence;
   activeListingCount?: number | null;
   activeListingCountIsExactMatch?: boolean;
   appliedSaleCampaignId?: string | null;
+  saleCode?: string | null;
   appliedSaleCode?: string | null;
   appliedSaleDiscountPercent?: number | null;
   appliedSaleEvidence?: string | null;
@@ -261,7 +303,11 @@ export type ArbitrageFind = {
   }>;
   purchasePrice: number;
   purchasePriceIncludesShipping?: boolean;
-  purchaseOfferVerification?: "campaign_advertised" | "direct_retailer" | "discovery_lead" | "official_api";
+  purchaseOfferVerification?:
+    | "campaign_advertised"
+    | "direct_retailer"
+    | "discovery_lead"
+    | "official_api";
   purchaseRetailerDomain?: string;
   purchaseRetailerName?: string;
   purchasePriceUsd?: number | null;
@@ -291,7 +337,13 @@ export type ArbitrageFind = {
   saleObservedThisRun?: boolean;
   reopenedAt?: string | null;
   saleScanCount?: number;
-  saleStatus?: "changed" | "ended" | "evergreen" | "new" | "ongoing" | "unknown";
+  saleStatus?:
+    | "changed"
+    | "ended"
+    | "evergreen"
+    | "new"
+    | "ongoing"
+    | "unknown";
   saleVerification?: "discovery-lead" | "retailer-page";
   firstSeenAt?: string;
   sourceId: VinylShopSource["id"] | string;
@@ -402,6 +454,18 @@ export type ArbitrageRunManifest = {
 };
 
 export type ArbitrageImportPayload = {
+  publicationMode?: "full" | "source_updates";
+  sourceUpdateVersion?: number;
+  sourceUpdates?: {
+    version: 1;
+    updatedSourceIds: string[];
+    retainedSourceIds: string[];
+    lastBroadScanAt: string | null;
+    lastBroadAttemptAt: string | null;
+  };
+  funnel?: Record<string, unknown>;
+  publishedAt?: string;
+
   createdAt: string;
   finds: ArbitrageFind[];
   phase?: "final" | "scan" | string;

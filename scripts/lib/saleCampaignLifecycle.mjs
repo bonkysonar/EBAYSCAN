@@ -6,8 +6,14 @@ export const SALE_CAMPAIGN_LEDGER_SCHEMA_VERSION = 1;
 const DEFAULT_END_AFTER_MISSES = 2;
 const DEFAULT_EVERGREEN_AFTER_SCANS = 5;
 const DEFAULT_MAX_HISTORY_ENTRIES = 2_000;
-const ACTIVE_SALE_STATUSES = new Set(["new", "changed", "ongoing", "evergreen"]);
-const TRACKING_QUERY_KEYS = /^(?:constraint|fbclid|filter(?:\..+)?|gclid|mc_cid|mc_eid|page|p|ref|section_id|sort|sort_by|source|tags?|utm_.+|view)$/i;
+const ACTIVE_SALE_STATUSES = new Set([
+  "new",
+  "changed",
+  "ongoing",
+  "evergreen",
+]);
+const TRACKING_QUERY_KEYS =
+  /^(?:constraint|fbclid|filter(?:\..+)?|gclid|mc_cid|mc_eid|page|p|ref|section_id|sort|sort_by|source|tags?|utm_.+|view)$/i;
 
 export function reconcileSaleCampaigns({
   previousLedger = null,
@@ -17,25 +23,46 @@ export function reconcileSaleCampaigns({
   runId,
   options = {},
 }) {
-  const timestamp = validIsoTimestamp(observedAt) ? observedAt : new Date().toISOString();
+  const timestamp = validIsoTimestamp(observedAt)
+    ? observedAt
+    : new Date().toISOString();
   const effectiveRunId = cleanText(runId) || `legacy-${timestamp}`;
-  const endAfterMisses = positiveInteger(options.endAfterMisses, DEFAULT_END_AFTER_MISSES);
-  const evergreenAfterScans = positiveInteger(options.evergreenAfterScans, DEFAULT_EVERGREEN_AFTER_SCANS);
-  const maxHistoryEntries = positiveInteger(options.maxHistoryEntries, DEFAULT_MAX_HISTORY_ENTRIES);
+  const endAfterMisses = positiveInteger(
+    options.endAfterMisses,
+    DEFAULT_END_AFTER_MISSES,
+  );
+  const evergreenAfterScans = positiveInteger(
+    options.evergreenAfterScans,
+    DEFAULT_EVERGREEN_AFTER_SCANS,
+  );
+  const maxHistoryEntries = positiveInteger(
+    options.maxHistoryEntries,
+    DEFAULT_MAX_HISTORY_ENTRIES,
+  );
   const previous = normalizeLedger(previousLedger);
   const reportsBySource = new Map(
     (Array.isArray(sourceReports) ? sourceReports : [])
-      .filter((report) => report && typeof report === "object" && cleanText(report.id))
+      .filter(
+        (report) =>
+          report && typeof report === "object" && cleanText(report.id),
+      )
       .map((report) => [cleanText(report.id), report]),
   );
-  const previousCampaigns = previous.campaigns.map((campaign) => normalizeExistingCampaign(campaign));
-  const previousById = new Map(previousCampaigns.map((campaign) => [campaign.saleCampaignId, campaign]));
+  const previousCampaigns = previous.campaigns.map((campaign) =>
+    normalizeExistingCampaign(campaign),
+  );
+  const previousById = new Map(
+    previousCampaigns.map((campaign) => [campaign.saleCampaignId, campaign]),
+  );
   const previousByFingerprint = new Map();
   const previousByIdentity = new Map();
   const previousByOfferIdentity = new Map();
 
   for (const campaign of previousCampaigns) {
-    const key = fingerprintLookupKey(campaign.sourceId, campaign.saleFingerprint);
+    const key = fingerprintLookupKey(
+      campaign.sourceId,
+      campaign.saleFingerprint,
+    );
     if (key) {
       const matches = previousByFingerprint.get(key) ?? [];
       matches.push(campaign);
@@ -46,7 +73,8 @@ export function reconcileSaleCampaigns({
     identityMatches.push(campaign);
     previousByIdentity.set(identityKey, identityMatches);
     const offerIdentityKey = saleCampaignObservationIdentity(campaign);
-    const offerIdentityMatches = previousByOfferIdentity.get(offerIdentityKey) ?? [];
+    const offerIdentityMatches =
+      previousByOfferIdentity.get(offerIdentityKey) ?? [];
     offerIdentityMatches.push(campaign);
     previousByOfferIdentity.set(offerIdentityKey, offerIdentityMatches);
   }
@@ -56,39 +84,63 @@ export function reconcileSaleCampaigns({
   const matchedPreviousIds = new Set();
   const observations = dedupeObservations(saleEvents);
   const currentFingerprintKeys = new Set(
-    observations.map((event) => fingerprintLookupKey(event.sourceId, event.saleFingerprint)).filter(Boolean),
+    observations
+      .map((event) =>
+        fingerprintLookupKey(event.sourceId, event.saleFingerprint),
+      )
+      .filter(Boolean),
   );
 
   for (const rawEvent of observations) {
     const normalized = normalizeObservedEvent(rawEvent, timestamp);
-    const fingerprintMatches = previousByFingerprint.get(fingerprintLookupKey(normalized.sourceId, normalized.saleFingerprint)) ?? [];
+    const fingerprintMatches =
+      previousByFingerprint.get(
+        fingerprintLookupKey(normalized.sourceId, normalized.saleFingerprint),
+      ) ?? [];
     const normalizedIdentity = saleCampaignIdFor(normalized);
     const normalizedOfferIdentity = saleCampaignObservationIdentity(normalized);
-    const offerIdentityMatches = previousByOfferIdentity.get(normalizedOfferIdentity) ?? [];
+    const offerIdentityMatches =
+      previousByOfferIdentity.get(normalizedOfferIdentity) ?? [];
     const exactPrevious =
       fingerprintMatches.find(
         (candidate) =>
-          saleCampaignObservationIdentity(candidate) === normalizedOfferIdentity &&
+          saleCampaignObservationIdentity(candidate) ===
+            normalizedOfferIdentity &&
           !matchedPreviousIds.has(candidate.saleCampaignId),
       ) ??
       (fingerprintMatches.length === 1
-        ? fingerprintMatches.find((candidate) => !matchedPreviousIds.has(candidate.saleCampaignId))
+        ? fingerprintMatches.find(
+            (candidate) => !matchedPreviousIds.has(candidate.saleCampaignId),
+          )
         : null);
     const derivedPrevious = previousById.get(normalized.saleCampaignId);
     const identityMatches = previousByIdentity.get(normalizedIdentity) ?? [];
-    const fallbackMatches = [derivedPrevious, ...offerIdentityMatches, ...identityMatches].filter(
+    const fallbackMatches = [
+      derivedPrevious,
+      ...offerIdentityMatches,
+      ...identityMatches,
+    ].filter(
       (candidate, index, candidates) =>
         candidate &&
-        candidates.findIndex((entry) => entry?.saleCampaignId === candidate.saleCampaignId) === index &&
+        candidates.findIndex(
+          (entry) => entry?.saleCampaignId === candidate.saleCampaignId,
+        ) === index &&
         !matchedPreviousIds.has(candidate.saleCampaignId),
     );
     const unreservedFallback = fallbackMatches.find(
-      (candidate) => !currentFingerprintKeys.has(fingerprintLookupKey(candidate.sourceId, candidate.saleFingerprint)),
+      (candidate) =>
+        !currentFingerprintKeys.has(
+          fingerprintLookupKey(candidate.sourceId, candidate.saleFingerprint),
+        ),
     );
-    let prior = exactPrevious ?? unreservedFallback ?? fallbackMatches[0] ?? null;
+    let prior =
+      exactPrevious ?? unreservedFallback ?? fallbackMatches[0] ?? null;
     let campaignId = prior?.saleCampaignId ?? normalized.saleCampaignId;
 
-    if (!prior && (nextById.has(campaignId) || matchedPreviousIds.has(campaignId))) {
+    if (
+      !prior &&
+      (nextById.has(campaignId) || matchedPreviousIds.has(campaignId))
+    ) {
       campaignId = `${campaignId}-${shortHash(normalized.saleFingerprint || normalized.saleContentHash)}`;
       prior = previousById.get(campaignId) ?? null;
     }
@@ -105,24 +157,29 @@ export function reconcileSaleCampaigns({
       (prior.saleFailureCount ?? 0) === 0
         ? (prior.saleConsecutiveSeenCount ?? prior.saleScanCount ?? 0) + 1
         : 1;
-    const contentChanged = Boolean(prior && prior.saleContentHash !== normalized.saleContentHash);
-    const evidenceChanged = Boolean(prior && prior.saleEvidenceHash !== normalized.saleEvidenceHash);
+    const contentChanged = Boolean(
+      prior && prior.saleContentHash !== normalized.saleContentHash,
+    );
+    const evidenceChanged = Boolean(
+      prior && prior.saleEvidenceHash !== normalized.saleEvidenceHash,
+    );
     const wasEnded = prior?.saleStatus === "ended";
     const wasUnknown = prior?.saleStatus === "unknown";
-    const saleStatus = !prior || wasEnded
-      ? "new"
-      : contentChanged
-        ? "changed"
-        : saleConsecutiveSeenCount >= evergreenAfterScans
-          ? "evergreen"
-          : "ongoing";
+    const saleStatus =
+      !prior || wasEnded
+        ? "new"
+        : contentChanged
+          ? "changed"
+          : saleConsecutiveSeenCount >= evergreenAfterScans
+            ? "evergreen"
+            : "ongoing";
     const campaign = {
       ...(prior ?? {}),
       ...normalized,
       endedAt: null,
       firstSeenAt: prior?.firstSeenAt ?? timestamp,
       lastSeenAt: timestamp,
-      reopenedAt: wasEnded ? timestamp : prior?.reopenedAt ?? null,
+      reopenedAt: wasEnded ? timestamp : (prior?.reopenedAt ?? null),
       saleCampaignId: campaignId,
       saleConsecutiveSeenCount,
       saleFailureCount: 0,
@@ -141,12 +198,24 @@ export function reconcileSaleCampaigns({
       wasUnknown,
     });
     if (transition) {
-      history.push(historyEntry(campaign, effectiveRunId, timestamp, transition.reason, transition.fromStatus));
+      history.push(
+        historyEntry(
+          campaign,
+          effectiveRunId,
+          timestamp,
+          transition.reason,
+          transition.fromStatus,
+        ),
+      );
     }
   }
 
   for (const previousCampaign of previousCampaigns) {
-    if (matchedPreviousIds.has(previousCampaign.saleCampaignId) || nextById.has(previousCampaign.saleCampaignId)) continue;
+    if (
+      matchedPreviousIds.has(previousCampaign.saleCampaignId) ||
+      nextById.has(previousCampaign.saleCampaignId)
+    )
+      continue;
     if (previousCampaign.saleStatus === "ended") {
       nextById.set(previousCampaign.saleCampaignId, {
         ...previousCampaign,
@@ -175,7 +244,15 @@ export function reconcileSaleCampaigns({
       };
       nextById.set(campaign.saleCampaignId, campaign);
       if (previousCampaign.saleStatus !== "unknown") {
-        history.push(historyEntry(campaign, effectiveRunId, timestamp, "source_check_failed", previousCampaign.saleStatus));
+        history.push(
+          historyEntry(
+            campaign,
+            effectiveRunId,
+            timestamp,
+            "source_check_failed",
+            previousCampaign.saleStatus,
+          ),
+        );
       }
       continue;
     }
@@ -183,7 +260,8 @@ export function reconcileSaleCampaigns({
     const saleMissCount = (previousCampaign.saleMissCount ?? 0) + 1;
     const ended = saleMissCount >= endAfterMisses;
     const retainedStatus =
-      previousCampaign.saleScanCount >= evergreenAfterScans || previousCampaign.saleStatus === "evergreen"
+      previousCampaign.saleScanCount >= evergreenAfterScans ||
+      previousCampaign.saleStatus === "evergreen"
         ? "evergreen"
         : "ongoing";
     const campaign = {
@@ -217,7 +295,9 @@ export function reconcileSaleCampaigns({
     schemaVersion: SALE_CAMPAIGN_LEDGER_SCHEMA_VERSION,
     updatedAt: timestamp,
   };
-  const activeSaleEvents = campaigns.filter((campaign) => ACTIVE_SALE_STATUSES.has(campaign.saleStatus));
+  const activeSaleEvents = campaigns.filter((campaign) =>
+    ACTIVE_SALE_STATUSES.has(campaign.saleStatus),
+  );
 
   return {
     activeSaleEvents,
@@ -229,22 +309,38 @@ export function reconcileSaleCampaigns({
 
 export function saleCampaignLedgerFromPayload(payload) {
   if (!payload || typeof payload !== "object") return emptyLedger();
-  if (payload.saleCampaignLedger && typeof payload.saleCampaignLedger === "object") {
+  if (
+    payload.saleCampaignLedger &&
+    typeof payload.saleCampaignLedger === "object"
+  ) {
     return normalizeLedger(payload.saleCampaignLedger);
   }
 
-  const timestamp = validIsoTimestamp(payload.createdAt) ? payload.createdAt : new Date(0).toISOString();
-  const campaigns = (Array.isArray(payload.saleEvents) ? payload.saleEvents : [])
+  const timestamp = validIsoTimestamp(payload.createdAt)
+    ? payload.createdAt
+    : new Date(0).toISOString();
+  const campaigns = (
+    Array.isArray(payload.saleEvents) ? payload.saleEvents : []
+  )
     .filter((event) => event && typeof event === "object")
     .map((event) => {
-      const normalized = normalizeObservedEvent(event, validIsoTimestamp(event.capturedAt) ? event.capturedAt : timestamp);
+      const normalized = normalizeObservedEvent(
+        event,
+        validIsoTimestamp(event.capturedAt) ? event.capturedAt : timestamp,
+      );
       return normalizeExistingCampaign({
         ...normalized,
         endedAt: event.endedAt ?? null,
-        firstSeenAt: validIsoTimestamp(event.firstSeenAt) ? event.firstSeenAt : normalized.capturedAt,
-        lastSeenAt: validIsoTimestamp(event.lastSeenAt) ? event.lastSeenAt : normalized.capturedAt,
+        firstSeenAt: validIsoTimestamp(event.firstSeenAt)
+          ? event.firstSeenAt
+          : normalized.capturedAt,
+        lastSeenAt: validIsoTimestamp(event.lastSeenAt)
+          ? event.lastSeenAt
+          : normalized.capturedAt,
         saleFailureCount: nonNegativeInteger(event.saleFailureCount, 0),
-        saleLastCheckedAt: validIsoTimestamp(event.saleLastCheckedAt) ? event.saleLastCheckedAt : normalized.capturedAt,
+        saleLastCheckedAt: validIsoTimestamp(event.saleLastCheckedAt)
+          ? event.saleLastCheckedAt
+          : normalized.capturedAt,
         saleMissCount: nonNegativeInteger(event.saleMissCount, 0),
         saleObservedThisRun: event.saleObservedThisRun !== false,
         saleScanCount: positiveInteger(event.saleScanCount, 1),
@@ -262,6 +358,24 @@ export function saleCampaignLedgerFromPayload(payload) {
 }
 
 export function saleCampaignIdFor(event) {
+  if (event?.campaignTerms?.version === 1) {
+    const scope = event.saleScope ?? event.scope ?? "unknown";
+    const page = ["sitewide", "vinyl-wide"].includes(scope)
+      ? ""
+      : canonicalSaleUrl(event.sourceUrl);
+    return (
+      "campaign-" +
+      sha256(
+        stableJson([
+          saleRetailerIdentity(event),
+          scope,
+          page,
+          event.campaignTerms.kind,
+          event.saleCode ?? event.promoCode ?? null,
+        ]),
+      ).slice(0, 20)
+    );
+  }
   const evidenceText = saleIdentityText(event);
   const discountPercent = normalizedSaleDiscount(event?.saleDiscountPercent);
   const promoCode = salePromoCode(event, evidenceText);
@@ -275,20 +389,24 @@ export function saleCampaignIdFor(event) {
 export function priorSaleRecheckUrlsForSource(ledger, source, limit = 4) {
   const sourceId = cleanText(source?.id);
   const sourceUrl = cleanText(source?.url);
-  if (!sourceId || !sourceUrl || !ledger || typeof ledger !== "object") return [];
+  if (!sourceId || !sourceUrl || !ledger || typeof ledger !== "object")
+    return [];
   const campaigns = Array.isArray(ledger.campaigns) ? ledger.campaigns : [];
   const maximum = positiveInteger(limit, 4);
   return campaigns
     .filter(
       (campaign) =>
         cleanText(campaign?.sourceId) === sourceId &&
-        ["changed", "evergreen", "new", "ongoing", "unknown"].includes(normalizeStatus(campaign?.saleStatus)) &&
+        ["changed", "evergreen", "new", "ongoing", "unknown"].includes(
+          normalizeStatus(campaign?.saleStatus),
+        ) &&
         compatibleRetailerUrl(sourceUrl, campaign?.sourceUrl),
     )
     .sort(
       (left, right) =>
         priorRecheckPriority(right) - priorRecheckPriority(left) ||
-        Date.parse(right?.lastSeenAt ?? right?.capturedAt ?? 0) - Date.parse(left?.lastSeenAt ?? left?.capturedAt ?? 0),
+        Date.parse(right?.lastSeenAt ?? right?.capturedAt ?? 0) -
+          Date.parse(left?.lastSeenAt ?? left?.capturedAt ?? 0),
     )
     .map((campaign) => cleanText(campaign.sourceUrl))
     .filter((url, index, urls) => urls.indexOf(url) === index)
@@ -300,13 +418,19 @@ function saleCampaignObservationIdentity(event) {
 }
 
 export function hashSaleContent(event) {
-  const signal = normalizedContentText(event?.saleSignal ?? event?.sourceListingTitle ?? event?.title);
+  const signal = normalizedContentText(
+    event?.saleSignal ?? event?.sourceListingTitle ?? event?.title,
+  );
   const evidenceText = saleIdentityText(event);
   const discountPercent = normalizedSaleDiscount(event?.saleDiscountPercent);
   const promoCode = salePromoCode(event, evidenceText);
   const content = {
     discountPercent,
-    discountQualifier: saleDiscountQualifier(event, evidenceText, discountPercent),
+    discountQualifier: saleDiscountQualifier(
+      event,
+      evidenceText,
+      discountPercent,
+    ),
     offerType: saleOfferType(evidenceText, discountPercent, promoCode),
     promoCode,
     scope: normalizedSaleScope(event),
@@ -317,7 +441,12 @@ export function hashSaleContent(event) {
 }
 
 export function hashSaleEvidence(event) {
-  const evidence = normalizedEvidenceText(event?.saleEvidence ?? event?.saleSignal ?? event?.sourceListingTitle ?? event?.title);
+  const evidence = normalizedEvidenceText(
+    event?.saleEvidence ??
+      event?.saleSignal ??
+      event?.sourceListingTitle ??
+      event?.title,
+  );
   return sha256(evidence);
 }
 
@@ -327,23 +456,51 @@ export function sourceSaleObservationHealth(report) {
   if (explicit) return explicit;
 
   const reportStatus = cleanText(report.status).toLowerCase();
-  if (["error", "failed", "blocked", "timeout", "unavailable", "unknown", "partial"].includes(reportStatus)) return "unknown";
-  if (["available", "healthy", "recovered", "success", "ok", "candidates", "empty", "sale_signals"].includes(reportStatus)) return "success";
+  if (
+    [
+      "error",
+      "failed",
+      "blocked",
+      "timeout",
+      "unavailable",
+      "unknown",
+      "partial",
+    ].includes(reportStatus)
+  )
+    return "unknown";
+  if (
+    [
+      "available",
+      "healthy",
+      "recovered",
+      "success",
+      "ok",
+      "candidates",
+      "empty",
+      "sale_signals",
+    ].includes(reportStatus)
+  )
+    return "success";
   return "unknown";
 }
 
 function campaignObservationHealth(report, campaign) {
-  if (cleanText(campaign?.saleVerification).toLowerCase() === "discovery-lead") {
+  if (
+    cleanText(campaign?.saleVerification).toLowerCase() === "discovery-lead"
+  ) {
     return sourceSaleObservationHealth(report);
   }
   const hasUrlDiagnostics =
     Array.isArray(report?.salePageCheckedUrls) ||
     Array.isArray(report?.resolvedUrls);
   const resolvedUrls = [
-    ...(Array.isArray(report?.salePageCheckedUrls) ? report.salePageCheckedUrls : []),
+    ...(Array.isArray(report?.salePageCheckedUrls)
+      ? report.salePageCheckedUrls
+      : []),
     ...(Array.isArray(report?.resolvedUrls) ? report.resolvedUrls : []),
   ].map(canonicalSaleUrl);
-  if (resolvedUrls.includes(canonicalSaleUrl(campaign.sourceUrl))) return "success";
+  if (resolvedUrls.includes(canonicalSaleUrl(campaign.sourceUrl)))
+    return "success";
   if (hasUrlDiagnostics) return "unknown";
   return sourceSaleObservationHealth(report);
 }
@@ -351,19 +508,48 @@ function campaignObservationHealth(report, campaign) {
 function nestedHealthStatus(value) {
   if (typeof value === "string") return normalizedHealthValue(value);
   if (!value || typeof value !== "object") return null;
-  const direct = normalizedHealthValue(value.status ?? value.state ?? value.health);
+  const direct = normalizedHealthValue(
+    value.status ?? value.state ?? value.health,
+  );
   if (direct) return direct;
   if (value.checked === true && value.success === true) return "success";
   if (value.checked === true && value.success === false) return "unknown";
-  if (Number(value.successfulPageCount) > 0 && Number(value.failedPageCount ?? 0) === 0) return "success";
+  if (
+    Number(value.successfulPageCount) > 0 &&
+    Number(value.failedPageCount ?? 0) === 0
+  )
+    return "success";
   return null;
 }
 
 function normalizedHealthValue(value) {
   const status = cleanText(value).toLowerCase();
   if (!status) return null;
-  if (["available", "healthy", "recovered", "success", "ok", "complete", "checked"].includes(status)) return "success";
-  if (["error", "failed", "blocked", "timeout", "unavailable", "unknown", "partial", "not_checked"].includes(status)) return "unknown";
+  if (
+    [
+      "available",
+      "healthy",
+      "recovered",
+      "success",
+      "ok",
+      "complete",
+      "checked",
+    ].includes(status)
+  )
+    return "success";
+  if (
+    [
+      "error",
+      "failed",
+      "blocked",
+      "timeout",
+      "unavailable",
+      "unknown",
+      "partial",
+      "not_checked",
+    ].includes(status)
+  )
+    return "unknown";
   return null;
 }
 
@@ -373,10 +559,14 @@ function normalizeLedger(ledger) {
     campaigns: (Array.isArray(ledger.campaigns) ? ledger.campaigns : [])
       .filter((campaign) => campaign && typeof campaign === "object")
       .map(normalizeExistingCampaign),
-    history: (Array.isArray(ledger.history) ? ledger.history : []).filter((entry) => entry && typeof entry === "object"),
+    history: (Array.isArray(ledger.history) ? ledger.history : []).filter(
+      (entry) => entry && typeof entry === "object",
+    ),
     runId: cleanText(ledger.runId),
     schemaVersion: SALE_CAMPAIGN_LEDGER_SCHEMA_VERSION,
-    updatedAt: validIsoTimestamp(ledger.updatedAt) ? ledger.updatedAt : new Date(0).toISOString(),
+    updatedAt: validIsoTimestamp(ledger.updatedAt)
+      ? ledger.updatedAt
+      : new Date(0).toISOString(),
   };
 }
 
@@ -391,26 +581,43 @@ function emptyLedger() {
 }
 
 function normalizeExistingCampaign(campaign) {
-  const capturedAt = validIsoTimestamp(campaign?.capturedAt) ? campaign.capturedAt : new Date(0).toISOString();
+  const capturedAt = validIsoTimestamp(campaign?.capturedAt)
+    ? campaign.capturedAt
+    : new Date(0).toISOString();
   const normalized = normalizeObservedEvent(campaign, capturedAt);
   return {
     ...campaign,
     ...normalized,
     endedAt: validIsoTimestamp(campaign?.endedAt) ? campaign.endedAt : null,
-    firstSeenAt: validIsoTimestamp(campaign?.firstSeenAt) ? campaign.firstSeenAt : capturedAt,
-    lastSeenAt: validIsoTimestamp(campaign?.lastSeenAt) ? campaign.lastSeenAt : capturedAt,
-    reopenedAt: validIsoTimestamp(campaign?.reopenedAt) ? campaign.reopenedAt : null,
+    firstSeenAt: validIsoTimestamp(campaign?.firstSeenAt)
+      ? campaign.firstSeenAt
+      : capturedAt,
+    lastSeenAt: validIsoTimestamp(campaign?.lastSeenAt)
+      ? campaign.lastSeenAt
+      : capturedAt,
+    reopenedAt: validIsoTimestamp(campaign?.reopenedAt)
+      ? campaign.reopenedAt
+      : null,
     saleFailureCount: nonNegativeInteger(campaign?.saleFailureCount, 0),
     saleConsecutiveSeenCount: positiveInteger(
       campaign?.saleConsecutiveSeenCount,
       positiveInteger(campaign?.saleScanCount, 1),
     ),
-    saleLastCheckedAt: validIsoTimestamp(campaign?.saleLastCheckedAt) ? campaign.saleLastCheckedAt : capturedAt,
+    saleLastCheckedAt: validIsoTimestamp(campaign?.saleLastCheckedAt)
+      ? campaign.saleLastCheckedAt
+      : capturedAt,
     saleMissCount: nonNegativeInteger(campaign?.saleMissCount, 0),
     saleObservationCount: positiveInteger(campaign?.saleObservationCount, 1),
-    saleObservationPageCount: positiveInteger(campaign?.saleObservationPageCount, 1),
+    saleObservationPageCount: positiveInteger(
+      campaign?.saleObservationPageCount,
+      1,
+    ),
     saleObservationUrls: Array.isArray(campaign?.saleObservationUrls)
-      ? [...new Set(campaign.saleObservationUrls.map(cleanText).filter(Boolean))]
+      ? [
+          ...new Set(
+            campaign.saleObservationUrls.map(cleanText).filter(Boolean),
+          ),
+        ]
       : [cleanText(campaign?.sourceUrl)].filter(Boolean),
     saleObservedThisRun: campaign?.saleObservedThisRun === true,
     saleScanCount: positiveInteger(campaign?.saleScanCount, 1),
@@ -419,10 +626,17 @@ function normalizeExistingCampaign(campaign) {
 }
 
 function normalizeObservedEvent(event, capturedAt) {
-  const saleContentHash = validHash(event?.saleContentHash) ? event.saleContentHash.toLowerCase() : hashSaleContent(event);
-  const saleEvidenceHash = validHash(event?.saleEvidenceHash) ? event.saleEvidenceHash.toLowerCase() : hashSaleEvidence(event);
-  const saleCampaignId = validCampaignId(event?.saleCampaignId) ? event.saleCampaignId : saleCampaignIdFor(event);
-  const saleFingerprint = cleanText(event?.saleFingerprint) || `sale-${saleContentHash.slice(0, 20)}`;
+  const saleContentHash = validHash(event?.saleContentHash)
+    ? event.saleContentHash.toLowerCase()
+    : hashSaleContent(event);
+  const saleEvidenceHash = validHash(event?.saleEvidenceHash)
+    ? event.saleEvidenceHash.toLowerCase()
+    : hashSaleEvidence(event);
+  const saleCampaignId = validCampaignId(event?.saleCampaignId)
+    ? event.saleCampaignId
+    : saleCampaignIdFor(event);
+  const saleFingerprint =
+    cleanText(event?.saleFingerprint) || `sale-${saleContentHash.slice(0, 20)}`;
   return {
     ...event,
     capturedAt,
@@ -437,7 +651,12 @@ function normalizeObservedEvent(event, capturedAt) {
 function dedupeObservations(events) {
   const byCampaignBase = new Map();
   for (const event of Array.isArray(events) ? events : []) {
-    if (!event || typeof event !== "object" || (!cleanText(event.sourceId) && !cleanText(event.sourceUrl))) continue;
+    if (
+      !event ||
+      typeof event !== "object" ||
+      (!cleanText(event.sourceId) && !cleanText(event.sourceUrl))
+    )
+      continue;
     const key = saleCampaignIdFor(event);
     const group = byCampaignBase.get(key) ?? [];
     group.push(event);
@@ -445,7 +664,9 @@ function dedupeObservations(events) {
   }
   const observationGroups = [];
   for (const baseGroup of byCampaignBase.values()) {
-    const confirmed = baseGroup.filter((event) => event?.saleVerification === "retailer-page");
+    const confirmed = baseGroup.filter(
+      (event) => event?.saleVerification === "retailer-page",
+    );
     const confirmedDiscounts = new Set(confirmed.map(observationEconomicKey));
     const eligible = confirmed.length
       ? baseGroup.filter(
@@ -464,12 +685,19 @@ function dedupeObservations(events) {
     observationGroups.push(...byDiscount.values());
   }
   return observationGroups.map((group) => {
-    const representative = [...group].sort((left, right) => observationPriority(right) - observationPriority(left))[0];
-    const urls = [...new Set(group.flatMap((event) =>
-      Array.isArray(event?.saleObservationUrls) && event.saleObservationUrls.length
-        ? event.saleObservationUrls.map(cleanText).filter(Boolean)
-        : [cleanText(event?.sourceUrl)].filter(Boolean),
-    ))];
+    const representative = [...group].sort(
+      (left, right) => observationPriority(right) - observationPriority(left),
+    )[0];
+    const urls = [
+      ...new Set(
+        group.flatMap((event) =>
+          Array.isArray(event?.saleObservationUrls) &&
+          event.saleObservationUrls.length
+            ? event.saleObservationUrls.map(cleanText).filter(Boolean)
+            : [cleanText(event?.sourceUrl)].filter(Boolean),
+        ),
+      ),
+    ];
     const observationCount = group.reduce(
       (total, event) => total + positiveInteger(event?.saleObservationCount, 1),
       0,
@@ -489,10 +717,22 @@ function observationEconomicKey(event) {
 }
 
 function observationPriority(event) {
-  const verification = event?.saleVerification === "retailer-page" ? 1_000_000 : 0;
-  const salePage = /\b(?:sale|clearance|deal|garage|overstock|promo)\b/i.test(canonicalSaleUrl(event?.sourceUrl)) ? 10_000 : 0;
+  const verification =
+    event?.saleVerification === "retailer-page" ? 1_000_000 : 0;
+  const salePage = /\b(?:sale|clearance|deal|garage|overstock|promo)\b/i.test(
+    canonicalSaleUrl(event?.sourceUrl),
+  )
+    ? 10_000
+    : 0;
   const scope = cleanText(event?.saleScope).toLowerCase();
-  const scopeScore = scope === "sitewide" ? 500 : scope === "vinyl-wide" ? 400 : scope === "clearance" ? 300 : 200;
+  const scopeScore =
+    scope === "sitewide"
+      ? 500
+      : scope === "vinyl-wide"
+        ? 400
+        : scope === "clearance"
+          ? 300
+          : 200;
   const discount = normalizedSaleDiscount(event?.saleDiscountPercent) ?? 0;
   const evidenceLength = cleanText(event?.saleEvidence).length;
   return verification + salePage + scopeScore + discount * 100 + evidenceLength;
@@ -501,20 +741,33 @@ function observationPriority(event) {
 function observedTransition(prior, campaign, flags) {
   if (!prior) return { fromStatus: null, reason: "first_seen" };
   if (flags.wasEnded) return { fromStatus: "ended", reason: "reopened" };
-  if (flags.contentChanged) return { fromStatus: prior.saleStatus, reason: "content_changed" };
-  if (flags.wasUnknown) return { fromStatus: "unknown", reason: "source_check_recovered" };
+  if (flags.contentChanged)
+    return { fromStatus: prior.saleStatus, reason: "content_changed" };
+  if (flags.wasUnknown)
+    return { fromStatus: "unknown", reason: "source_check_recovered" };
   if (campaign.saleStatus === "evergreen" && prior.saleStatus !== "evergreen") {
-    return { fromStatus: prior.saleStatus, reason: "evergreen_threshold_reached" };
+    return {
+      fromStatus: prior.saleStatus,
+      reason: "evergreen_threshold_reached",
+    };
   }
   if (prior.saleStatus === "new" || prior.saleStatus === "changed") {
     return { fromStatus: prior.saleStatus, reason: "confirmed_ongoing" };
   }
-  if (flags.evidenceChanged) return { fromStatus: prior.saleStatus, reason: "evidence_refreshed" };
+  if (flags.evidenceChanged)
+    return { fromStatus: prior.saleStatus, reason: "evidence_refreshed" };
   return null;
 }
 
 function historyEntry(campaign, runId, at, reason, fromStatus) {
-  const idSeed = [runId, campaign.saleCampaignId, at, reason, campaign.saleContentHash, campaign.saleMissCount];
+  const idSeed = [
+    runId,
+    campaign.saleCampaignId,
+    at,
+    reason,
+    campaign.saleContentHash,
+    campaign.saleMissCount,
+  ];
   return {
     at,
     campaignId: campaign.saleCampaignId,
@@ -530,49 +783,109 @@ function historyEntry(campaign, runId, at, reason, fromStatus) {
 }
 
 function summarizeCampaigns(campaigns) {
-  const byStatus = { changed: 0, ended: 0, evergreen: 0, new: 0, ongoing: 0, unknown: 0 };
+  const byStatus = {
+    changed: 0,
+    ended: 0,
+    evergreen: 0,
+    new: 0,
+    ongoing: 0,
+    unknown: 0,
+  };
   for (const campaign of campaigns) {
     if (campaign.saleStatus in byStatus) byStatus[campaign.saleStatus] += 1;
   }
   return {
-    active: campaigns.filter((campaign) => ACTIVE_SALE_STATUSES.has(campaign.saleStatus)).length,
+    active: campaigns.filter((campaign) =>
+      ACTIVE_SALE_STATUSES.has(campaign.saleStatus),
+    ).length,
     byStatus,
     total: campaigns.length,
   };
 }
 
 function compareCampaigns(left, right) {
-  const statusPriority = { new: 6, changed: 5, ongoing: 4, unknown: 3, evergreen: 2, ended: 1 };
-  const statusDifference = (statusPriority[right.saleStatus] ?? 0) - (statusPriority[left.saleStatus] ?? 0);
+  const statusPriority = {
+    new: 6,
+    changed: 5,
+    ongoing: 4,
+    unknown: 3,
+    evergreen: 2,
+    ended: 1,
+  };
+  const statusDifference =
+    (statusPriority[right.saleStatus] ?? 0) -
+    (statusPriority[left.saleStatus] ?? 0);
   if (statusDifference) return statusDifference;
-  const seenDifference = Date.parse(right.lastSeenAt ?? 0) - Date.parse(left.lastSeenAt ?? 0);
+  const seenDifference =
+    Date.parse(right.lastSeenAt ?? 0) - Date.parse(left.lastSeenAt ?? 0);
   if (seenDifference) return seenDifference;
-  return String(left.saleCampaignId).localeCompare(String(right.saleCampaignId));
+  return String(left.saleCampaignId).localeCompare(
+    String(right.saleCampaignId),
+  );
 }
 
 function normalizeStatus(value) {
   const status = cleanText(value).toLowerCase();
-  return ["new", "changed", "ongoing", "evergreen", "ended", "unknown"].includes(status) ? status : "ongoing";
+  return [
+    "new",
+    "changed",
+    "ongoing",
+    "evergreen",
+    "ended",
+    "unknown",
+  ].includes(status)
+    ? status
+    : "ongoing";
 }
 
 function saleOfferType(text, discountPercent = null, promoCode = null) {
   const value = String(text ?? "");
-  if (/\b(?:bogo|buy\s+one\s+get\s+one|buy\s+1\s+get\s+1|2\s+for\s+1|two\s+for\s+one)\b/i.test(value)) return "bogo";
-  if (/\b(?:buy\s+more\s+save\s+more|spend\s+\$?\d+\s+(?:get|save))\b/i.test(value)) return "volume";
-  if (promoCode || /\b(?:coupon|promo(?:tional)?\s+code|discount\s+code|use\s+code)\b/i.test(value)) return "coupon";
+  if (
+    /\b(?:bogo|buy\s+one\s+get\s+one|buy\s+1\s+get\s+1|2\s+for\s+1|two\s+for\s+one)\b/i.test(
+      value,
+    )
+  )
+    return "bogo";
+  if (
+    /\b(?:buy\s+more\s+save\s+more|spend\s+\$?\d+\s+(?:get|save))\b/i.test(
+      value,
+    )
+  )
+    return "volume";
+  if (
+    promoCode ||
+    /\b(?:coupon|promo(?:tional)?\s+code|discount\s+code|use\s+code)\b/i.test(
+      value,
+    )
+  )
+    return "coupon";
   if (discountPercent !== null) return "percent-sale";
   if (/\bgarage[- ]sale\b/i.test(value)) return "garage-sale";
-  if (/\bwarehouse[- ](?:overstock|sale)\b|\boverstock[- ]sale\b/i.test(value)) return "warehouse-overstock";
-  if (/\b(?:clearance|closeout|overstock|warehouse\s+sale|final\s+sale)\b/i.test(value)) return "clearance";
+  if (/\bwarehouse[- ](?:overstock|sale)\b|\boverstock[- ]sale\b/i.test(value))
+    return "warehouse-overstock";
+  if (
+    /\b(?:clearance|closeout|overstock|warehouse\s+sale|final\s+sale)\b/i.test(
+      value,
+    )
+  )
+    return "clearance";
   return "sale";
 }
 
 function portableEconomicOffer(offerType, discountPercent, promoCode) {
-  return discountPercent !== null || Boolean(promoCode) || ["bogo", "volume"].includes(offerType);
+  return (
+    discountPercent !== null ||
+    Boolean(promoCode) ||
+    ["bogo", "volume"].includes(offerType)
+  );
 }
 
 function salePromoCode(event, text) {
-  for (const value of [event?.salePromoCode, event?.saleCode, event?.promoCode]) {
+  for (const value of [
+    event?.salePromoCode,
+    event?.saleCode,
+    event?.promoCode,
+  ]) {
     const code = cleanText(value).toUpperCase();
     if (code) return code;
   }
@@ -584,7 +897,10 @@ function saleDiscountQualifier(event, text, discountPercent) {
   if (event?.saleDiscountQualifier === "exact") return "exact";
   if (discountPercent === null) return "none";
   const escapedDiscount = String(discountPercent).replace(".", "\\.");
-  return new RegExp(`\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`, "i").test(String(text ?? ""))
+  return new RegExp(
+    `\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`,
+    "i",
+  ).test(String(text ?? ""))
     ? "up_to"
     : "exact";
 }
@@ -601,8 +917,16 @@ function saleRetailerIdentity(event) {
       // Fall back to source metadata for malformed or legacy URLs.
     }
   }
-  const source = cleanText(event?.sourceId) || cleanText(event?.sourceName) || "unknown-source";
-  return source.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "unknown-source";
+  const source =
+    cleanText(event?.sourceId) ||
+    cleanText(event?.sourceName) ||
+    "unknown-source";
+  return (
+    source
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "unknown-source"
+  );
 }
 
 function saleIdentityText(event) {
@@ -610,22 +934,33 @@ function saleIdentityText(event) {
 }
 
 function normalizedSaleScope(event) {
+  if (event?.campaignTerms?.version === 1)
+    return event.saleScope ?? event.scope ?? "unknown";
   const scope = cleanText(event?.saleScope).toLowerCase() || "unknown";
   if (scope !== "sitewide" && scope !== "vinyl-wide") return scope;
 
-  const evidence = event?.saleEvidence ?? event?.sourceListingTitle ?? event?.title ?? "";
-  if (scope === "sitewide" && hasCoherentSaleClaim(evidence, "sitewide")) return "sitewide";
-  if (scope === "vinyl-wide" && hasCoherentSaleClaim(evidence, "vinyl-wide")) return "vinyl-wide";
+  const evidence =
+    event?.saleEvidence ?? event?.sourceListingTitle ?? event?.title ?? "";
+  if (scope === "sitewide" && hasCoherentSaleClaim(evidence, "sitewide"))
+    return "sitewide";
+  if (scope === "vinyl-wide" && hasCoherentSaleClaim(evidence, "vinyl-wide"))
+    return "vinyl-wide";
 
   const pageAndEvidence = `${canonicalSaleUrl(event?.sourceUrl)} ${evidence}`;
-  if (/\b(?:clearance|closeout|garage[- ]sale|warehouse[- ](?:sale|overstock)|overstock[- ]sale)\b/i.test(pageAndEvidence)) {
+  if (
+    /\b(?:clearance|closeout|garage[- ]sale|warehouse[- ](?:sale|overstock)|overstock[- ]sale)\b/i.test(
+      pageAndEvidence,
+    )
+  ) {
     return "clearance";
   }
   return "unknown";
 }
 
 function extractPromoCode(text) {
-  const match = String(text ?? "").match(/\b(?:code|coupon)\s*[:\-]?\s*["']?([a-z0-9][a-z0-9_-]{2,20})\b/i);
+  const match = String(text ?? "").match(
+    /\b(?:code|coupon)\s*[:\-]?\s*["']?([a-z0-9][a-z0-9_-]{2,20})\b/i,
+  );
   return match ? match[1].toUpperCase() : null;
 }
 
@@ -651,7 +986,8 @@ function canonicalSaleUrl(value) {
       if (TRACKING_QUERY_KEYS.test(key)) url.searchParams.delete(key);
     }
     url.searchParams.sort();
-    url.pathname = decodeURIComponent(url.pathname).toLowerCase().replace(/\/+$/, "") || "/";
+    url.pathname =
+      decodeURIComponent(url.pathname).toLowerCase().replace(/\/+$/, "") || "/";
     url.pathname = url.pathname
       .replace(/\/products\.json$/, "")
       .replace(/\/(?:page|p)\/\d+$/, "")
@@ -661,7 +997,10 @@ function canonicalSaleUrl(value) {
     url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
     return url.toString();
   } catch {
-    return raw.replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase();
+    return raw
+      .replace(/[?#].*$/, "")
+      .replace(/\/+$/, "")
+      .toLowerCase();
   }
 }
 
@@ -694,7 +1033,9 @@ function fingerprintLookupKey(sourceId, fingerprint) {
 function normalizedSaleDiscount(value) {
   if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? Math.round(number * 100) / 100 : null;
+  return Number.isFinite(number) && number > 0
+    ? Math.round(number * 100) / 100
+    : null;
 }
 
 function compatibleRetailerUrl(configuredUrl, campaignUrl) {
@@ -702,7 +1043,9 @@ function compatibleRetailerUrl(configuredUrl, campaignUrl) {
     const configured = new URL(configuredUrl);
     const campaign = new URL(cleanText(campaignUrl));
     if (!/^https?:$/.test(campaign.protocol)) return false;
-    const configuredHost = configured.hostname.toLowerCase().replace(/^www\./, "");
+    const configuredHost = configured.hostname
+      .toLowerCase()
+      .replace(/^www\./, "");
     const campaignHost = campaign.hostname.toLowerCase().replace(/^www\./, "");
     return configuredHost === campaignHost;
   } catch {
@@ -713,7 +1056,12 @@ function compatibleRetailerUrl(configuredUrl, campaignUrl) {
 function priorRecheckPriority(campaign) {
   const status = normalizeStatus(campaign?.saleStatus);
   const unknown = status === "unknown" ? 10_000 : 0;
-  const salePage = /\b(?:sale|clearance|deal|garage|outlet|overstock|promo)\b/i.test(cleanText(campaign?.sourceUrl)) ? 1_000 : 0;
+  const salePage =
+    /\b(?:sale|clearance|deal|garage|outlet|overstock|promo)\b/i.test(
+      cleanText(campaign?.sourceUrl),
+    )
+      ? 1_000
+      : 0;
   return unknown + salePage;
 }
 
@@ -722,7 +1070,11 @@ function cleanText(value) {
 }
 
 function validIsoTimestamp(value) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) && !Number.isNaN(Date.parse(value));
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
+    !Number.isNaN(Date.parse(value))
+  );
 }
 
 function validHash(value) {
@@ -730,7 +1082,9 @@ function validHash(value) {
 }
 
 function validCampaignId(value) {
-  return typeof value === "string" && /^[a-z0-9][a-z0-9._-]{2,127}$/i.test(value);
+  return (
+    typeof value === "string" && /^[a-z0-9][a-z0-9._-]{2,127}$/i.test(value)
+  );
 }
 
 function positiveInteger(value, fallback) {

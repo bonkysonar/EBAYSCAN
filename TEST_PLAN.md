@@ -207,3 +207,13 @@ After a Vercel deployment, verify:
 - No secrets appear in browser source, network payloads, or committed files.
 
 
+
+## Retail decision-list and campaign release
+
+Run `npm test` and `npm run build`. The added retailScannerRegressions and retailOperations suites cover Blue Note-style mixed 20%/15% offers, separate selected/sitewide scopes through lifecycle and display, physical merchandise and digital variants, identity parsing, stacking/exclusions, basket thresholds/BOGO, expired discounts, exact-variant/currency verification, sparse turnover, a positive campaign-to-shortlist case, partial-source timestamp retention, signed feedback privacy/tampering, and bounded release grouping. Existing UI clock/polling tests now assert that stale/weak candidates leave the default list while remaining in research.
+
+Browser smoke test: load Retail Arbitrage; verify Worth considering is the default, diagnostics are collapsed, stale data cannot become current, and the research queue remains accessible. Load Site-wide Sales; inspect Records behind the sales and a retailer link back to research. Check browser errors and both latest/operations API responses. Verify the production deployment and latest immutable run ID after publishing. Do not insert synthetic recommendations or fake review outcomes into production.
+
+
+
+Release verification, September 4, 2026: the fresh broad run attempted 127 sources and discovered Blue Note's 20% music campaign; 49 sources failed or were blocked, so it requires the separately labeled source-update publication path. Seller Hub browser validation reproduced and fixed the missing explicit date-range URL problem while retaining New/Vinyl Records filters. This release establishes measurement; it does not claim a measured 70% usefulness rate or comprehensive source coverage.

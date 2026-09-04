@@ -1,3 +1,4 @@
+import { applyCampaignOffers } from "../../scripts/lib/campaignOffers.mjs";
 import { describe, expect, it } from "vitest";
 import {
   buildCostLedger,
@@ -10,10 +11,7 @@ import {
   scoreArbitrageFind,
 } from "../lib/arbitrage/rules";
 import type { ArbitrageFind } from "../lib/arbitrage/types";
-import {
-  applyVerifiedSaleCampaigns,
-  purchaseOfferVerificationForSource,
-} from "../../scripts/lib/candidatePipeline.mjs";
+import { purchaseOfferVerificationForSource } from "../../scripts/lib/candidatePipeline.mjs";
 
 const NOW = "2026-07-15T12:00:00.000Z";
 const evaluateOpportunity = evaluateNodeOpportunity;
@@ -61,13 +59,19 @@ function validatedFind(overrides: Partial<ArbitrageFind> = {}): ArbitrageFind {
 
 describe("canonical arbitrage evaluation", () => {
   it("returns the same result through the Node scanner API and the typed React wrapper", () => {
-    expect(evaluateTypedOpportunity(validatedFind(), defaultArbitrageSettings, NOW)).toEqual(
+    expect(
+      evaluateTypedOpportunity(validatedFind(), defaultArbitrageSettings, NOW),
+    ).toEqual(
       evaluateNodeOpportunity(validatedFind(), defaultArbitrageSettings, NOW),
     );
   });
 
   it("buys only when exact, fresh demand and full-cost economics clear every gate", () => {
-    const result = evaluateOpportunity(validatedFind(), defaultArbitrageSettings, NOW);
+    const result = evaluateOpportunity(
+      validatedFind(),
+      defaultArbitrageSettings,
+      NOW,
+    );
 
     expect(result.decision).toBe("BUY");
     expect(result.candidateTier).toBe("A");
@@ -101,7 +105,9 @@ describe("canonical arbitrage evaluation", () => {
       expect(result.decision).toBe("REVIEW");
       expect(result.gates.purchaseOffer).toBe(false);
       expect(result.reasonCodes).toContain("ACQUISITION_OFFER_UNVERIFIED");
-      expect(result.reasons.join(" ")).toContain("confirm the live retailer price");
+      expect(result.reasons.join(" ")).toContain(
+        "confirm the live retailer price",
+      );
     },
   );
 
@@ -123,7 +129,7 @@ describe("canonical arbitrage evaluation", () => {
   );
 
   it("keeps campaign-adjusted and discovery-pipeline prices out of automatic BUY", () => {
-    const [campaignCandidate] = applyVerifiedSaleCampaigns(
+    const [campaignCandidate] = applyCampaignOffers(
       [
         {
           ...validatedFind(),
@@ -133,6 +139,12 @@ describe("canonical arbitrage evaluation", () => {
       ],
       [
         {
+          campaignTerms: {
+            version: 1,
+            kind: "percent",
+            stacking: "unknown",
+            priceMode: "advertised",
+          },
           discountPercent: 50,
           evidence: "50% off all vinyl",
           scope: "vinyl-wide",
@@ -170,7 +182,11 @@ describe("canonical arbitrage evaluation", () => {
       unverifiedTargetMarketplaceCandidate,
       unverifiedEbayCandidate,
     ]) {
-      const result = evaluateOpportunity(candidate, defaultArbitrageSettings, NOW);
+      const result = evaluateOpportunity(
+        candidate,
+        defaultArbitrageSettings,
+        NOW,
+      );
       expect(result.decision).toBe("REVIEW");
       expect(result.reasonCodes).toContain("ACQUISITION_OFFER_UNVERIFIED");
     }
@@ -194,7 +210,9 @@ describe("canonical arbitrage evaluation", () => {
     expect(result.gates.economics).toBe(true);
     expect(result.expectedNetProfit).toBe(5.75);
     expect(result.recommendedStrategy).toBe("fast_turn");
-    expect(result.strategyOptions.find((option) => option.id === "fast_turn")).toMatchObject({
+    expect(
+      result.strategyOptions.find((option) => option.id === "fast_turn"),
+    ).toMatchObject({
       economicsQualified: true,
       eligible: true,
       minNetProfitDollars: 4,
@@ -219,7 +237,9 @@ describe("canonical arbitrage evaluation", () => {
     expect(result.roiRatio).toBeCloseTo(1.2557, 4);
     expect(result.gates.economics).toBe(true);
     expect(result.decision).toBe("BUY");
-    expect(result.strategyOptions.find((option) => option.id === "high_margin")).toMatchObject({
+    expect(
+      result.strategyOptions.find((option) => option.id === "high_margin"),
+    ).toMatchObject({
       economicsQualified: false,
       minNetProfitDollars: 15,
       minRoiRatio: 1.5,
@@ -251,7 +271,9 @@ describe("canonical arbitrage evaluation", () => {
     expect(result.gates.demand).toBe(false);
     expect(result.reasonCodes).toContain("DEMAND_GATE_FAILED");
     expect(result.reasonCodes).toContain("SLOW_DEMAND_HIGH_MARGIN_WATCH");
-    expect(result.strategyOptions.find((option) => option.id === "high_margin")).toMatchObject({
+    expect(
+      result.strategyOptions.find((option) => option.id === "high_margin"),
+    ).toMatchObject({
       demandSupport: "partial",
       economicsQualified: false,
       minNetProfitDollars: 15,
@@ -284,7 +306,9 @@ describe("canonical arbitrage evaluation", () => {
 
     expect(result.decision).toBe("REJECT");
     expect(result.reasonCodes).toContain("DEMAND_GATE_FAILED");
-    expect(result.strategyOptions.find((option) => option.id === "high_margin")).toMatchObject({
+    expect(
+      result.strategyOptions.find((option) => option.id === "high_margin"),
+    ).toMatchObject({
       demandSupport: "partial",
       economicsQualified: false,
       watchQualified: false,
@@ -444,9 +468,7 @@ describe("canonical arbitrage evaluation", () => {
       NOW,
     );
 
-    expect(result.estimatedDaysToSell).toBeGreaterThan(
-      defaultArbitrageSettings.highMarginMaxDaysToSell,
-    );
+    expect(result.estimatedDaysToSell).toBeNull();
     expect(result.decision).toBe("REJECT");
     expect(result.reasonCodes).toContain("SUPPLY_HARD_FAIL");
   });
@@ -596,7 +618,9 @@ describe("canonical arbitrage evaluation", () => {
     expect(result.longTermSupplyMonths).toBeGreaterThan(300);
     expect(result.gates.demand).toBe(false);
     expect(result.gates.soldEvidence).toBe(false);
-    expect(result.strategyOptions.every((option) => !option.eligible)).toBe(true);
+    expect(result.strategyOptions.every((option) => !option.eligible)).toBe(
+      true,
+    );
   });
 
   it("does not use artist-level history to raise a record's priority", () => {
@@ -675,7 +699,9 @@ describe("canonical arbitrage evaluation", () => {
       NOW,
     );
 
-    const balanced = result.strategyOptions.find((option) => option.id === "balanced");
+    const balanced = result.strategyOptions.find(
+      (option) => option.id === "balanced",
+    );
     expect(result.expectedNetProfit).toBe(5.75);
     expect(result.decision).toBe("REVIEW");
     expect(result.candidateTier).toBe("B");
@@ -709,11 +735,15 @@ describe("canonical arbitrage evaluation", () => {
       NOW,
     );
 
-    const fastTurn = result.strategyOptions.find((option) => option.id === "fast_turn");
+    const fastTurn = result.strategyOptions.find(
+      (option) => option.id === "fast_turn",
+    );
     expect(result.expectedNetProfit).toBe(3.74);
     expect(result.decision).toBe("WATCH");
     expect(result.reasonCodes).toContain("PRICE_TARGET_WATCH");
-    expect(result.recommendedMaxPurchasePrice).toBeLessThan(result.purchasePrice);
+    expect(result.recommendedMaxPurchasePrice).toBeLessThan(
+      result.purchasePrice,
+    );
     expect(fastTurn).toMatchObject({
       demandSupport: "qualified",
       economicsQualified: false,
@@ -844,7 +874,9 @@ describe("canonical arbitrage evaluation", () => {
     expect(result.reasonCodes).toContain("OFFER_STALE_OR_UNDATED");
     expect(result.reasonCodes).not.toContain("EVIDENCE_STALE_OR_UNDATED");
     expect(result.reasons).toContainEqual(
-      expect.stringContaining("refresh the source price and availability before buying"),
+      expect.stringContaining(
+        "refresh the source price and availability before buying",
+      ),
     );
   });
 
@@ -887,7 +919,9 @@ describe("canonical arbitrage evaluation", () => {
       capturedAt: "2026-07-15T09:00:00.000Z",
     });
 
-    expect(scoreArbitrageFind(find, defaultArbitrageSettings, NOW).decision).toBe("BUY");
+    expect(
+      scoreArbitrageFind(find, defaultArbitrageSettings, NOW).decision,
+    ).toBe("BUY");
     expect(
       scoreArbitrageFind(
         find,
@@ -951,8 +985,18 @@ describe("canonical arbitrage evaluation", () => {
       validatedFind({
         conservativeResalePrice: undefined,
         productResearchRows: [
-          { avgShipping: 5, avgSoldPrice: 35, title: "high comp", totalSold: 1 },
-          { avgShipping: 0, avgSoldPrice: 24, title: "repeat comp", totalSold: 5 },
+          {
+            avgShipping: 5,
+            avgSoldPrice: 35,
+            title: "high comp",
+            totalSold: 1,
+          },
+          {
+            avgShipping: 0,
+            avgSoldPrice: 24,
+            title: "repeat comp",
+            totalSold: 5,
+          },
         ],
         soldEvidence: {
           ...validatedFind().soldEvidence,
@@ -971,7 +1015,12 @@ describe("canonical arbitrage evaluation", () => {
       validatedFind({
         barcode: "081227934241",
         productResearchRows: [
-          { avgShipping: 0, avgSoldPrice: 40, title: "exact new pressing", totalSold: 12 },
+          {
+            avgShipping: 0,
+            avgSoldPrice: 40,
+            title: "exact new pressing",
+            totalSold: 12,
+          },
         ],
         soldEvidence: {
           capturedAt: "2026-07-15T10:00:00.000Z",

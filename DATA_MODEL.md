@@ -111,3 +111,12 @@ Seller analyzer rows may also store browser-local workflow fields:
 
 The analyzer is read-only and does not revise live eBay listings. CSV exports include `sku`, `custom_label`, proposed price, change note, pricing recommendation fields, active comp count, and item URL for later bulk-change workflows.
 
+
+## Retail scanner publication and learning additions
+
+Schema 2 final artifacts support `publicationMode: full | source_updates`. Source updates require `sourceUpdateVersion: 1`, an authoritative source manifest, fresh observations, and successful catalog/sale-page evidence for the appropriate data. `sourceUpdates` records updated/retained source IDs and the last broad success/attempt timestamps. A sale-only check cannot refresh product prices. Immutable run storage and the atomic latest pointer are unchanged.
+
+Product additions: resolved artist identity/provenance; physical-format confirmation; exact variant verification status/time; campaign application checks; an explicit remaining-check decision-list assessment. Campaign additions: versioned terms (scope, percent/fixed/BOGO, thresholds, exclusions, stacking, dates, membership), illustrative basket scenarios, and per-campaign funnel counts. The broad research pool remains in the draft and is dropped from the public final artifact after curation.
+
+Operational status is stored separately from the latest publication so failed attempts remain visible. Sanitized feedback stores only an opaque offer hash, observation hash, run hash, rank, enumerated outcome, and timestamp. Successful-empty-research memory stores hashes/status/time. No marketplace content is added to either learning store. Vinyl Lots and its six-hour display boundary are unchanged.
+

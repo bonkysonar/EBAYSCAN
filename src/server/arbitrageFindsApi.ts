@@ -1,5 +1,17 @@
+import { selectDecisionList } from "../lib/arbitrage/decisionList.mjs";
+import { feedbackReceipt } from "./retailOperationsApi";
+import { mergeVerifiedSourceUpdates } from "./retailSourceUpdates";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { get, list, put } from "@vercel/blob";
 import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
@@ -16,7 +28,10 @@ import {
   type SaleCampaignLedger,
   type SaleCampaignStatus,
 } from "../../scripts/lib/saleCampaignLifecycle.mjs";
-import type { ArbitrageFind, ArbitrageImportPayload } from "../lib/arbitrage/types";
+import type {
+  ArbitrageFind,
+  ArbitrageImportPayload,
+} from "../lib/arbitrage/types";
 
 export const ARBITRAGE_FINDS_DIR = "exports/arbitrage-finds";
 export const ARBITRAGE_PAYLOAD_SCHEMA_VERSION = 2;
@@ -102,34 +117,54 @@ export type ArbitrageFindsHistoryResult =
       status: "empty";
     };
 
-export async function readLatestArbitrageFinds(cwd: string): Promise<LatestArbitrageFindsResult> {
+export async function readLatestArbitrageFinds(
+  cwd: string,
+): Promise<LatestArbitrageFindsResult> {
   const result = await readLatestPublishedArbitrageFinds(cwd);
   return result.status === "available"
     ? withoutNonRecordFinds({
         ...result,
-        payload: redactSensitivePublicationData(result.payload),
+        payload: withFeedbackReceipts(
+          redactSensitivePublicationData(result.payload),
+        ),
       })
     : result;
 }
 
 export async function readArbitrageFindsHistory(
   cwd: string,
-  options: { limit?: number; sourceId?: string; status?: SaleCampaignStatus } = {},
+  options: {
+    limit?: number;
+    sourceId?: string;
+    status?: SaleCampaignStatus;
+  } = {},
 ): Promise<ArbitrageFindsHistoryResult> {
   const latest = await readLatestPublishedArbitrageFinds(cwd);
   if (latest.status === "empty") return latest;
 
   const payload = latest.payload as FinalArbitragePayload;
-  const ledger = saleCampaignLedgerFromPayload(payload as unknown as Record<string, unknown>);
+  const ledger = saleCampaignLedgerFromPayload(
+    payload as unknown as Record<string, unknown>,
+  );
   const sourceId = cleanText(options.sourceId);
-  const status = validSaleCampaignStatus(options.status) ? options.status : null;
+  const status = validSaleCampaignStatus(options.status)
+    ? options.status
+    : null;
   const limit = boundedInteger(options.limit, 1, MAX_HISTORY_LIMIT, 250);
   const campaigns = ledger.campaigns.filter(
-    (campaign) => (!sourceId || campaign.sourceId === sourceId) && (!status || campaign.saleStatus === status),
+    (campaign) =>
+      (!sourceId || campaign.sourceId === sourceId) &&
+      (!status || campaign.saleStatus === status),
   );
-  const campaignIds = new Set(campaigns.map((campaign) => campaign.saleCampaignId));
+  const campaignIds = new Set(
+    campaigns.map((campaign) => campaign.saleCampaignId),
+  );
   const events = ledger.history
-    .filter((event) => (!sourceId || event.sourceId === sourceId) && (!status || event.toStatus === status))
+    .filter(
+      (event) =>
+        (!sourceId || event.sourceId === sourceId) &&
+        (!status || event.toStatus === status),
+    )
     .filter((event) => !sourceId || campaignIds.has(event.campaignId))
     .slice(-limit)
     .reverse();
@@ -144,33 +179,52 @@ export async function readArbitrageFindsHistory(
   };
 }
 
-export async function uploadArbitrageFinds(cwd: string, payload: unknown, requestToken?: string | null) {
+export async function uploadArbitrageFinds(
+  cwd: string,
+  payload: unknown,
+  requestToken?: string | null,
+) {
   assertUploadAuthorized(requestToken);
   const finalPayload = redactSensitivePublicationData(
-    withAssessedRunQuality(assertFinalArbitragePayload(payload)),
+    assertFinalArbitragePayload(payload),
   );
   const inputHash = hashJson(finalPayload);
   const current = await readCurrentStoredPublication(cwd);
+  const checkedPayload =
+    finalPayload.publicationMode === "source_updates"
+      ? (mergeVerifiedSourceUpdates(
+          finalPayload,
+          current?.payload ?? null,
+          getActiveRetailSources().map((s) => s.id),
+        ) as FinalArbitragePayload)
+      : withAssessedRunQuality(finalPayload);
 
   if (current?.pointer.runId === finalPayload.runId) {
     if (current.pointer.inputHash !== inputHash) {
-      throw httpError(409, `Run ${finalPayload.runId} was already published with different content.`);
+      throw httpError(
+        409,
+        `Run ${finalPayload.runId} was already published with different content.`,
+      );
     }
     return {
       fileName: current.pointer.fileName,
       payloadHash: current.pointer.payloadHash,
       runId: current.pointer.runId,
       status: "already-published" as const,
-      storage: hasBlobStore() ? ("vercel-blob" as const) : ("local-filesystem" as const),
+      storage: hasBlobStore()
+        ? ("vercel-blob" as const)
+        : ("local-filesystem" as const),
       url: current.pointer.url,
     };
   }
 
   const bootstrapFromSameLegacyArtifact =
-    Boolean(current && !current.pointerBacked) && finalPayload.createdAt === current?.pointer.createdAt;
+    Boolean(current && !current.pointerBacked) &&
+    finalPayload.createdAt === current?.pointer.createdAt;
   if (
     current &&
-    Date.parse(lifecycleObservedAt(finalPayload)) <= Date.parse(current.pointer.observedAt) &&
+    Date.parse(lifecycleObservedAt(finalPayload)) <=
+      Date.parse(current.pointer.observedAt) &&
     !bootstrapFromSameLegacyArtifact
   ) {
     throw httpError(
@@ -180,22 +234,30 @@ export async function uploadArbitrageFinds(cwd: string, payload: unknown, reques
   }
 
   const publishedAt = new Date().toISOString();
-  const lifecycle = bootstrapFromSameLegacyArtifact && finalPayload.saleCampaignLedger
-    ? lifecycleFromIncomingLedger(finalPayload)
-    : reconcileSaleCampaigns({
-        observedAt: lifecycleObservedAt(finalPayload),
-        previousLedger: current && !bootstrapFromSameLegacyArtifact
-          ? saleCampaignLedgerFromPayload(current.payload as unknown as Record<string, unknown>)
-          : saleCampaignLedgerFromPayload(null),
-        runId: finalPayload.runId,
-        saleEvents: finalPayload.saleObservations ?? finalPayload.saleEvents ?? [],
-        sourceReports: finalPayload.sourceReports ?? [],
-      });
+  const incomingReports = finalPayload.sourceReports ?? [];
+  const lifecycle =
+    bootstrapFromSameLegacyArtifact && finalPayload.saleCampaignLedger
+      ? lifecycleFromIncomingLedger(finalPayload)
+      : reconcileSaleCampaigns({
+          observedAt: lifecycleObservedAt(finalPayload),
+          previousLedger:
+            current && !bootstrapFromSameLegacyArtifact
+              ? saleCampaignLedgerFromPayload(
+                  current.payload as unknown as Record<string, unknown>,
+                )
+              : saleCampaignLedgerFromPayload(null),
+          runId: finalPayload.runId,
+          saleEvents:
+            checkedPayload.saleObservations ?? checkedPayload.saleEvents ?? [],
+          sourceReports: incomingReports,
+        });
   const normalizedLifecycle = normalizeLifecycleForPublication(lifecycle);
-  const productFinds = finalPayload.finds.filter((find) => find.opportunityType !== "sitewide_sale");
+  const productFinds = checkedPayload.finds.filter(
+    (find) => find.opportunityType !== "sitewide_sale",
+  );
   const activeSaleEvents = normalizedLifecycle.activeSaleEvents;
   const publishablePayload = withConsistentFindSummary({
-    ...finalPayload,
+    ...checkedPayload,
     finds: uniqueFindsById([...activeSaleEvents, ...productFinds]),
     phase: "final" as const,
     publishedAt,
@@ -203,7 +265,10 @@ export async function uploadArbitrageFinds(cwd: string, payload: unknown, reques
     saleEvents: activeSaleEvents,
     saleLifecycleSummary: normalizedLifecycle.summary,
   });
-  const payloadWithoutPublication = { ...publishablePayload, publication: undefined };
+  const payloadWithoutPublication = {
+    ...publishablePayload,
+    publication: undefined,
+  };
   const payloadHash = hashJson(payloadWithoutPublication);
   const storedPayload: FinalArbitragePayload = {
     ...publishablePayload,
@@ -231,10 +296,14 @@ export async function uploadArbitrageFinds(cwd: string, payload: unknown, reques
 
   if (hasBlobStore()) {
     const blob = await writeImmutableBlobRun(storagePath, body, inputHash);
-    const pointer = "existingPayload" in blob
-      ? pointerForStoredPayload(blob.existingPayload, storagePath, blob.url)
-      : { ...pointerBase, url: blob.url };
-    await writeBlobLatestPointer(pointer, current?.pointerBacked ? current.etag : undefined);
+    const pointer =
+      "existingPayload" in blob
+        ? pointerForStoredPayload(blob.existingPayload, storagePath, blob.url)
+        : { ...pointerBase, url: blob.url };
+    await writeBlobLatestPointer(
+      pointer,
+      current?.pointerBacked ? current.etag : undefined,
+    );
     return {
       campaignSummary: normalizedLifecycle.summary,
       fileName: pointer.fileName,
@@ -248,9 +317,19 @@ export async function uploadArbitrageFinds(cwd: string, payload: unknown, reques
 
   const directory = join(cwd, ARBITRAGE_FINDS_DIR);
   const absoluteRunPath = safeLocalStoragePath(directory, storagePath);
-  const existingPayload = writeImmutableLocalRun(absoluteRunPath, body, inputHash);
-  const pointer = existingPayload ? pointerForStoredPayload(existingPayload, storagePath) : pointerBase;
-  writeLocalLatestPointer(directory, pointer, current?.pointerBacked ? current.pointer : null);
+  const existingPayload = writeImmutableLocalRun(
+    absoluteRunPath,
+    body,
+    inputHash,
+  );
+  const pointer = existingPayload
+    ? pointerForStoredPayload(existingPayload, storagePath)
+    : pointerBase;
+  writeLocalLatestPointer(
+    directory,
+    pointer,
+    current?.pointerBacked ? current.pointer : null,
+  );
 
   return {
     campaignSummary: normalizedLifecycle.summary,
@@ -277,7 +356,8 @@ function redactSensitivePublicationValue(value: unknown): unknown {
       ),
     );
   }
-  if (typeof value !== "string" || !/deliveryPostalCode/i.test(value)) return value;
+  if (typeof value !== "string" || !/deliveryPostalCode/i.test(value))
+    return value;
 
   try {
     const url = new URL(value);
@@ -304,13 +384,23 @@ function redactSensitivePublicationValue(value: unknown): unknown {
   }
 }
 
-function withAssessedRunQuality(payload: FinalArbitragePayload): FinalArbitragePayload {
-  if (!Array.isArray(payload.sourceReports) || payload.sourceReports.length === 0) {
-    throw httpError(422, `Run ${payload.runId} has no source reports; latest was not changed.`);
+function withAssessedRunQuality(
+  payload: FinalArbitragePayload,
+): FinalArbitragePayload {
+  if (
+    !Array.isArray(payload.sourceReports) ||
+    payload.sourceReports.length === 0
+  ) {
+    throw httpError(
+      422,
+      `Run ${payload.runId} has no source reports; latest was not changed.`,
+    );
   }
   const configuredSourceCount = payload.runManifest?.sourceCatalogCount;
   const scannedSourceCount = payload.runManifest?.scannedSourceCount;
-  const authoritativeSourceIds = getActiveRetailSources().map((source) => source.id).sort();
+  const authoritativeSourceIds = getActiveRetailSources()
+    .map((source) => source.id)
+    .sort();
   if (
     !Number.isInteger(configuredSourceCount) ||
     Number(configuredSourceCount) <= 0 ||
@@ -362,7 +452,10 @@ function withAssessedRunQuality(payload: FinalArbitragePayload): FinalArbitrageP
       !cleanText(report.id) ||
       !Object.prototype.hasOwnProperty.call(report, "candidateCount") ||
       !Object.prototype.hasOwnProperty.call(report, "catalogHealth") ||
-      !Object.prototype.hasOwnProperty.call(report, "catalogPageAvailableCount") ||
+      !Object.prototype.hasOwnProperty.call(
+        report,
+        "catalogPageAvailableCount",
+      ) ||
       !Object.prototype.hasOwnProperty.call(report, "productParseHealth"),
   );
   if (missingCatalogDiagnostics.length > 0) {
@@ -371,7 +464,9 @@ function withAssessedRunQuality(payload: FinalArbitragePayload): FinalArbitrageP
       `Run ${payload.runId} has ${missingCatalogDiagnostics.length} source report${missingCatalogDiagnostics.length === 1 ? "" : "s"} without required catalog/parser diagnostics; latest was not changed.`,
     );
   }
-  const sourceReportIds = payload.sourceReports.map((report) => cleanText(report.id));
+  const sourceReportIds = payload.sourceReports.map((report) =>
+    cleanText(report.id),
+  );
   if (new Set(sourceReportIds).size !== sourceReportIds.length) {
     throw httpError(
       422,
@@ -401,26 +496,43 @@ function withAssessedRunQuality(payload: FinalArbitragePayload): FinalArbitrageP
   return { ...payload, runQuality } as FinalArbitragePayload;
 }
 
-export function assertFinalArbitragePayload(payload: unknown): FinalArbitragePayload {
+export function assertFinalArbitragePayload(
+  payload: unknown,
+): FinalArbitragePayload {
   if (!payload || typeof payload !== "object") {
     throw httpError(400, "Upload body must be an arbitrage payload object.");
   }
 
   const candidate = payload as Record<string, unknown>;
   if (candidate.schemaVersion !== ARBITRAGE_PAYLOAD_SCHEMA_VERSION) {
-    throw httpError(400, `Upload body must use schemaVersion ${ARBITRAGE_PAYLOAD_SCHEMA_VERSION}.`);
+    throw httpError(
+      400,
+      `Upload body must use schemaVersion ${ARBITRAGE_PAYLOAD_SCHEMA_VERSION}.`,
+    );
   }
   if (candidate.phase !== "final") {
-    throw httpError(400, "Only phase=final payloads can be published; scan and enrichment phases cannot become latest.");
+    throw httpError(
+      400,
+      "Only phase=final payloads can be published; scan and enrichment phases cannot become latest.",
+    );
   }
   if (candidate.publicationStatus !== "final") {
-    throw httpError(400, "Only publicationStatus=final payloads can become latest.");
+    throw httpError(
+      400,
+      "Only publicationStatus=final payloads can become latest.",
+    );
   }
   if (!validRunId(candidate.runId)) {
-    throw httpError(400, "Upload body must include a safe runId using letters, numbers, dots, underscores, or hyphens.");
+    throw httpError(
+      400,
+      "Upload body must include a safe runId using letters, numbers, dots, underscores, or hyphens.",
+    );
   }
   if (!validIsoTimestamp(candidate.createdAt)) {
-    throw httpError(400, "Upload body must include a valid ISO createdAt timestamp.");
+    throw httpError(
+      400,
+      "Upload body must include a valid ISO createdAt timestamp.",
+    );
   }
   if (!cleanText(candidate.source)) {
     throw httpError(400, "Upload body must include a non-empty source.");
@@ -442,7 +554,9 @@ export function assertFinalArbitragePayload(payload: unknown): FinalArbitragePay
     ["saleObservations", candidate.saleObservations],
   ] as const) {
     if (!Array.isArray(events)) continue;
-    events.forEach((event, index) => assertSaleEventShape(event, `${field}[${index}]`));
+    events.forEach((event, index) =>
+      assertSaleEventShape(event, `${field}[${index}]`),
+    );
   }
 
   const finalCandidate = candidate as unknown as FinalArbitragePayload;
@@ -458,7 +572,11 @@ function assertBuyDecisionSupported(value: unknown, path: string) {
   if (!value || typeof value !== "object") return;
   const find = value as Record<string, unknown>;
   if (find.decision !== "BUY" && find.status !== "BUY") return;
-  const evaluated = evaluateOpportunity(find as unknown as ArbitrageFind, {}, new Date());
+  const evaluated = evaluateOpportunity(
+    find as unknown as ArbitrageFind,
+    {},
+    new Date(),
+  );
   if (evaluated.decision === "BUY") return;
   throw httpError(
     422,
@@ -466,15 +584,22 @@ function assertBuyDecisionSupported(value: unknown, path: string) {
   );
 }
 
-export function isLegacyFinalArbitragePayload(payload: unknown): payload is ArbitrageImportPayload {
+export function isLegacyFinalArbitragePayload(
+  payload: unknown,
+): payload is ArbitrageImportPayload {
   if (!payload || typeof payload !== "object") return false;
   const candidate = payload as Record<string, unknown>;
-  if (!validIsoTimestamp(candidate.createdAt) || !Array.isArray(candidate.finds)) return false;
+  if (
+    !validIsoTimestamp(candidate.createdAt) ||
+    !Array.isArray(candidate.finds)
+  )
+    return false;
   const hasExplicitPublicationMarkers =
     Object.prototype.hasOwnProperty.call(candidate, "phase") ||
     Object.prototype.hasOwnProperty.call(candidate, "publicationStatus");
   if (hasExplicitPublicationMarkers) {
-    if (candidate.phase !== "final" || candidate.publicationStatus !== "final") return false;
+    if (candidate.phase !== "final" || candidate.publicationStatus !== "final")
+      return false;
   }
   const source = cleanText(candidate.source);
   if (
@@ -490,7 +615,9 @@ export function isLegacyFinalArbitragePayload(payload: unknown): payload is Arbi
   );
 }
 
-async function readLatestPublishedArbitrageFinds(cwd: string): Promise<LatestArbitrageFindsResult> {
+async function readLatestPublishedArbitrageFinds(
+  cwd: string,
+): Promise<LatestArbitrageFindsResult> {
   if (hasBlobStore()) {
     const stored = await readBlobPointerPublication();
     if (stored) {
@@ -516,34 +643,48 @@ async function readLatestPublishedArbitrageFinds(cwd: string): Promise<LatestArb
   return readLatestLegacyLocalArbitrageFinds(cwd);
 }
 
-async function readCurrentStoredPublication(cwd: string): Promise<StoredPublication | null> {
+async function readCurrentStoredPublication(
+  cwd: string,
+): Promise<StoredPublication | null> {
   if (hasBlobStore()) {
     const pointerPublication = await readBlobPointerPublication();
     if (pointerPublication) return pointerPublication;
     const legacy = await readLatestLegacyBlobArbitrageFinds();
-    return legacy.status === "available" ? storedPublicationFromLegacy(legacy) : null;
+    return legacy.status === "available"
+      ? storedPublicationFromLegacy(legacy)
+      : null;
   }
   const pointerPublication = readLocalPointerPublication(cwd);
   if (pointerPublication) return pointerPublication;
   const legacy = readLatestLegacyLocalArbitrageFinds(cwd);
-  return legacy.status === "available" ? storedPublicationFromLegacy(legacy) : null;
+  return legacy.status === "available"
+    ? storedPublicationFromLegacy(legacy)
+    : null;
 }
 
 function readLocalPointerPublication(cwd: string): StoredPublication | null {
   const directory = join(cwd, ARBITRAGE_FINDS_DIR);
   const pointerPath = join(directory, LOCAL_LATEST_POINTER_FILE);
   if (!existsSync(pointerPath)) return null;
-  const pointer = parsePublicationPointer(JSON.parse(readFileSync(pointerPath, "utf8")));
+  const pointer = parsePublicationPointer(
+    JSON.parse(readFileSync(pointerPath, "utf8")),
+  );
   const payloadPath = safeLocalStoragePath(directory, pointer.storagePath);
   if (!existsSync(payloadPath)) {
-    throw new Error(`Latest arbitrage pointer references missing file ${pointer.storagePath}.`);
+    throw new Error(
+      `Latest arbitrage pointer references missing file ${pointer.storagePath}.`,
+    );
   }
-  const payload = JSON.parse(readFileSync(payloadPath, "utf8")) as FinalArbitragePayload;
+  const payload = JSON.parse(
+    readFileSync(payloadPath, "utf8"),
+  ) as FinalArbitragePayload;
   assertStoredPayloadMatchesPointer(payload, pointer);
   return { payload, pointer, pointerBacked: true };
 }
 
-function readLatestLegacyLocalArbitrageFinds(cwd: string): LatestArbitrageFindsResult {
+function readLatestLegacyLocalArbitrageFinds(
+  cwd: string,
+): LatestArbitrageFindsResult {
   const directory = join(cwd, ARBITRAGE_FINDS_DIR);
   if (!existsSync(directory)) {
     return {
@@ -553,7 +694,10 @@ function readLatestLegacyLocalArbitrageFinds(cwd: string): LatestArbitrageFindsR
   }
 
   const files = readdirSync(directory, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /^retail-arbitrage-.*\.json$/i.test(entry.name))
+    .filter(
+      (entry) =>
+        entry.isFile() && /^retail-arbitrage-.*\.json$/i.test(entry.name),
+    )
     .map((entry) => {
       const path = join(directory, entry.name);
       return { name: entry.name, mtimeMs: statSync(path).mtimeMs, path };
@@ -572,7 +716,9 @@ function readLatestLegacyLocalArbitrageFinds(cwd: string): LatestArbitrageFindsR
       validFiles.push({
         fileName: file.name,
         mtimeMs: file.mtimeMs,
-        observedAtMs: Date.parse(lifecycleObservedAt(payload as FinalArbitragePayload)),
+        observedAtMs: Date.parse(
+          lifecycleObservedAt(payload as FinalArbitragePayload),
+        ),
         payload,
       });
     } catch {
@@ -582,7 +728,8 @@ function readLatestLegacyLocalArbitrageFinds(cwd: string): LatestArbitrageFindsR
   validFiles.sort(
     (left, right) =>
       right.observedAtMs - left.observedAtMs ||
-      Date.parse(right.payload.createdAt) - Date.parse(left.payload.createdAt) ||
+      Date.parse(right.payload.createdAt) -
+        Date.parse(left.payload.createdAt) ||
       right.mtimeMs - left.mtimeMs,
   );
   if (validFiles[0]) {
@@ -604,7 +751,10 @@ async function readBlobPointerPublication(): Promise<StoredPublication | null> {
   if (!pointerBlob) return null;
   const pointer = parsePublicationPointer(pointerBlob.value);
   const payloadBlob = await readBlobJson(pointer.storagePath);
-  if (!payloadBlob) throw new Error(`Latest arbitrage pointer references missing blob ${pointer.storagePath}.`);
+  if (!payloadBlob)
+    throw new Error(
+      `Latest arbitrage pointer references missing blob ${pointer.storagePath}.`,
+    );
   const payload = payloadBlob.value as FinalArbitragePayload;
   assertStoredPayloadMatchesPointer(payload, pointer);
   return { etag: pointerBlob.etag, payload, pointer, pointerBacked: true };
@@ -613,9 +763,12 @@ async function readBlobPointerPublication(): Promise<StoredPublication | null> {
 async function readLatestLegacyBlobArbitrageFinds(): Promise<LatestArbitrageFindsResult> {
   const { blobs } = await list({ prefix: BLOB_PREFIX });
   const legacyBlobs = blobs.filter((blob) => {
-      const relativePath = blob.pathname.slice(BLOB_PREFIX.length);
-      return !relativePath.includes("/") && /^retail-arbitrage-.*\.json$/i.test(relativePath);
-    });
+    const relativePath = blob.pathname.slice(BLOB_PREFIX.length);
+    return (
+      !relativePath.includes("/") &&
+      /^retail-arbitrage-.*\.json$/i.test(relativePath)
+    );
+  });
 
   const validBlobs: Array<{
     fileName: string;
@@ -631,7 +784,9 @@ async function readLatestLegacyBlobArbitrageFinds(): Promise<LatestArbitrageFind
       if (!isLegacyFinalArbitragePayload(payload)) continue;
       validBlobs.push({
         fileName: blob.pathname.replace(BLOB_PREFIX, ""),
-        observedAtMs: Date.parse(lifecycleObservedAt(payload as FinalArbitragePayload)),
+        observedAtMs: Date.parse(
+          lifecycleObservedAt(payload as FinalArbitragePayload),
+        ),
         payload,
         uploadedAtMs: blob.uploadedAt.getTime(),
       });
@@ -642,7 +797,8 @@ async function readLatestLegacyBlobArbitrageFinds(): Promise<LatestArbitrageFind
   validBlobs.sort(
     (left, right) =>
       right.observedAtMs - left.observedAtMs ||
-      Date.parse(right.payload.createdAt) - Date.parse(left.payload.createdAt) ||
+      Date.parse(right.payload.createdAt) -
+        Date.parse(left.payload.createdAt) ||
       right.uploadedAtMs - left.uploadedAtMs,
   );
   if (validBlobs[0]) {
@@ -659,13 +815,20 @@ async function readLatestLegacyBlobArbitrageFinds(): Promise<LatestArbitrageFind
   };
 }
 
-async function writeImmutableBlobRun(storagePath: string, body: string, inputHash: string) {
+async function writeImmutableBlobRun(
+  storagePath: string,
+  body: string,
+  inputHash: string,
+) {
   const existing = await readBlobJson(storagePath);
   if (existing) {
     const existingPayload = existing.value as FinalArbitragePayload;
     const existingInputHash = cleanText(existingPayload.publication?.inputHash);
     if (existingInputHash !== inputHash) {
-      throw httpError(409, `Run storage ${storagePath} already contains different content.`);
+      throw httpError(
+        409,
+        `Run storage ${storagePath} already contains different content.`,
+      );
     }
     return { existingPayload, url: existing.url };
   }
@@ -679,11 +842,17 @@ async function writeImmutableBlobRun(storagePath: string, body: string, inputHas
       contentType: "application/json",
     });
   } catch (error) {
-    throw httpError(409, `Unable to create immutable run ${storagePath}: ${errorMessage(error)}`);
+    throw httpError(
+      409,
+      `Unable to create immutable run ${storagePath}: ${errorMessage(error)}`,
+    );
   }
 }
 
-async function writeBlobLatestPointer(pointer: PublicationPointer, expectedEtag?: string) {
+async function writeBlobLatestPointer(
+  pointer: PublicationPointer,
+  expectedEtag?: string,
+) {
   try {
     await put(BLOB_LATEST_POINTER_PATH, JSON.stringify(pointer, null, 2), {
       access: "public",
@@ -694,15 +863,27 @@ async function writeBlobLatestPointer(pointer: PublicationPointer, expectedEtag?
       ...(expectedEtag ? { ifMatch: expectedEtag } : {}),
     });
   } catch (error) {
-    throw httpError(409, `Latest publication changed while this run was uploading; retry safely. ${errorMessage(error)}`);
+    throw httpError(
+      409,
+      `Latest publication changed while this run was uploading; retry safely. ${errorMessage(error)}`,
+    );
   }
 }
 
-function writeImmutableLocalRun(path: string, body: string, inputHash: string): FinalArbitragePayload | null {
+function writeImmutableLocalRun(
+  path: string,
+  body: string,
+  inputHash: string,
+): FinalArbitragePayload | null {
   if (existsSync(path)) {
-    const existing = JSON.parse(readFileSync(path, "utf8")) as FinalArbitragePayload;
+    const existing = JSON.parse(
+      readFileSync(path, "utf8"),
+    ) as FinalArbitragePayload;
     if (cleanText(existing.publication?.inputHash) !== inputHash) {
-      throw httpError(409, `Run storage ${path} already contains different content.`);
+      throw httpError(
+        409,
+        `Run storage ${path} already contains different content.`,
+      );
     }
     return existing;
   }
@@ -710,13 +891,20 @@ function writeImmutableLocalRun(path: string, body: string, inputHash: string): 
   return null;
 }
 
-function writeLocalLatestPointer(directory: string, pointer: PublicationPointer, expectedPointer: PublicationPointer | null) {
+function writeLocalLatestPointer(
+  directory: string,
+  pointer: PublicationPointer,
+  expectedPointer: PublicationPointer | null,
+) {
   const pointerPath = join(directory, LOCAL_LATEST_POINTER_FILE);
   const currentPointer = existsSync(pointerPath)
     ? parsePublicationPointer(JSON.parse(readFileSync(pointerPath, "utf8")))
     : null;
   if ((currentPointer?.runId ?? null) !== (expectedPointer?.runId ?? null)) {
-    throw httpError(409, "Latest publication changed while this run was being written; retry safely.");
+    throw httpError(
+      409,
+      "Latest publication changed while this run was being written; retry safely.",
+    );
   }
   atomicWriteFile(pointerPath, JSON.stringify(pointer, null, 2));
 }
@@ -732,10 +920,13 @@ function atomicWriteFile(path: string, body: string) {
   }
 }
 
-async function readBlobJson(pathname: string): Promise<{ etag: string; url: string; value: unknown } | null> {
+async function readBlobJson(
+  pathname: string,
+): Promise<{ etag: string; url: string; value: unknown } | null> {
   const result = await get(pathname, { access: "public", useCache: false });
   if (!result) return null;
-  if (result.statusCode !== 200 || !result.stream) throw new Error(`Unable to read blob ${pathname}.`);
+  if (result.statusCode !== 200 || !result.stream)
+    throw new Error(`Unable to read blob ${pathname}.`);
   const text = await new Response(result.stream).text();
   return {
     etag: result.blob.etag,
@@ -745,7 +936,8 @@ async function readBlobJson(pathname: string): Promise<{ etag: string; url: stri
 }
 
 function parsePublicationPointer(value: unknown): PublicationPointer {
-  if (!value || typeof value !== "object") throw new Error("Latest arbitrage pointer is malformed.");
+  if (!value || typeof value !== "object")
+    throw new Error("Latest arbitrage pointer is malformed.");
   const pointer = value as Record<string, unknown>;
   if (
     pointer.schemaVersion !== PUBLICATION_POINTER_SCHEMA_VERSION ||
@@ -763,21 +955,33 @@ function parsePublicationPointer(value: unknown): PublicationPointer {
   return pointer as unknown as PublicationPointer;
 }
 
-function assertStoredPayloadMatchesPointer(payload: FinalArbitragePayload, pointer: PublicationPointer) {
+function assertStoredPayloadMatchesPointer(
+  payload: FinalArbitragePayload,
+  pointer: PublicationPointer,
+) {
   if (
     payload.runId !== pointer.runId ||
     payload.phase !== "final" ||
     payload.publicationStatus !== "final" ||
     payload.schemaVersion !== ARBITRAGE_PAYLOAD_SCHEMA_VERSION
   ) {
-    throw new Error("Published arbitrage payload does not match its latest pointer.");
+    throw new Error(
+      "Published arbitrage payload does not match its latest pointer.",
+    );
   }
-  if (payload.publication?.inputHash !== pointer.inputHash || payload.publication?.payloadHash !== pointer.payloadHash) {
-    throw new Error("Published arbitrage payload hashes do not match its latest pointer.");
+  if (
+    payload.publication?.inputHash !== pointer.inputHash ||
+    payload.publication?.payloadHash !== pointer.payloadHash
+  ) {
+    throw new Error(
+      "Published arbitrage payload hashes do not match its latest pointer.",
+    );
   }
   const { publication: _publication, ...payloadWithoutPublication } = payload;
   if (hashJson(payloadWithoutPublication) !== pointer.payloadHash) {
-    throw new Error("Published arbitrage payload content failed its integrity hash.");
+    throw new Error(
+      "Published arbitrage payload content failed its integrity hash.",
+    );
   }
 }
 
@@ -792,7 +996,9 @@ function pointerForStoredPayload(
     !validHash(payload.publication.payloadHash) ||
     !validIsoTimestamp(payload.publication.publishedAt)
   ) {
-    throw new Error(`Immutable run ${storagePath} is missing publication metadata.`);
+    throw new Error(
+      `Immutable run ${storagePath} is missing publication metadata.`,
+    );
   }
   return {
     createdAt: payload.createdAt,
@@ -819,10 +1025,14 @@ function storedPublicationFromLegacy(
     sourceReports,
     ...legacyPayload
   } = result.payload;
-  const parsedLedger = saleCampaignLedgerFromPayload(result.payload as unknown as Record<string, unknown>);
+  const parsedLedger = saleCampaignLedgerFromPayload(
+    result.payload as unknown as Record<string, unknown>,
+  );
   const saleCampaignLedger = { ...parsedLedger, runId };
   const byStatus = campaignStatusSummary(saleCampaignLedger.campaigns);
-  const active = saleCampaignLedger.campaigns.filter((campaign) => campaign.saleStatus !== "ended").length;
+  const active = saleCampaignLedger.campaigns.filter(
+    (campaign) => campaign.saleStatus !== "ended",
+  ).length;
   const payload: FinalArbitragePayload = {
     ...legacyPayload,
     phase: "final",
@@ -923,7 +1133,9 @@ function normalizeLifecycleForPublication(lifecycle: {
     },
     summary: {
       active: activeSaleEvents.length,
-      byStatus: campaignStatusSummary(campaigns as unknown as SaleCampaignLedger["campaigns"]),
+      byStatus: campaignStatusSummary(
+        campaigns as unknown as SaleCampaignLedger["campaigns"],
+      ),
       total: campaigns.length,
     },
   };
@@ -931,16 +1143,22 @@ function normalizeLifecycleForPublication(lifecycle: {
 
 function stableActiveSaleFinds(campaigns: SaleObservation[]): ArbitrageFind[] {
   return campaigns
-    .filter((campaign) => ["changed", "evergreen", "new", "ongoing"].includes(campaign.saleStatus ?? "ongoing"))
+    .filter((campaign) =>
+      ["changed", "evergreen", "new", "ongoing"].includes(
+        campaign.saleStatus ?? "ongoing",
+      ),
+    )
     .map(stableSaleFind) as ArbitrageFind[];
 }
 
 function stableSaleFind<T extends SaleObservation>(campaign: T): T {
-  const saleCampaignId = cleanText(campaign.saleCampaignId) || `campaign-${hashJson({
-    sourceId: campaign.sourceId,
-    sourceUrl: campaign.sourceUrl,
-    title: campaign.title,
-  }).slice(0, 20)}`;
+  const saleCampaignId =
+    cleanText(campaign.saleCampaignId) ||
+    `campaign-${hashJson({
+      sourceId: campaign.sourceId,
+      sourceUrl: campaign.sourceUrl,
+      title: campaign.title,
+    }).slice(0, 20)}`;
   return {
     ...campaign,
     id: saleCampaignId,
@@ -958,14 +1176,27 @@ function uniqueFindsById(finds: ArbitrageFind[]): ArbitrageFind[] {
   return [...unique.values()];
 }
 
-function withConsistentFindSummary<T extends ArbitrageImportPayload>(payload: T): T {
+function withConsistentFindSummary<T extends ArbitrageImportPayload>(
+  payload: T,
+): T {
   const finds = uniqueFindsById(payload.finds);
-  const productFinds = finds.filter((find) => find.opportunityType !== "sitewide_sale");
-  const saleFinds = finds.filter((find) => find.opportunityType === "sitewide_sale");
-  const byDecision: Record<string, number> = { BUY: 0, REVIEW: 0, REJECT: 0, WATCH: 0 };
+  const productFinds = finds.filter(
+    (find) => find.opportunityType !== "sitewide_sale",
+  );
+  const saleFinds = finds.filter(
+    (find) => find.opportunityType === "sitewide_sale",
+  );
+  const byDecision: Record<string, number> = {
+    BUY: 0,
+    REVIEW: 0,
+    REJECT: 0,
+    WATCH: 0,
+  };
   for (const find of finds) {
     const evaluatedFind = find as ArbitrageFind & { decision?: string };
-    const stated = cleanText(evaluatedFind.decision ?? find.status).toUpperCase();
+    const stated = cleanText(
+      evaluatedFind.decision ?? find.status,
+    ).toUpperCase();
     const decision = ["BUY", "REVIEW", "REJECT", "WATCH"].includes(stated)
       ? stated
       : find.opportunityType === "sitewide_sale"
@@ -975,7 +1206,8 @@ function withConsistentFindSummary<T extends ArbitrageImportPayload>(payload: T)
   }
   const sourceCounts = new Map<string, number>();
   for (const find of productFinds) {
-    const sourceId = cleanText(find.sourceId) || cleanText(find.sourceName) || "unknown";
+    const sourceId =
+      cleanText(find.sourceId) || cleanText(find.sourceName) || "unknown";
     sourceCounts.set(sourceId, (sourceCounts.get(sourceId) ?? 0) + 1);
   }
   const largestProductSourceCount = Math.max(0, ...sourceCounts.values());
@@ -992,20 +1224,34 @@ function withConsistentFindSummary<T extends ArbitrageImportPayload>(payload: T)
     : 0;
   const priorResearch = payload.summary?.productResearch;
   const productResearch = {
-    ...(priorResearch && typeof priorResearch === "object" ? priorResearch : {}),
-    failed: productFinds.filter((find) => find.ebayResearchStatus === "failed").length,
-    no_rows: productFinds.filter((find) => find.ebayResearchStatus === "no_rows").length,
-    pending: productFinds.filter(
-      (find) => !find.ebayResearchStatus || find.ebayResearchStatus === "pending",
+    ...(priorResearch && typeof priorResearch === "object"
+      ? priorResearch
+      : {}),
+    failed: productFinds.filter((find) => find.ebayResearchStatus === "failed")
+      .length,
+    no_rows: productFinds.filter(
+      (find) => find.ebayResearchStatus === "no_rows",
     ).length,
-    validated: productFinds.filter((find) => find.ebayResearchStatus === "validated").length,
+    pending: productFinds.filter(
+      (find) =>
+        !find.ebayResearchStatus || find.ebayResearchStatus === "pending",
+    ).length,
+    validated: productFinds.filter(
+      (find) => find.ebayResearchStatus === "validated",
+    ).length,
     velocityValidated: productFinds.filter(
-      (find) => (find as ArbitrageFind & { gates?: { soldEvidence?: boolean } }).gates?.soldEvidence,
+      (find) =>
+        (find as ArbitrageFind & { gates?: { soldEvidence?: boolean } }).gates
+          ?.soldEvidence,
     ).length,
   };
   return {
     ...payload,
     finds,
+    sourceReports: payload.sourceReports?.map((report) => ({
+      ...report,
+      selectedProductFindCount: sourceCounts.get(String(report.id)) ?? 0,
+    })),
     summary: {
       ...(payload.summary ?? {}),
       byDecision,
@@ -1048,16 +1294,34 @@ function isMateriallyFutureTimestamp(value: unknown): boolean {
 }
 
 function assertFindShape(value: unknown, path: string) {
-  if (!value || typeof value !== "object") throw httpError(400, `${path} must be an object.`);
+  if (!value || typeof value !== "object")
+    throw httpError(400, `${path} must be an object.`);
   const find = value as Record<string, unknown>;
-  for (const field of ["id", "sourceId", "sourceName", "sourceUrl", "title", "capturedAt"]) {
-    if (!cleanText(find[field])) throw httpError(400, `${path}.${field} must be a non-empty string.`);
+  for (const field of [
+    "id",
+    "sourceId",
+    "sourceName",
+    "sourceUrl",
+    "title",
+    "capturedAt",
+  ]) {
+    if (!cleanText(find[field]))
+      throw httpError(400, `${path}.${field} must be a non-empty string.`);
   }
-  if (!validIsoTimestamp(find.capturedAt)) throw httpError(400, `${path}.capturedAt must be an ISO timestamp.`);
-  if (typeof find.purchasePrice !== "number" || !Number.isFinite(find.purchasePrice) || find.purchasePrice < 0) {
-    throw httpError(400, `${path}.purchasePrice must be a non-negative number.`);
+  if (!validIsoTimestamp(find.capturedAt))
+    throw httpError(400, `${path}.capturedAt must be an ISO timestamp.`);
+  if (
+    typeof find.purchasePrice !== "number" ||
+    !Number.isFinite(find.purchasePrice) ||
+    find.purchasePrice < 0
+  ) {
+    throw httpError(
+      400,
+      `${path}.purchasePrice must be a non-negative number.`,
+    );
   }
-  if (typeof find.artist !== "string") throw httpError(400, `${path}.artist must be a string.`);
+  if (typeof find.artist !== "string")
+    throw httpError(400, `${path}.artist must be a string.`);
 }
 
 function assertSaleEventShape(value: unknown, path: string) {
@@ -1066,15 +1330,19 @@ function assertSaleEventShape(value: unknown, path: string) {
   if (event.opportunityType !== "sitewide_sale") {
     throw httpError(400, `${path}.opportunityType must be sitewide_sale.`);
   }
-  if (Number(event.purchasePrice) !== 0) throw httpError(400, `${path}.purchasePrice must be 0.`);
+  if (Number(event.purchasePrice) !== 0)
+    throw httpError(400, `${path}.purchasePrice must be 0.`);
 }
 
 function assertOptionalArray(value: unknown, field: string) {
-  if (value !== undefined && !Array.isArray(value)) throw httpError(400, `${field} must be an array when provided.`);
+  if (value !== undefined && !Array.isArray(value))
+    throw httpError(400, `${field} must be an array when provided.`);
 }
 
 function fileNameForPayload(payload: FinalArbitragePayload): string {
-  const timestamp = new Date(payload.createdAt).toISOString().replace(/[:.]/g, "-");
+  const timestamp = new Date(payload.createdAt)
+    .toISOString()
+    .replace(/[:.]/g, "-");
   return `retail-arbitrage-${timestamp}.json`;
 }
 
@@ -1083,10 +1351,15 @@ function runStoragePath(runId: string) {
 }
 
 function safeLocalStoragePath(directory: string, storagePath: string) {
-  const relativeStoragePath = storagePath.startsWith(BLOB_PREFIX) ? storagePath.slice(BLOB_PREFIX.length) : storagePath;
+  const relativeStoragePath = storagePath.startsWith(BLOB_PREFIX)
+    ? storagePath.slice(BLOB_PREFIX.length)
+    : storagePath;
   const absoluteDirectory = resolve(directory);
   const absolutePath = resolve(absoluteDirectory, relativeStoragePath);
-  if (absolutePath !== absoluteDirectory && !absolutePath.startsWith(`${absoluteDirectory}${sep}`)) {
+  if (
+    absolutePath !== absoluteDirectory &&
+    !absolutePath.startsWith(`${absoluteDirectory}${sep}`)
+  ) {
     throw new Error(`Unsafe arbitrage storage path ${storagePath}.`);
   }
   return absolutePath;
@@ -1109,7 +1382,9 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function campaignStatusSummary(campaigns: SaleCampaignLedger["campaigns"]): Record<SaleCampaignStatus, number> {
+function campaignStatusSummary(
+  campaigns: SaleCampaignLedger["campaigns"],
+): Record<SaleCampaignStatus, number> {
   const summary: Record<SaleCampaignStatus, number> = {
     changed: 0,
     ended: 0,
@@ -1124,7 +1399,10 @@ function campaignStatusSummary(campaigns: SaleCampaignLedger["campaigns"]): Reco
 
 function lifecycleObservedAt(payload: FinalArbitragePayload): string {
   const ledgerTimestamp = payload.saleCampaignLedger?.updatedAt;
-  if (validIsoTimestamp(ledgerTimestamp) && Date.parse(ledgerTimestamp) <= Date.parse(payload.createdAt)) {
+  if (
+    validIsoTimestamp(ledgerTimestamp) &&
+    Date.parse(ledgerTimestamp) <= Date.parse(payload.createdAt)
+  ) {
     return ledgerTimestamp;
   }
   const observationTimestamp = payload.saleObservations
@@ -1134,7 +1412,9 @@ function lifecycleObservedAt(payload: FinalArbitragePayload): string {
 }
 
 function lifecycleFromIncomingLedger(payload: FinalArbitragePayload) {
-  const ledger = saleCampaignLedgerFromPayload(payload as unknown as Record<string, unknown>);
+  const ledger = saleCampaignLedgerFromPayload(
+    payload as unknown as Record<string, unknown>,
+  );
   const activeSaleEvents = ledger.campaigns
     .filter((campaign) => campaign.saleStatus !== "ended")
     .map((campaign) => campaign as unknown as ArbitrageFind);
@@ -1154,7 +1434,12 @@ function lifecycleFromIncomingLedger(payload: FinalArbitragePayload) {
 }
 
 function validSaleCampaignStatus(value: unknown): value is SaleCampaignStatus {
-  return typeof value === "string" && ["changed", "ended", "evergreen", "new", "ongoing", "unknown"].includes(value);
+  return (
+    typeof value === "string" &&
+    ["changed", "ended", "evergreen", "new", "ongoing", "unknown"].includes(
+      value,
+    )
+  );
 }
 
 function validIsoTimestamp(value: unknown): value is string {
@@ -1166,7 +1451,9 @@ function validIsoTimestamp(value: unknown): value is string {
 }
 
 function validRunId(value: unknown): value is string {
-  return typeof value === "string" && /^[a-z0-9][a-z0-9._-]{2,127}$/i.test(value);
+  return (
+    typeof value === "string" && /^[a-z0-9][a-z0-9._-]{2,127}$/i.test(value)
+  );
 }
 
 function validHash(value: unknown): value is string {
@@ -1177,9 +1464,16 @@ function cleanText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function boundedInteger(value: unknown, minimum: number, maximum: number, fallback: number) {
+function boundedInteger(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+  fallback: number,
+) {
   const number = Number(value);
-  return Number.isInteger(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
+  return Number.isInteger(number)
+    ? Math.min(maximum, Math.max(minimum, number))
+    : fallback;
 }
 
 function assertUploadAuthorized(requestToken?: string | null) {
@@ -1202,4 +1496,24 @@ function httpError(statusCode: number, message: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function withFeedbackReceipts(
+  payload: ArbitrageImportPayload,
+): ArbitrageImportPayload {
+  const ranked = selectDecisionList(
+    payload.finds.map((find) => evaluateOpportunity(find)),
+  );
+  const ranks = new Map(ranked.map((find, index) => [find.id, index + 1]));
+  return {
+    ...payload,
+    finds: payload.finds.map((find) => ({
+      ...find,
+      feedbackReceipt: feedbackReceipt(
+        find,
+        ranks.get(find.id) ?? null,
+        payload.runId,
+      ),
+    })),
+  };
 }

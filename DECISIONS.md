@@ -233,3 +233,9 @@ Every researchable candidate receives a clean exact-edition, barcode, then base-
 Active eBay enrichment may collect exact listing identities and supply counts without a destination ZIP. Destination-specific landed prices remain unverified and cannot authorize `BUY` or cause a below-cost hard rejection. A child run in which every query fails is reported as failed, not enriched.
 
 Shopify products with descriptive handle/title identities that share no meaningful token fail closed, preventing a stale product URL from being paired with another record's title and SKU. Retailers whose published policy prohibits marketplace resellers are excluded from automated acquisition; Assai Records is the first explicit policy exclusion.
+
+## 2026-09-04: useful retail decisions, scoped campaigns, and independent updates
+
+Keep the full-run coverage gate. Add a separately versioned, validated source-update contract instead of freezing verified retailer observations behind unrelated failures. Never refresh an untouched offer's timestamp. Show last publication and last attempted scan separately.
+
+Bind each campaign discount to its own scope and terms, carry a broad pool through research, and default to at most fifteen qualified releases. Unknown turnover stays unknown. One explicit timing or checkout check may remain on a strong B candidate; it cannot be an automatic BUY. Use signed opaque review receipts and deterministic repeat suppression. Measure usefulness through explicit outcomes rather than the number of candidates or green labels.

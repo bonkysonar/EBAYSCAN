@@ -1,5 +1,18 @@
+import { applyRetailLearning } from "./lib/retailLearning.mjs";
+import {
+  extractRetailCampaigns,
+  applyCampaignOffers,
+  campaignBasketScenario,
+} from "./lib/campaignOffers.mjs";
+import { shopifyIdentity, retailEligibility } from "./lib/retailIdentity.mjs";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import {
   extractAmazonAsin,
@@ -11,12 +24,12 @@ import {
   splitDealArtistTitle,
 } from "./lib/dealSourceAdapters.mjs";
 import {
-  applyVerifiedSaleCampaigns,
   assessRecordCandidate,
   candidateQualityScore,
   isHighSignalProductFind,
   purchaseOfferVerificationForSource,
   rankAndSelectCandidatesWithDiagnostics,
+  selectResearchCandidates,
 } from "./lib/candidatePipeline.mjs";
 import { createPoliteFetcher } from "./lib/politeHttp.mjs";
 import {
@@ -79,8 +92,19 @@ import {
 
 const WORKSPACE = process.cwd();
 const DEFAULT_OUTPUT_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
-const SOLD_INDEX_PATH = join(WORKSPACE, "exports", "sold-history", "sold-comps-index.json");
-const SOURCE_FILE = join(WORKSPACE, "src", "lib", "arbitrage", "vinylShopSources.ts");
+const SOLD_INDEX_PATH = join(
+  WORKSPACE,
+  "exports",
+  "sold-history",
+  "sold-comps-index.json",
+);
+const SOURCE_FILE = join(
+  WORKSPACE,
+  "src",
+  "lib",
+  "arbitrage",
+  "vinylShopSources.ts",
+);
 const LOCAL_ENV_PATH = join(WORKSPACE, ".env.local");
 const DEFAULT_TAX_RATE = 0.095;
 const EBAY_RESEARCH_NEW_CONDITION_ID = "1000";
@@ -111,46 +135,84 @@ const DEFAULT_EBAY_PURCHASE_MAX_PAGES_PER_LANE = 4;
 const DEFAULT_EBAY_PURCHASE_PAGE_SIZE = 100;
 const DEFAULT_ACTIVE_ENRICHMENT_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SOLD_HISTORY_SYNC_TIMEOUT_MS = 30 * 60 * 1000;
-const SCANNER_VERSION = "retail-arbitrage-scanner/3";
+const SCANNER_VERSION = "retail-arbitrage-scanner/4";
 
 loadLocalEnv(LOCAL_ENV_PATH);
 
 const args = new Map(
-  process.argv
-    .slice(2)
-    .map((arg) => {
-      const [key, value = "true"] = arg.replace(/^--/, "").split("=");
-      return [key, value];
-    }),
+  process.argv.slice(2).map((arg) => {
+    const [key, value = "true"] = arg.replace(/^--/, "").split("=");
+    return [key, value];
+  }),
 );
 const scanMode = args.get("mode") ?? "sale-radar";
-const OUTPUT_DIR = args.get("outputDir") ? resolve(WORKSPACE, args.get("outputDir")) : DEFAULT_OUTPUT_DIR;
-const maxProductFinds = parseLimit(args.get("maxProductFinds"), scanMode === "comprehensive" ? Number.POSITIVE_INFINITY : DEFAULT_MAX_PRODUCT_FINDS);
-const maxSaleEvents = parseLimit(args.get("maxSaleEvents"), scanMode === "comprehensive" ? 0 : DEFAULT_MAX_SALE_EVENTS);
+const OUTPUT_DIR = args.get("outputDir")
+  ? resolve(WORKSPACE, args.get("outputDir"))
+  : DEFAULT_OUTPUT_DIR;
+const maxProductFinds = parseLimit(
+  args.get("maxProductFinds"),
+  scanMode === "comprehensive"
+    ? Number.POSITIVE_INFINITY
+    : DEFAULT_MAX_PRODUCT_FINDS,
+);
+const maxSaleEvents = parseLimit(
+  args.get("maxSaleEvents"),
+  scanMode === "comprehensive" ? 0 : DEFAULT_MAX_SALE_EVENTS,
+);
 const maxDiscoveredCatalogPages = parseLimit(
   args.get("maxDiscoveredCatalogPages"),
   DEFAULT_MAX_DISCOVERED_CATALOG_PAGES,
 );
-const maxDiscoveredSalePages = parseLimit(args.get("maxDiscoveredSalePages"), DEFAULT_MAX_DISCOVERED_SALE_PAGES);
-const fetchTimeoutMs = parseLimit(args.get("fetchTimeoutMs"), DEFAULT_FETCH_TIMEOUT_MS);
-const discoveryDetailLimit = parseLimit(args.get("discoveryDetailLimit"), DEFAULT_DISCOVERY_DETAIL_LIMIT);
-const discoveryConcurrency = parseLimit(args.get("discoveryConcurrency"), DEFAULT_DISCOVERY_CONCURRENCY);
-const sourceConcurrency = parseLimit(args.get("sourceConcurrency"), DEFAULT_SOURCE_CONCURRENCY);
-const fetchRetries = parseLimit(args.get("fetchRetries"), DEFAULT_FETCH_RETRIES);
+const maxDiscoveredSalePages = parseLimit(
+  args.get("maxDiscoveredSalePages"),
+  DEFAULT_MAX_DISCOVERED_SALE_PAGES,
+);
+const fetchTimeoutMs = parseLimit(
+  args.get("fetchTimeoutMs"),
+  DEFAULT_FETCH_TIMEOUT_MS,
+);
+const discoveryDetailLimit = parseLimit(
+  args.get("discoveryDetailLimit"),
+  DEFAULT_DISCOVERY_DETAIL_LIMIT,
+);
+const discoveryConcurrency = parseLimit(
+  args.get("discoveryConcurrency"),
+  DEFAULT_DISCOVERY_CONCURRENCY,
+);
+const sourceConcurrency = parseLimit(
+  args.get("sourceConcurrency"),
+  DEFAULT_SOURCE_CONCURRENCY,
+);
+const fetchRetries = parseLimit(
+  args.get("fetchRetries"),
+  DEFAULT_FETCH_RETRIES,
+);
 const fetchRetryDelayMs = parseLimit(
   args.get("fetchRetryDelayMs"),
   DEFAULT_FETCH_RETRY_DELAY_MS,
 );
 const hostDelayMs = parseLimit(args.get("hostDelayMs"), DEFAULT_HOST_DELAY_MS);
-const genericMaxPages = parseLimit(args.get("genericMaxPages"), DEFAULT_GENERIC_MAX_PAGES);
+const genericMaxPages = parseLimit(
+  args.get("genericMaxPages"),
+  DEFAULT_GENERIC_MAX_PAGES,
+);
 const shopifyCollectionLanes = parseLimit(
   args.get("shopifyCollectionLanes"),
   DEFAULT_SHOPIFY_COLLECTION_LANES,
 );
-const shopifyMaxPages = parseLimit(args.get("shopifyMaxPages"), DEFAULT_SHOPIFY_MAX_PAGES);
-const shopifyRootMaxPages = parseLimit(args.get("shopifyRootMaxPages"), DEFAULT_SHOPIFY_ROOT_MAX_PAGES);
+const shopifyMaxPages = parseLimit(
+  args.get("shopifyMaxPages"),
+  DEFAULT_SHOPIFY_MAX_PAGES,
+);
+const shopifyRootMaxPages = parseLimit(
+  args.get("shopifyRootMaxPages"),
+  DEFAULT_SHOPIFY_ROOT_MAX_PAGES,
+);
 const includeShopifyRootCatalog = args.get("shopifyRootCatalog") === "true";
-const walmartMaxPages = parseLimit(args.get("walmartMaxPages"), DEFAULT_WALMART_MAX_PAGES);
+const walmartMaxPages = parseLimit(
+  args.get("walmartMaxPages"),
+  DEFAULT_WALMART_MAX_PAGES,
+);
 const walmartAvailabilityDetailLimit = parseLimit(
   args.get("walmartAvailabilityDetailLimit"),
   DEFAULT_WALMART_AVAILABILITY_DETAIL_LIMIT,
@@ -188,14 +250,18 @@ const researchPoolProductLimit =
     ? Number.POSITIVE_INFINITY
     : Math.min(
         maxResearchPoolSize,
-        Math.max(maxProductFinds, Math.ceil(maxProductFinds * researchPoolMultiplier)),
+        Math.max(
+          maxProductFinds,
+          Math.ceil(maxProductFinds * researchPoolMultiplier),
+        ),
       );
 const activeEnrichmentTimeoutMs = parsePositiveNumber(
   args.get("activeEnrichmentTimeoutMs"),
   DEFAULT_ACTIVE_ENRICHMENT_TIMEOUT_MS,
 );
 const soldHistorySyncTimeoutMs = parsePositiveNumber(
-  args.get("soldHistorySyncTimeoutMs") ?? args.get("sold-history-sync-timeout-ms"),
+  args.get("soldHistorySyncTimeoutMs") ??
+    args.get("sold-history-sync-timeout-ms"),
   DEFAULT_SOLD_HISTORY_SYNC_TIMEOUT_MS,
 );
 const skipEbaySync =
@@ -203,7 +269,8 @@ const skipEbaySync =
   args.has("skip-ebay-sync") ||
   args.get("ebaySync") === "false" ||
   args.get("ebay-sync") === "false";
-const skipActiveEnrichment = args.has("skipActiveEnrichment") || args.get("enrichActive") === "false";
+const skipActiveEnrichment =
+  args.has("skipActiveEnrichment") || args.get("enrichActive") === "false";
 const skipUpload = args.has("skipUpload") || args.get("upload") === "false";
 const maxActiveQueries = parseLimit(
   args.get("maxActiveQueries"),
@@ -219,21 +286,30 @@ const requestedSourceIds = new Set(
     .filter(Boolean),
 );
 const sourceCatalog = await readVinylSources(SOURCE_FILE);
-const sources = requestedSourceIds.size ? sourceCatalog.filter((source) => requestedSourceIds.has(source.id)) : sourceCatalog;
+const sources = requestedSourceIds.size
+  ? sourceCatalog.filter((source) => requestedSourceIds.has(source.id))
+  : sourceCatalog;
 if (requestedSourceIds.size && sources.length !== requestedSourceIds.size) {
   const matched = new Set(sources.map((source) => source.id));
   const missing = [...requestedSourceIds].filter((id) => !matched.has(id));
-  throw new Error(`Unknown source id${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`);
+  throw new Error(
+    `Unknown source id${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`,
+  );
 }
-const sourceMetadataById = new Map(sources.map((source) => [source.id, source]));
+const sourceMetadataById = new Map(
+  sources.map((source) => [source.id, source]),
+);
 const soldHistorySync = runSoldHistorySyncIfConfigured();
-const soldIndex = existsSync(SOLD_INDEX_PATH) ? JSON.parse(readFileSync(SOLD_INDEX_PATH, "utf8")) : null;
+const soldIndex = existsSync(SOLD_INDEX_PATH)
+  ? JSON.parse(readFileSync(SOLD_INDEX_PATH, "utf8"))
+  : null;
 const capturedAt = new Date().toISOString();
 const runId = `scan-${timestampForFile(capturedAt)}`;
 const previousScanState = loadPreviousScanState(OUTPUT_DIR);
 const sourceReports = [];
 const allCandidates = [];
 const allSaleEvents = [];
+const inaccessibleRetailHosts = new Set();
 const scheduledFetch = createPoliteFetcher({
   baseRetryDelayMs: fetchRetryDelayMs,
   maxConcurrency: sourceConcurrency,
@@ -242,87 +318,122 @@ const scheduledFetch = createPoliteFetcher({
   requestTimeoutMs: fetchTimeoutMs,
 });
 
-const sourceScanResults = await mapWithConcurrency(sources, sourceConcurrency, async (source) => {
-  const startedAt = Date.now();
-  const catalogUrl = source.url;
-  const storedPreferredUrl = previousScanState.preferredUrls.get(source.id) ?? null;
-  const preferredUrl = compatiblePreferredSourceUrl(catalogUrl, storedPreferredUrl)
-    ? storedPreferredUrl
-    : catalogUrl;
-  const scanTarget = {
-    ...source,
-    priorSaleUrls: priorSaleRecheckUrlsForSource(previousScanState.saleCampaignLedger, source),
-    url: preferredUrl,
-  };
-  try {
-    const scanResult = await scanSource(scanTarget);
-    const candidates = scanResult.candidates ?? [];
-    const saleEvents = scanResult.saleEvents ?? [];
-    const pageReports = scanResult.pageReports ?? [];
-    const failedPages = pageReports.filter((report) => report.status === "error");
-    const successfulPages = pageReports.filter((report) => report.status === "available");
-    const successfulSalePages = successfulPages.filter(
-      (report) => (report.role ?? inferredPageRole(report.purpose)) === "sale",
-    );
-    const coverage = pageCoverage(pageReports, source);
-    const report = {
-      candidateCount: candidates.length,
-      adapterStats: scanResult.adapterStats,
+const sourceScanResults = await mapWithConcurrency(
+  sources,
+  sourceConcurrency,
+  async (source) => {
+    const startedAt = Date.now();
+    const catalogUrl = source.url;
+    const storedPreferredUrl =
+      previousScanState.preferredUrls.get(source.id) ?? null;
+    const preferredUrl = compatiblePreferredSourceUrl(
       catalogUrl,
-      ...coverage,
-      ...sourceMetadataForReport(source),
-      ...(scanResult.reportFields ?? {}),
-      elapsedMs: Date.now() - startedAt,
-      id: source.id,
-      name: source.name,
-      pageErrors: failedPages,
-      preferredUrl:
-        scanResult.preferredUrl ?? preferredSourceUrl(scanTarget.url, pageReports),
-      resolvedUrls: [...new Set(successfulPages.map((report) => report.resolvedUrl))],
-      salePageCheckedUrls: [
-        ...new Set(
-          successfulSalePages.flatMap((page) => [page.requestedUrl, page.resolvedUrl]),
-        ),
-      ].filter(Boolean),
-      saleEventCount: saleEvents.length,
-      status:
-        scanResult.sourceStatus ?? sourceReportStatus(coverage, candidates, saleEvents),
+      storedPreferredUrl,
+    )
+      ? storedPreferredUrl
+      : catalogUrl;
+    const scanTarget = {
+      ...source,
+      priorSaleUrls: priorSaleRecheckUrlsForSource(
+        previousScanState.saleCampaignLedger,
+        source,
+      ),
       url: preferredUrl,
     };
-    console.log(`${source.name}: ${candidates.length} candidates, ${saleEvents.length} sale signals`);
-    return { candidates, report, saleEvents };
-  } catch (error) {
-    const pageReports = error?.pageReports ?? [];
-    const successfulPages = pageReports.filter((report) => report.status === "available");
-    const successfulSalePages = successfulPages.filter(
-      (report) => (report.role ?? inferredPageRole(report.purpose)) === "sale",
-    );
-    const coverage = pageCoverage(pageReports, source);
-    const report = {
-      candidateCount: 0,
-      catalogUrl,
-      ...coverage,
-      ...sourceMetadataForReport(source),
-      elapsedMs: Date.now() - startedAt,
-      error: error instanceof Error ? error.message : String(error),
-      id: source.id,
-      name: source.name,
-      pageErrors: pageReports.filter((page) => page.status === "error"),
-      saleEventCount: 0,
-      status: "error",
-      preferredUrl,
-      resolvedUrls: [...new Set(successfulPages.map((report) => report.resolvedUrl))],
-      salePageCheckedUrls: [
-        ...new Set(
-          successfulSalePages.flatMap((page) => [page.requestedUrl, page.resolvedUrl]),
-        ),
-      ].filter(Boolean),
-      url: preferredUrl,
-    };
-    console.log(`${source.name}: ${error instanceof Error ? error.message : String(error)}`);
-    return { candidates: [], report, saleEvents: [] };
-  }
-});
+    try {
+      const scanResult = await scanSource(scanTarget);
+      const candidates = scanResult.candidates ?? [];
+      const saleEvents = scanResult.saleEvents ?? [];
+      const pageReports = scanResult.pageReports ?? [];
+      const failedPages = pageReports.filter(
+        (report) => report.status === "error",
+      );
+      const successfulPages = pageReports.filter(
+        (report) => report.status === "available",
+      );
+      const successfulSalePages = successfulPages.filter(
+        (report) =>
+          (report.role ?? inferredPageRole(report.purpose)) === "sale",
+      );
+      const coverage = pageCoverage(pageReports, source);
+      const report = {
+        candidateCount: candidates.length,
+        adapterStats: scanResult.adapterStats,
+        catalogUrl,
+        ...coverage,
+        ...sourceMetadataForReport(source),
+        ...(scanResult.reportFields ?? {}),
+        elapsedMs: Date.now() - startedAt,
+        id: source.id,
+        name: source.name,
+        pageErrors: failedPages,
+        preferredUrl:
+          scanResult.preferredUrl ??
+          preferredSourceUrl(scanTarget.url, pageReports),
+        resolvedUrls: [
+          ...new Set(successfulPages.map((report) => report.resolvedUrl)),
+        ],
+        salePageCheckedUrls: [
+          ...new Set(
+            successfulSalePages.flatMap((page) => [
+              page.requestedUrl,
+              page.resolvedUrl,
+            ]),
+          ),
+        ].filter(Boolean),
+        saleEventCount: saleEvents.length,
+        status:
+          scanResult.sourceStatus ??
+          sourceReportStatus(coverage, candidates, saleEvents),
+        url: preferredUrl,
+      };
+      console.log(
+        `${source.name}: ${candidates.length} candidates, ${saleEvents.length} sale signals`,
+      );
+      return { candidates, report, saleEvents };
+    } catch (error) {
+      const pageReports = error?.pageReports ?? [];
+      const successfulPages = pageReports.filter(
+        (report) => report.status === "available",
+      );
+      const successfulSalePages = successfulPages.filter(
+        (report) =>
+          (report.role ?? inferredPageRole(report.purpose)) === "sale",
+      );
+      const coverage = pageCoverage(pageReports, source);
+      const report = {
+        candidateCount: 0,
+        catalogUrl,
+        ...coverage,
+        ...sourceMetadataForReport(source),
+        elapsedMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+        id: source.id,
+        name: source.name,
+        pageErrors: pageReports.filter((page) => page.status === "error"),
+        saleEventCount: 0,
+        status: "error",
+        preferredUrl,
+        resolvedUrls: [
+          ...new Set(successfulPages.map((report) => report.resolvedUrl)),
+        ],
+        salePageCheckedUrls: [
+          ...new Set(
+            successfulSalePages.flatMap((page) => [
+              page.requestedUrl,
+              page.resolvedUrl,
+            ]),
+          ),
+        ].filter(Boolean),
+        url: preferredUrl,
+      };
+      console.log(
+        `${source.name}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { candidates: [], report, saleEvents: [] };
+    }
+  },
+);
 
 for (const result of sourceScanResults) {
   sourceReports.push(result.report);
@@ -335,21 +446,36 @@ const verifiedSaleCampaigns = dedupedSaleEvents.map((event) => ({
   ...event,
   saleCampaignId: saleCampaignIdFor(saleEventToFind(event)),
 }));
-const saleAdjustedCandidates = applyVerifiedSaleCampaigns(
+const saleAdjustedCandidates = applyCampaignOffers(
   allCandidates,
   verifiedSaleCampaigns,
 );
-const enrichedProducts = saleAdjustedCandidates
-  .map((candidate) => enrichCandidate(candidate, soldIndex))
-  .filter((find) => find.purchasePrice > 0);
+const enrichedProducts = applyRetailLearning(
+  saleAdjustedCandidates.map((candidate) => {
+    const enriched = enrichCandidate(candidate, soldIndex);
+    return {
+      ...enriched,
+      requiresRetailVerification: true,
+      learningEvidenceRevision: JSON.stringify([
+        enriched.soldEvidence?.latestSaleDate,
+        enriched.soldEvidence?.unitsSold90Days,
+        enriched.soldEvidence?.status,
+      ]),
+    };
+  }),
+  await readScannerFeedback(),
+).filter((find) => find.purchasePrice > 0 && !find.learningSuppressed);
 const researchSelection =
   scanMode === "comprehensive"
     ? rankAndSelectCandidatesWithDiagnostics(enrichedProducts, {
         limit: Number.POSITIVE_INFINITY,
       })
-    : rankAndSelectCandidatesWithDiagnostics(enrichedProducts.filter(isHighSignalProductFind), {
-        limit: researchPoolProductLimit,
-      });
+    : selectResearchCandidates(
+        enrichedProducts.filter(isHighSignalProductFind),
+        {
+          limit: researchPoolProductLimit,
+        },
+      );
 const researchProductFinds = researchSelection.selected;
 const researchSourceReports = annotateSourceYield(
   sourceReports,
@@ -357,7 +483,12 @@ const researchSourceReports = annotateSourceYield(
   researchProductFinds,
   { researchSelectionDiagnostics: researchSelection.diagnostics },
 );
-const saleObservations = dedupedSaleEvents.map(saleEventToFind);
+const saleObservations = verifiedSaleCampaigns.map((event) =>
+  saleEventToFind({
+    ...event,
+    basketScenario: campaignBasketScenario(allCandidates, event, capturedAt),
+  }),
+);
 const saleLifecycle = reconcileSaleCampaigns({
   observedAt: capturedAt,
   previousLedger: previousScanState.saleCampaignLedger,
@@ -368,15 +499,19 @@ const saleLifecycle = reconcileSaleCampaigns({
 const saleEventFinds = [...saleLifecycle.activeSaleEvents]
   .sort((left, right) => saleEventPriority(right) - saleEventPriority(left))
   .slice(0, maxSaleEvents);
-const scored = [...saleEventFinds, ...researchProductFinds]
-  .sort((left, right) => {
+const scored = [...saleEventFinds, ...researchProductFinds].sort(
+  (left, right) => {
     const leftPriority = opportunitySortPriority(left);
     const rightPriority = opportunitySortPriority(right);
     if (leftPriority !== rightPriority) return rightPriority - leftPriority;
     const leftMargin = estimatedMargin(left);
     const rightMargin = estimatedMargin(right);
-    return rightMargin - leftMargin || (right.totalSoldCount ?? 0) - (left.totalSoldCount ?? 0);
-  });
+    return (
+      rightMargin - leftMargin ||
+      (right.totalSoldCount ?? 0) - (left.totalSoldCount ?? 0)
+    );
+  },
+);
 
 let payload = {
   createdAt: capturedAt,
@@ -405,7 +540,10 @@ let payload = {
   saleObservations,
   schemaVersion: 2,
   soldHistorySync,
-  source: scanMode === "comprehensive" ? "comprehensive-retail-arbitrage-scan" : "sale-radar-retail-arbitrage-scan",
+  source:
+    scanMode === "comprehensive"
+      ? "comprehensive-retail-arbitrage-scan"
+      : "sale-radar-retail-arbitrage-scan",
   sourceReports: researchSourceReports,
   summary: {
     ...summarize(scored, researchSourceReports, researchSelection.diagnostics),
@@ -414,7 +552,10 @@ let payload = {
 };
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
-const outputPath = join(OUTPUT_DIR, `retail-arbitrage-${timestampForFile(capturedAt)}.json`);
+const outputPath = join(
+  OUTPUT_DIR,
+  `retail-arbitrage-${timestampForFile(capturedAt)}.json`,
+);
 writeFileSync(outputPath, JSON.stringify(payload, null, 2));
 const activeEnrichment = runActiveEnrichmentIfConfigured(outputPath);
 if (activeEnrichment.status === "enriched") {
@@ -422,9 +563,7 @@ if (activeEnrichment.status === "enriched") {
 }
 const evaluatedAt = new Date().toISOString();
 const evaluatedFinds = (payload.finds ?? [])
-  .map((find) =>
-    evaluateOpportunity(find, {}, evaluatedAt),
-  )
+  .map((find) => evaluateOpportunity(find, {}, evaluatedAt))
   .sort(compareEvaluatedFinds);
 const evaluatedSaleFinds = evaluatedFinds.filter(
   (find) => find.opportunityType === "sitewide_sale",
@@ -432,13 +571,17 @@ const evaluatedSaleFinds = evaluatedFinds.filter(
 const evaluatedProductFinds = evaluatedFinds.filter(
   (find) => find.opportunityType !== "sitewide_sale",
 );
-const finalSelection = rankAndSelectCandidatesWithDiagnostics(evaluatedProductFinds, {
-  compareCandidates: compareEvaluatedFinds,
-  dedupePressings: false,
-  limit: maxProductFinds,
-  scoreCandidate: evaluatedCandidateScore,
-});
+const finalSelection = rankAndSelectCandidatesWithDiagnostics(
+  evaluatedProductFinds,
+  {
+    compareCandidates: compareEvaluatedFinds,
+    dedupePressings: false,
+    limit: maxProductFinds,
+    scoreCandidate: evaluatedCandidateScore,
+  },
+);
 const finalProductFinds = finalSelection.selected;
+payload.researchCandidates = evaluatedProductFinds;
 payload.finds = [...evaluatedSaleFinds, ...finalProductFinds].sort(
   (left, right) =>
     opportunitySortPriority(right) - opportunitySortPriority(left) ||
@@ -466,7 +609,8 @@ payload.summary = {
   ...summarize(payload.finds, finalSourceReports, finalSelection.diagnostics),
   activeEnrichment,
   researchPoolProductFindCount: researchProductFinds.length,
-  researchPoolRepresentedSourceCount: researchSelection.diagnostics.representedSourceCount,
+  researchPoolRepresentedSourceCount:
+    researchSelection.diagnostics.representedSourceCount,
   soldHistorySync,
 };
 payload.evaluatedAt = evaluatedAt;
@@ -482,7 +626,13 @@ const summary = {
   ...summarize(payload.finds, finalSourceReports, finalSelection.diagnostics),
   researchPoolProductFindCount: researchProductFinds.length,
 };
-console.log(JSON.stringify({ activeEnrichment, outputPath, soldHistorySync, uploadResult, ...summary }, null, 2));
+console.log(
+  JSON.stringify(
+    { activeEnrichment, outputPath, soldHistorySync, uploadResult, ...summary },
+    null,
+    2,
+  ),
+);
 
 async function readVinylSources(path) {
   const text = readFileSync(path, "utf8");
@@ -492,7 +642,11 @@ async function readVinylSources(path) {
   const catalogSources = readStructuredSourceCatalog(text);
   if (catalogSources.length) return catalogSources;
 
-  const blocks = [...text.matchAll(/\{\s*id:\s*"([^"]+)",\s*name:\s*"([^"]+)",\s*sourceType:\s*"([^"]+)",\s*url:\s*"([^"]+)",\s*\}/g)];
+  const blocks = [
+    ...text.matchAll(
+      /\{\s*id:\s*"([^"]+)",\s*name:\s*"([^"]+)",\s*sourceType:\s*"([^"]+)",\s*url:\s*"([^"]+)",\s*\}/g,
+    ),
+  ];
   return blocks.map((match) => ({
     id: match[1],
     name: match[2],
@@ -517,10 +671,14 @@ async function importVinylShopSources(text) {
       typeof module.getActiveRetailSources === "function"
         ? module.getActiveRetailSources()
         : Array.isArray(module.retailArbitrageSourceCatalog)
-          ? module.retailArbitrageSourceCatalog.filter((source) => !source.isDiscoveryOnly)
+          ? module.retailArbitrageSourceCatalog.filter(
+              (source) => !source.isDiscoveryOnly,
+            )
           : [];
     if (fullSources.length) return fullSources.map(normalizeOperationalSource);
-    return Array.isArray(module.vinylShopSources) ? module.vinylShopSources.map(normalizeOperationalSource) : [];
+    return Array.isArray(module.vinylShopSources)
+      ? module.vinylShopSources.map(normalizeOperationalSource)
+      : [];
   } catch {
     return [];
   }
@@ -556,7 +714,10 @@ function readStructuredSourceCatalog(text) {
     seenDomains.add(domain);
 
     sources.push({
-      defaultDiscountThreshold: readNumberField(block, "defaultDiscountThreshold"),
+      defaultDiscountThreshold: readNumberField(
+        block,
+        "defaultDiscountThreshold",
+      ),
       domain,
       id,
       minNetProfit: readNumberField(block, "minNetProfit"),
@@ -570,7 +731,10 @@ function readStructuredSourceCatalog(text) {
     });
   }
 
-  return sources.sort((left, right) => left.priority - right.priority || left.name.localeCompare(right.name));
+  return sources.sort(
+    (left, right) =>
+      left.priority - right.priority || left.name.localeCompare(right.name),
+  );
 }
 
 function readStringField(block, fieldName) {
@@ -579,7 +743,9 @@ function readStringField(block, fieldName) {
 }
 
 function readNumberField(block, fieldName) {
-  const match = block.match(new RegExp(`${fieldName}:\\s*([0-9]+(?:\\.[0-9]+)?)`));
+  const match = block.match(
+    new RegExp(`${fieldName}:\\s*([0-9]+(?:\\.[0-9]+)?)`),
+  );
   return match ? Number(match[1]) : null;
 }
 
@@ -634,7 +800,9 @@ function sourceAdapterFor(source) {
     {
       id: "fieldstack-catalog",
       matches: (candidate) =>
-        /(?:^|\.)(?:bullmoose|ziarecords)\.com$/i.test(candidate.domain ?? new URL(candidate.url).hostname),
+        /(?:^|\.)(?:bullmoose|ziarecords)\.com$/i.test(
+          candidate.domain ?? new URL(candidate.url).hostname,
+        ),
       scan: scanFieldstackSource,
     },
     {
@@ -727,28 +895,30 @@ async function scanEbayPurchaseSource(source) {
       }
       return [];
     }
-    return [{
-      ...candidate,
-      candidateQualityReasons: [
-        "official_ebay_browse_api",
-        "exact_ebay_vinyl_category_176985",
-        "new_fixed_price_listing",
-        ...assessment.reasons,
-      ],
-      candidateQualityScore: Math.max(80, assessment.score),
-      costs: {
-        ...(candidate.costs ?? {}),
-        inboundShipping: 0,
+    return [
+      {
+        ...candidate,
+        candidateQualityReasons: [
+          "official_ebay_browse_api",
+          "exact_ebay_vinyl_category_176985",
+          "new_fixed_price_listing",
+          ...assessment.reasons,
+        ],
+        candidateQualityScore: Math.max(80, assessment.score),
+        costs: {
+          ...(candidate.costs ?? {}),
+          inboundShipping: 0,
+        },
+        ebayPurchaseEvidenceScope: discovery.evidenceScope,
+        ebayPurchaseSoldDataIncluded: false,
+        purchaseOfferVerification: ebayPurchaseOfferVerification(candidate),
+        purchaseRetailerDomain: "ebay.com",
+        purchaseRetailerName: "eBay",
+        sourceId: source.id,
+        sourceName: source.name,
+        stockStatus: "in_stock",
       },
-      ebayPurchaseEvidenceScope: discovery.evidenceScope,
-      ebayPurchaseSoldDataIncluded: false,
-      purchaseOfferVerification: ebayPurchaseOfferVerification(candidate),
-      purchaseRetailerDomain: "ebay.com",
-      purchaseRetailerName: "eBay",
-      sourceId: source.id,
-      sourceName: source.name,
-      stockStatus: "in_stock",
-    }];
+    ];
   });
   const pageReports = discovery.diagnostics.pageReports.map((page) => ({
     error: page.error ?? undefined,
@@ -765,7 +935,9 @@ async function scanEbayPurchaseSource(source) {
     status: page.status,
     totalReported: page.totalReported,
   }));
-  const successfulPageCount = pageReports.filter((page) => page.status === "available").length;
+  const successfulPageCount = pageReports.filter(
+    (page) => page.status === "available",
+  ).length;
   const sourceStatus = discovery.complete
     ? candidates.length > 0
       ? "candidates"
@@ -779,8 +951,9 @@ async function scanEbayPurchaseSource(source) {
       authorization,
       browseApi: discovery.diagnostics,
       adapterValidatedCandidateCount: candidates.length,
-      candidateMappingRejectedCount: Object.values(genericAssessmentRejectedByReason)
-        .reduce((total, count) => total + count, 0),
+      candidateMappingRejectedCount: Object.values(
+        genericAssessmentRejectedByReason,
+      ).reduce((total, count) => total + count, 0),
       complete: discovery.complete,
       evidenceScope: discovery.evidenceScope,
       genericAssessmentRejectedByReason,
@@ -822,7 +995,9 @@ async function scanFieldstackPageScan(source, pageScan) {
     : null;
   if (!configuredPage || !config) {
     if (pageScan.pages.length === 0) {
-      const error = new Error(sourceFailureMessage(source, pageScan.pageReports));
+      const error = new Error(
+        sourceFailureMessage(source, pageScan.pageReports),
+      );
       error.pageReports = pageScan.pageReports;
       throw error;
     }
@@ -835,8 +1010,16 @@ async function scanFieldstackPageScan(source, pageScan) {
   let resultErrorCount = 0;
   let resultHtmlLength = 0;
   const resultItemCounts = [];
-  for (let pageNumber = 1; pageNumber <= Math.min(genericMaxPages, totalPages); pageNumber += 1) {
-    const resultUrl = fieldstackResultsUrl(configuredPage.url, config, pageNumber);
+  for (
+    let pageNumber = 1;
+    pageNumber <= Math.min(genericMaxPages, totalPages);
+    pageNumber += 1
+  ) {
+    const resultUrl = fieldstackResultsUrl(
+      configuredPage.url,
+      config,
+      pageNumber,
+    );
     try {
       const response = await fetchPage(resultUrl, {
         headers: {
@@ -848,7 +1031,8 @@ async function scanFieldstackPageScan(source, pageScan) {
         },
       });
       const parsed = parseFieldstackResultsPayload(response.html);
-      if (!parsed) throw new Error(`Invalid FieldStack results payload for ${resultUrl}`);
+      if (!parsed)
+        throw new Error(`Invalid FieldStack results payload for ${resultUrl}`);
       totalPages = Math.max(1, parsed.totalPages);
       resultHtmlLength += parsed.html.length;
       if (parsed.itemCountHtml) {
@@ -866,7 +1050,12 @@ async function scanFieldstackPageScan(source, pageScan) {
         url: virtualUrl.toString(),
       });
       pageScan.pageReports.push(
-        availablePageReport("fieldstack-results", resultUrl, virtualUrl.toString(), "catalog"),
+        availablePageReport(
+          "fieldstack-results",
+          resultUrl,
+          virtualUrl.toString(),
+          "catalog",
+        ),
       );
       if (!parsed.html.trim()) break;
     } catch (error) {
@@ -890,7 +1079,9 @@ async function scanFieldstackPageScan(source, pageScan) {
     productCards.length === 0;
   const candidates = dedupeCandidates(
     productCards
-      .map((item) => structuredRetailItemToCandidate(source, item, configuredPage.url))
+      .map((item) =>
+        structuredRetailItemToCandidate(source, item, configuredPage.url),
+      )
       .filter(Boolean),
   );
   return {
@@ -925,7 +1116,10 @@ async function scanGenericRetailerSource(source) {
       page.scanRootPurpose === "configured" &&
       !isSuspiciousHomepageRedirect(page.requestedUrl, page.url),
   );
-  if (configuredPage && parseFieldstackSearchConfig(configuredPage.html, configuredPage.url)) {
+  if (
+    configuredPage &&
+    parseFieldstackSearchConfig(configuredPage.html, configuredPage.url)
+  ) {
     return scanFieldstackPageScan(source, pageScan);
   }
   return genericRetailerResult(source, pageScan);
@@ -941,23 +1135,31 @@ function genericRetailerResult(source, pageScan) {
     }),
   }));
   const structuredCandidates = structuredResults.flatMap(({ page, parsed }) =>
-    parsed.items.map((item) => structuredRetailItemToCandidate(source, item, page.url)).filter(Boolean),
+    parsed.items
+      .map((item) => structuredRetailItemToCandidate(source, item, page.url))
+      .filter(Boolean),
   );
   const productCardResults = candidatePages.map((page) => ({
     items: extractRetailProductCards(page.html, page.url),
     page,
   }));
   const productCardCandidates = productCardResults.flatMap(({ items, page }) =>
-    items.map((item) => structuredRetailItemToCandidate(source, item, page.url)).filter(Boolean),
+    items
+      .map((item) => structuredRetailItemToCandidate(source, item, page.url))
+      .filter(Boolean),
   );
-  const slickdealsCardResults = source.id === "slickdeals-vinyl-records"
-    ? candidatePages.map((page) => ({
-        items: extractSlickdealsDealCards(page.html, page.url),
-        page,
-      }))
-    : [];
-  const slickdealsCardCandidates = slickdealsCardResults.flatMap(({ items, page }) =>
-    items.map((item) => slickdealsDealCardToCandidate(source, item, page.url)).filter(Boolean),
+  const slickdealsCardResults =
+    source.id === "slickdeals-vinyl-records"
+      ? candidatePages.map((page) => ({
+          items: extractSlickdealsDealCards(page.html, page.url),
+          page,
+        }))
+      : [];
+  const slickdealsCardCandidates = slickdealsCardResults.flatMap(
+    ({ items, page }) =>
+      items
+        .map((item) => slickdealsDealCardToCandidate(source, item, page.url))
+        .filter(Boolean),
   );
   const htmlCandidates = candidatePages.flatMap((page) =>
     extractCandidatesFromHtml(source, page.html, page.url),
@@ -993,7 +1195,11 @@ function genericRetailerResult(source, pageScan) {
     },
     candidates,
     pageReports: pageScan.pageReports,
-    saleEvents: dedupeSaleEvents(pageScan.pages.flatMap((page) => detectSaleEvents(source, page.html, page.url))),
+    saleEvents: dedupeSaleEvents(
+      pageScan.pages.flatMap((page) =>
+        detectSaleEvents(source, page.html, page.url),
+      ),
+    ),
   };
 }
 
@@ -1003,9 +1209,14 @@ function cookieHeaderFromPages(pages) {
     const pair = String(setCookie).split(";", 1)[0];
     const separator = pair.indexOf("=");
     if (separator <= 0) continue;
-    cookies.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim());
+    cookies.set(
+      pair.slice(0, separator).trim(),
+      pair.slice(separator + 1).trim(),
+    );
   }
-  return [...cookies.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
+  return [...cookies.entries()]
+    .map(([name, value]) => `${name}=${value}`)
+    .join("; ");
 }
 
 function genericCandidatePages(pages, source) {
@@ -1017,12 +1228,15 @@ function genericCandidatePages(pages, source) {
   const discoveredVinylSalePages = pages.filter(
     (page) =>
       page.scanRootPurpose === "discovered-sale-link" &&
-      /\b(?:vinyl|records?|music|lps?)\b/i.test(new URL(page.url).pathname.replace(/[-_/]+/g, " ")),
+      /\b(?:vinyl|records?|music|lps?)\b/i.test(
+        new URL(page.url).pathname.replace(/[-_/]+/g, " "),
+      ),
   );
   const recoveredCatalogPages = pages.filter(
     (page) => page.scanRootPurpose === "discovered-catalog-link",
   );
-  if (configuredPages.length > 0) return dedupePages([...configuredPages, ...discoveredVinylSalePages]);
+  if (configuredPages.length > 0)
+    return dedupePages([...configuredPages, ...discoveredVinylSalePages]);
   if (recoveredCatalogPages.length > 0) {
     return dedupePages([...recoveredCatalogPages, ...discoveredVinylSalePages]);
   }
@@ -1041,7 +1255,10 @@ function isSuspiciousHomepageRedirect(requestedUrl, resolvedUrl) {
   try {
     const requested = new URL(requestedUrl);
     const resolved = new URL(resolvedUrl);
-    return requested.pathname.replace(/\/+$/, "") !== "" && resolved.pathname.replace(/\/+$/, "") === "";
+    return (
+      requested.pathname.replace(/\/+$/, "") !== "" &&
+      resolved.pathname.replace(/\/+$/, "") === ""
+    );
   } catch {
     return false;
   }
@@ -1054,8 +1271,14 @@ function dedupePages(pages) {
 }
 
 function structuredRetailItemToCandidate(source, item, pageUrl) {
-  if (!Number.isFinite(item.currentPrice) || item.currentPrice < 2 || item.currentPrice > 250) return null;
-  if (item.available === false || item.availability === "out_of_stock") return null;
+  if (
+    !Number.isFinite(item.currentPrice) ||
+    item.currentPrice < 2 ||
+    item.currentPrice > 250
+  )
+    return null;
+  if (item.available === false || item.availability === "out_of_stock")
+    return null;
   const sourceUrl = item.canonicalUrl ?? pageUrl;
   const assessment = assessRecordCandidate({
     context: `${item.availability ?? ""} ${item.sourceKinds?.join(" ") ?? ""}`,
@@ -1079,13 +1302,17 @@ function structuredRetailItemToCandidate(source, item, pageUrl) {
     sourceCurrency: item.currency,
     sourceDiscountPercent:
       item.regularPrice && item.regularPrice > item.currentPrice
-        ? Math.round(((item.regularPrice - item.currentPrice) / item.regularPrice) * 100)
+        ? Math.round(
+            ((item.regularPrice - item.currentPrice) / item.regularPrice) * 100,
+          )
         : null,
     sourceId: source.id,
     sourceListingTitle: cleanText(item.title),
     sourceName: source.name,
     sourceOriginalPrice:
-      item.regularPrice && item.regularPrice > item.currentPrice ? item.regularPrice : null,
+      item.regularPrice && item.regularPrice > item.currentPrice
+        ? item.regularPrice
+        : null,
     sourceUrl,
     stockStatus: item.availability,
     title: inferTitle(item.title),
@@ -1118,7 +1345,11 @@ async function scanWalmartSource(source) {
     let consecutiveNoNewPages = 0;
     const attemptedUrls = new Set();
 
-    for (let pageNumber = 1; pageNumber <= walmartMaxPages && nextUrl; pageNumber += 1) {
+    for (
+      let pageNumber = 1;
+      pageNumber <= walmartMaxPages && nextUrl;
+      pageNumber += 1
+    ) {
       if (attemptedUrls.has(nextUrl)) break;
       attemptedUrls.add(nextUrl);
       const requestedUrl = nextUrl;
@@ -1139,20 +1370,41 @@ async function scanWalmartSource(source) {
             newItemCount += 1;
           }
           const existing = byStableId.get(item.stableId);
-          byStableId.set(item.stableId, existing ? mergeWalmartLaneItem(existing, item, lane) : { ...item, lanes: [lane.id] });
+          byStableId.set(
+            item.stableId,
+            existing
+              ? mergeWalmartLaneItem(existing, item, lane)
+              : { ...item, lanes: [lane.id] },
+          );
         }
-        consecutiveNoNewPages = newItemCount === 0 ? consecutiveNoNewPages + 1 : 0;
+        consecutiveNoNewPages =
+          newItemCount === 0 ? consecutiveNoNewPages + 1 : 0;
         pageReports.push({
-          ...availablePageReport(`${lane.id}-page-${pageNumber}`, requestedUrl, page.url, "catalog"),
+          ...availablePageReport(
+            `${lane.id}-page-${pageNumber}`,
+            requestedUrl,
+            page.url,
+            "catalog",
+          ),
           payloadCount: parsed.payloadCount,
           structuredProductCount: parsed.items.length,
         });
         if (consecutiveNoNewPages >= 2 || parsed.items.length === 0) break;
         nextUrl =
           parsed.pagination.nextPageUrl ??
-          walmartPageUrl(page.url, (parsed.pagination.currentPage ?? pageNumber) + 1);
+          walmartPageUrl(
+            page.url,
+            (parsed.pagination.currentPage ?? pageNumber) + 1,
+          );
       } catch (error) {
-        pageReports.push(failedPageReport(`${lane.id}-page-${pageNumber}`, requestedUrl, error, "catalog"));
+        pageReports.push(
+          failedPageReport(
+            `${lane.id}-page-${pageNumber}`,
+            requestedUrl,
+            error,
+            "catalog",
+          ),
+        );
         break;
       }
     }
@@ -1166,12 +1418,16 @@ async function scanWalmartSource(source) {
 
   const availabilityTargets = [...byStableId.values()]
     .filter((item) => {
-      if (item.available !== false && item.stockStatus !== "out_of_stock") return false;
+      if (item.available !== false && item.stockStatus !== "out_of_stock")
+        return false;
       if (!isFirstPartyWalmartOffer(item) || !item.canonicalUrl) return false;
       if (!assessWalmartAbsolutePrice(item.currentPrice).eligible) return false;
       return walmartRecordAssessment(item, source).accepted;
     })
-    .sort((left, right) => walmartAvailabilityPriority(right) - walmartAvailabilityPriority(left))
+    .sort(
+      (left, right) =>
+        walmartAvailabilityPriority(right) - walmartAvailabilityPriority(left),
+    )
     .slice(0, walmartAvailabilityDetailLimit);
   availabilityDetailAttemptCount = availabilityTargets.length;
   await mapWithConcurrency(
@@ -1180,28 +1436,48 @@ async function scanWalmartSource(source) {
     async (item) => {
       try {
         const page = await fetchPage(item.canonicalUrl);
-        const parsed = parseWalmartCatalogPage({ html: page.html, pageUrl: page.url });
-        const verified = parsed.items.find((candidate) => walmartItemsMatch(item, candidate));
+        const parsed = parseWalmartCatalogPage({
+          html: page.html,
+          pageUrl: page.url,
+        });
+        const verified = parsed.items.find((candidate) =>
+          walmartItemsMatch(item, candidate),
+        );
         pageReports.push({
-          ...availablePageReport("walmart-product-availability", item.canonicalUrl, page.url, "catalog"),
+          ...availablePageReport(
+            "walmart-product-availability",
+            item.canonicalUrl,
+            page.url,
+            "catalog",
+          ),
           payloadCount: parsed.payloadCount,
           structuredProductCount: parsed.items.length,
         });
         if (!verified) return;
-        byStableId.set(
-          item.stableId,
-          {
-            ...mergeWalmartLaneItem(item, verified, { id: "walmart-product-page" }),
-            availabilityVerifiedAt: capturedAt,
-            availabilityVerificationSource: "product_page",
-          },
-        );
-        if (verified.available === true || verified.stockStatus === "in_stock" || verified.stockStatus === "limited_stock") {
+        byStableId.set(item.stableId, {
+          ...mergeWalmartLaneItem(item, verified, {
+            id: "walmart-product-page",
+          }),
+          availabilityVerifiedAt: capturedAt,
+          availabilityVerificationSource: "product_page",
+        });
+        if (
+          verified.available === true ||
+          verified.stockStatus === "in_stock" ||
+          verified.stockStatus === "limited_stock"
+        ) {
           availabilityDetailVerifiedCount += 1;
         }
       } catch (error) {
         availabilityDetailErrorCount += 1;
-        pageReports.push(failedPageReport("walmart-product-availability", item.canonicalUrl, error, "catalog"));
+        pageReports.push(
+          failedPageReport(
+            "walmart-product-availability",
+            item.canonicalUrl,
+            error,
+            "catalog",
+          ),
+        );
       }
     },
   );
@@ -1223,7 +1499,8 @@ async function scanWalmartSource(source) {
         });
       }
       if (item.soldByWalmart === true) firstPartyLowPriceProductCount += 1;
-      else if (item.soldByWalmart === false) thirdPartyLowPriceProductCount += 1;
+      else if (item.soldByWalmart === false)
+        thirdPartyLowPriceProductCount += 1;
       else unknownSellerLowPriceProductCount += 1;
     }
     if (item.available === false || item.stockStatus === "out_of_stock") {
@@ -1233,7 +1510,9 @@ async function scanWalmartSource(source) {
     if (!isFirstPartyWalmartOffer(item)) {
       incrementCount(
         rejectionCounts,
-        item.soldByWalmart === false ? "third_party_seller" : "seller_unverified",
+        item.soldByWalmart === false
+          ? "third_party_seller"
+          : "seller_unverified",
       );
       continue;
     }
@@ -1243,7 +1522,12 @@ async function scanWalmartSource(source) {
     }
 
     if (!priceAssessment.eligible) {
-      incrementCount(rejectionCounts, item.currentPrice === null ? "missing_price" : "over_absolute_price_ceiling");
+      incrementCount(
+        rejectionCounts,
+        item.currentPrice === null
+          ? "missing_price"
+          : "over_absolute_price_ceiling",
+      );
       continue;
     }
 
@@ -1254,7 +1538,9 @@ async function scanWalmartSource(source) {
     }
     vinylQualifiedProductCount += 1;
 
-    const retailerBestSeller = item.badges.some((badge) => /\b(?:best\s*seller|best\s*selling|popular\s+pick)\b/i.test(badge));
+    const retailerBestSeller = item.badges.some((badge) =>
+      /\b(?:best\s*seller|best\s*selling|popular\s+pick)\b/i.test(badge),
+    );
     const retailerCustomerPick = item.badges.some((badge) =>
       /\b(?:customer(?:s')?\s+pick|overall\s+pick|top\s+rated)\b/i.test(badge),
     );
@@ -1267,8 +1553,12 @@ async function scanWalmartSource(source) {
       ...(item.upc ? ["upc_available"] : []),
     ];
     const sourceDiscountPercent =
-      item.wasPrice !== null && item.currentPrice !== null && item.wasPrice > item.currentPrice
-        ? Math.round(((item.wasPrice - item.currentPrice) / item.wasPrice) * 100)
+      item.wasPrice !== null &&
+      item.currentPrice !== null &&
+      item.wasPrice > item.currentPrice
+        ? Math.round(
+            ((item.wasPrice - item.currentPrice) / item.wasPrice) * 100,
+          )
         : null;
     const pickupEligible = item.fulfillment.includes("pickup");
     candidates.push({
@@ -1303,7 +1593,8 @@ async function scanWalmartSource(source) {
       sourceUrl: item.canonicalUrl,
       title: inferTitle(item.title),
       walmartAbsolutePriceTier: priceAssessment.tier,
-      walmartAvailabilityVerificationSource: item.availabilityVerificationSource ?? "search_result",
+      walmartAvailabilityVerificationSource:
+        item.availabilityVerificationSource ?? "search_result",
       walmartAvailabilityVerifiedAt: item.availabilityVerifiedAt ?? null,
       walmartFulfillment: item.fulfillment,
       walmartRequiresDemandSupport: priceAssessment.requiresDemandSupport,
@@ -1325,7 +1616,9 @@ async function scanWalmartSource(source) {
       laneCount: lanes.length,
       lowPriceEligibleProductCount,
       payloadCount,
-      rejectedProductCounts: Object.fromEntries([...rejectionCounts.entries()].sort()),
+      rejectedProductCounts: Object.fromEntries(
+        [...rejectionCounts.entries()].sort(),
+      ),
       structuredProductCount,
       thirdPartyLowPriceProductCount,
       unavailableLowPriceSamples,
@@ -1336,7 +1629,9 @@ async function scanWalmartSource(source) {
     candidates: dedupeCandidates(candidates),
     pageReports,
     saleEvents: dedupeSaleEvents(
-      fetchedPages.flatMap((page) => detectSaleEvents(source, page.html, page.url)),
+      fetchedPages.flatMap((page) =>
+        detectSaleEvents(source, page.html, page.url),
+      ),
     ),
   };
 }
@@ -1354,8 +1649,10 @@ function walmartSearchLanes(configuredUrl) {
   return definitions
     .map((definition) => {
       const url = new URL(configuredUrl);
-      if (!url.searchParams.get("q")) url.searchParams.set("q", "vinyl records");
-      if (!url.searchParams.get("catId")) url.searchParams.set("catId", "4104_1205481");
+      if (!url.searchParams.get("q"))
+        url.searchParams.set("q", "vinyl records");
+      if (!url.searchParams.get("catId"))
+        url.searchParams.set("catId", "4104_1205481");
       url.searchParams.set("max_price", String(definition.maxPrice));
       url.searchParams.set("facet", "retailer_type:Walmart");
       if (definition.sort) url.searchParams.set("sort", definition.sort);
@@ -1392,24 +1689,37 @@ function walmartAvailabilityPriority(item) {
   return (
     (price <= 13 ? 35 : price <= 15 ? 25 : price <= 20 ? 10 : 0) +
     Math.min(30, Math.log2(1 + reviewCount) * 4) +
-    (/\b(?:best\s*seller|best\s*selling|popular\s+pick|overall\s+pick)\b/i.test(badgeText) ? 15 : 0) +
-    (item.wasPrice && item.wasPrice > price ? Math.min(15, item.wasPrice - price) : 0)
+    (/\b(?:best\s*seller|best\s*selling|popular\s+pick|overall\s+pick)\b/i.test(
+      badgeText,
+    )
+      ? 15
+      : 0) +
+    (item.wasPrice && item.wasPrice > price
+      ? Math.min(15, item.wasPrice - price)
+      : 0)
   );
 }
 
 function walmartItemsMatch(left, right) {
-  if (left.stableId && right.stableId && left.stableId === right.stableId) return true;
-  if (left.usItemId && right.usItemId && left.usItemId === right.usItemId) return true;
+  if (left.stableId && right.stableId && left.stableId === right.stableId)
+    return true;
+  if (left.usItemId && right.usItemId && left.usItemId === right.usItemId)
+    return true;
   if (!left.canonicalUrl || !right.canonicalUrl) return false;
   try {
-    return new URL(left.canonicalUrl).pathname.toLowerCase() === new URL(right.canonicalUrl).pathname.toLowerCase();
+    return (
+      new URL(left.canonicalUrl).pathname.toLowerCase() ===
+      new URL(right.canonicalUrl).pathname.toLowerCase()
+    );
   } catch {
     return false;
   }
 }
 
 function walmartLaneDiscoveryUrl(configuredUrl, lanes) {
-  const matchingLane = walmartSearchLanes(configuredUrl).find((lane) => lanes.includes(lane.id));
+  const matchingLane = walmartSearchLanes(configuredUrl).find((lane) =>
+    lanes.includes(lane.id),
+  );
   return matchingLane?.url ?? configuredUrl;
 }
 
@@ -1427,12 +1737,19 @@ function mergeWalmartLaneItem(existing, incoming, lane) {
         ? true
         : existing.available === false && incoming.available === false
           ? false
-          : existing.available ?? incoming.available,
-    badges: [...new Set([...(existing.badges ?? []), ...(incoming.badges ?? [])])],
+          : (existing.available ?? incoming.available),
+    badges: [
+      ...new Set([...(existing.badges ?? []), ...(incoming.badges ?? [])]),
+    ],
     canonicalUrl: existing.canonicalUrl ?? incoming.canonicalUrl,
     currency: existing.currency ?? incoming.currency,
     currentPrice,
-    fulfillment: [...new Set([...(existing.fulfillment ?? []), ...(incoming.fulfillment ?? [])])],
+    fulfillment: [
+      ...new Set([
+        ...(existing.fulfillment ?? []),
+        ...(incoming.fulfillment ?? []),
+      ]),
+    ],
     inventoryQuantity: existing.inventoryQuantity ?? incoming.inventoryQuantity,
     lanes: [...new Set([...(existing.lanes ?? []), lane.id])],
     rating: existing.rating ?? incoming.rating,
@@ -1444,9 +1761,11 @@ function mergeWalmartLaneItem(existing, incoming, lane) {
     stockStatus:
       existing.stockStatus === "in_stock" || incoming.stockStatus === "in_stock"
         ? "in_stock"
-        : existing.stockStatus === "limited_stock" || incoming.stockStatus === "limited_stock"
+        : existing.stockStatus === "limited_stock" ||
+            incoming.stockStatus === "limited_stock"
           ? "limited_stock"
-          : existing.stockStatus === "out_of_stock" && incoming.stockStatus === "out_of_stock"
+          : existing.stockStatus === "out_of_stock" &&
+              incoming.stockStatus === "out_of_stock"
             ? "out_of_stock"
             : "unknown",
     upc: existing.upc ?? incoming.upc,
@@ -1460,8 +1779,13 @@ function incrementCount(counts, key) {
 }
 
 async function scanShopifySource(source) {
-  const pageScan = await fetchSourcePages(source, { allowEmpty: true, followPagination: false });
-  const origin = pageScan.pages.length ? new URL(pageScan.pages[0].url).origin : new URL(source.url).origin;
+  const pageScan = await fetchSourcePages(source, {
+    allowEmpty: true,
+    followPagination: false,
+  });
+  const origin = pageScan.pages.length
+    ? new URL(pageScan.pages[0].url).origin
+    : new URL(source.url).origin;
   const byUrl = new Map();
   let shopifyFeedErrorCount = 0;
   let shopifyFeedPageCount = 0;
@@ -1469,38 +1793,54 @@ async function scanShopifySource(source) {
   let shopifyRootFeedPageCount = 0;
   let shopifyProductCount = 0;
   let shopifyRecordProductCount = 0;
-  const shopifyCurrency = extractShopifyCurrency(pageScan.pages.map((page) => page.html));
+  const shopifyCurrency = extractShopifyCurrency(
+    pageScan.pages.map((page) => page.html),
+  );
   const collectionLaneSelection = selectShopifyCollectionLanes(
     pageScan.pages.map((page) => page.url),
     source.url,
     shopifyCollectionLanes,
   );
-  const collectionDescriptors = collectionLaneSelection.selected.flatMap(({ url }) =>
-    shopifyCatalogUrls({ url }, 1, 250, { includeRootCatalog: false }),
+  const collectionDescriptors = collectionLaneSelection.selected.flatMap(
+    ({ url }) =>
+      shopifyCatalogUrls({ url }, 1, 250, { includeRootCatalog: false }),
   );
   const shouldScanRootCatalog =
     includeShopifyRootCatalog ||
-    (collectionDescriptors.length === 0 && !collectionLaneSelection.configuredExcluded);
+    (collectionDescriptors.length === 0 &&
+      !collectionLaneSelection.configuredExcluded);
   const firstPageDescriptors = [
     ...collectionDescriptors,
     ...(shouldScanRootCatalog
-      ? [shopifyCatalogUrls({ url: origin }, 1).find((descriptor) => descriptor.collectionContext === null)]
+      ? [
+          shopifyCatalogUrls({ url: origin }, 1).find(
+            (descriptor) => descriptor.collectionContext === null,
+          ),
+        ]
       : []),
   ].filter(Boolean);
 
   for (const firstDescriptor of firstPageDescriptors) {
-    const pageLimit = firstDescriptor.collectionContext ? shopifyMaxPages : shopifyRootMaxPages;
+    const pageLimit = firstDescriptor.collectionContext
+      ? shopifyMaxPages
+      : shopifyRootMaxPages;
     for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
       const descriptor = {
         ...firstDescriptor,
         url: shopifyPageUrl(firstDescriptor.url, pageNumber),
       };
-      const purpose = descriptor.collectionContext ? "shopify-collection-feed" : "shopify-catalog-feed";
+      const purpose = descriptor.collectionContext
+        ? "shopify-collection-feed"
+        : "shopify-catalog-feed";
       try {
         const page = await fetchPage(descriptor.url);
-        pageScan.pageReports.push(availablePageReport(purpose, descriptor.url, page.url, "catalog"));
+        pageScan.pageReports.push(
+          availablePageReport(purpose, descriptor.url, page.url, "catalog"),
+        );
         const payload = JSON.parse(page.html);
-        const products = Array.isArray(payload.products) ? payload.products : [];
+        const products = Array.isArray(payload.products)
+          ? payload.products
+          : [];
         shopifyFeedPageCount += 1;
         if (descriptor.collectionContext) shopifyCollectionFeedPageCount += 1;
         else shopifyRootFeedPageCount += 1;
@@ -1515,23 +1855,38 @@ async function scanShopifySource(source) {
         });
         shopifyRecordProductCount += normalized.length;
         for (const item of normalized) {
-          const titleArtist = inferArtist(item.product.title);
-          const artist =
-            titleArtist !== "Unknown Artist" || isStoreVendor(item.product.vendor) ? titleArtist : cleanText(item.product.vendor);
+          const identity = shopifyIdentity(
+            item.product,
+            {
+              title: item.variantTitle,
+            },
+            source,
+          );
+          const artist = identity.artist;
           const candidate = {
+            ...identity,
+            available: true,
             artist,
             availableVariantCount: item.availableVariantCount,
             barcode: item.barcode,
             candidateQualityReasons: item.candidateQualityReasons,
             candidateQualityScore: item.candidateQualityScore,
             collectionContext: item.collectionContext,
-            collectionContexts: item.collectionContext ? [item.collectionContext] : [],
+            collectionContexts: item.collectionContext
+              ? [item.collectionContext]
+              : [],
             condition: "new/sealed",
-            discoveryUrl: item.collectionContext ? `${origin}/collections/${item.collectionContext}` : null,
+            discoveryUrl: item.collectionContext
+              ? `${origin}/collections/${item.collectionContext}`
+              : null,
             discoveryUrls: item.collectionContext
               ? [`${origin}/collections/${item.collectionContext}`]
               : [],
-            id: stableId(source.id, item.productUrl, item.variantId ?? item.product.title),
+            id: stableId(
+              source.id,
+              item.productUrl,
+              item.variantId ?? item.product.title,
+            ),
             purchasePrice: item.price,
             quantityAvailable: item.inventoryQuantity,
             shopifyVariantId: item.variantId,
@@ -1540,32 +1895,38 @@ async function scanShopifySource(source) {
             sourceCurrency: item.currency,
             sourceDiscountPercent:
               item.compareAtPrice && item.compareAtPrice > item.price
-                ? Math.round(((item.compareAtPrice - item.price) / item.compareAtPrice) * 100)
+                ? Math.round(
+                    ((item.compareAtPrice - item.price) / item.compareAtPrice) *
+                      100,
+                  )
                 : null,
             sourceId: source.id,
             sourceListingTitle: cleanText(item.listingTitle),
             sourceName: source.name,
             sourceOriginalPrice: item.compareAtPrice,
             sourceUrl: item.productUrl,
-            title: inferTitle(item.product.title),
+            title: identity.title,
           };
           const current = byUrl.get(item.productUrl);
           const preferCandidate =
             !current ||
-            collectionContextPriority(candidate.collectionContext) > collectionContextPriority(current.collectionContext) ||
+            collectionContextPriority(candidate.collectionContext) >
+              collectionContextPriority(current.collectionContext) ||
             candidate.purchasePrice < current.purchasePrice;
           const preferred = preferCandidate ? candidate : current;
           byUrl.set(item.productUrl, {
             ...preferred,
             collectionContexts: [
               ...new Set([
-                ...(current?.collectionContexts ?? [current?.collectionContext].filter(Boolean)),
+                ...(current?.collectionContexts ??
+                  [current?.collectionContext].filter(Boolean)),
                 ...candidate.collectionContexts,
               ]),
             ],
             discoveryUrls: [
               ...new Set([
-                ...(current?.discoveryUrls ?? [current?.discoveryUrl].filter(Boolean)),
+                ...(current?.discoveryUrls ??
+                  [current?.discoveryUrl].filter(Boolean)),
                 ...candidate.discoveryUrls,
               ]),
             ],
@@ -1574,7 +1935,9 @@ async function scanShopifySource(source) {
         if (products.length < 250) break;
       } catch (error) {
         shopifyFeedErrorCount += 1;
-        pageScan.pageReports.push(failedPageReport(purpose, descriptor.url, error, "catalog"));
+        pageScan.pageReports.push(
+          failedPageReport(purpose, descriptor.url, error, "catalog"),
+        );
         break;
       }
     }
@@ -1582,7 +1945,9 @@ async function scanShopifySource(source) {
 
   if (byUrl.size === 0) {
     if (pageScan.pages.length === 0) {
-      const error = new Error(sourceFailureMessage(source, pageScan.pageReports));
+      const error = new Error(
+        sourceFailureMessage(source, pageScan.pageReports),
+      );
       error.pageReports = pageScan.pageReports;
       throw error;
     }
@@ -1595,7 +1960,8 @@ async function scanShopifySource(source) {
         candidateCount: fallback.candidates.length,
         collectionCandidateCount: collectionLaneSelection.candidateCount,
         collectionFeedPageCount: shopifyCollectionFeedPageCount,
-        collectionConfiguredExcluded: collectionLaneSelection.configuredExcluded,
+        collectionConfiguredExcluded:
+          collectionLaneSelection.configuredExcluded,
         collectionExcludedCount: collectionLaneSelection.excludedCount,
         collectionEligibleCount: collectionLaneSelection.eligibleCount,
         collectionLaneLimit: shopifyCollectionLanes,
@@ -1607,7 +1973,10 @@ async function scanShopifySource(source) {
         feedPageCount: shopifyFeedPageCount,
         productCount: shopifyProductCount,
         recordProductCount: shopifyRecordProductCount,
-        rejectedOrUnavailableProductCount: Math.max(0, shopifyProductCount - shopifyRecordProductCount),
+        rejectedOrUnavailableProductCount: Math.max(
+          0,
+          shopifyProductCount - shopifyRecordProductCount,
+        ),
         rootCatalogAttempted: shouldScanRootCatalog,
         rootFeedPageCount: shopifyRootFeedPageCount,
       },
@@ -1636,13 +2005,20 @@ async function scanShopifySource(source) {
       feedPageCount: shopifyFeedPageCount,
       productCount: shopifyProductCount,
       recordProductCount: shopifyRecordProductCount,
-      rejectedOrUnavailableProductCount: Math.max(0, shopifyProductCount - shopifyRecordProductCount),
+      rejectedOrUnavailableProductCount: Math.max(
+        0,
+        shopifyProductCount - shopifyRecordProductCount,
+      ),
       rootCatalogAttempted: shouldScanRootCatalog,
       rootFeedPageCount: shopifyRootFeedPageCount,
     },
     candidates: [...byUrl.values()],
     pageReports: pageScan.pageReports,
-    saleEvents: dedupeSaleEvents(pageScan.pages.flatMap((page) => detectSaleEvents(source, page.html, page.url))),
+    saleEvents: dedupeSaleEvents(
+      pageScan.pages.flatMap((page) =>
+        detectSaleEvents(source, page.html, page.url),
+      ),
+    ),
   };
 }
 
@@ -1652,8 +2028,14 @@ async function fetchSourcePages(source, options = {}) {
   const attempted = new Set();
   const resolved = new Set();
 
-  for (const target of sourceEntryTargetsWithPriorRechecks(source, { maxHintUrls: salePathHintLimit(source) })) {
-    await addPage(target.url, target.purpose, target.role ?? sourceEntryRole(source, target));
+  for (const target of sourceEntryTargetsWithPriorRechecks(source, {
+    maxHintUrls: salePathHintLimit(source),
+  })) {
+    await addPage(
+      target.url,
+      target.purpose,
+      target.role ?? sourceEntryRole(source, target),
+    );
   }
 
   const hasUsableConfiguredCatalog = pages.some(
@@ -1664,7 +2046,11 @@ async function fetchSourcePages(source, options = {}) {
   if (!hasUsableConfiguredCatalog && maxDiscoveredCatalogPages > 0) {
     const homepage = pages.find((page) => page.scanRootPurpose === "homepage");
     const recoveryUrls = homepage
-      ? discoverRetailCatalogLinks(homepage.html, homepage.url, maxDiscoveredCatalogPages)
+      ? discoverRetailCatalogLinks(
+          homepage.html,
+          homepage.url,
+          maxDiscoveredCatalogPages,
+        )
       : [];
     for (const url of recoveryUrls) {
       await addPage(url, "discovered-catalog-link", "catalog");
@@ -1673,16 +2059,25 @@ async function fetchSourcePages(source, options = {}) {
 
   const discoveredUrls = [];
   for (const page of pages) {
-    discoveredUrls.push(...discoverSaleLinks(page.html, page.url, maxDiscoveredSalePages, source));
+    discoveredUrls.push(
+      ...discoverSaleLinks(page.html, page.url, maxDiscoveredSalePages, source),
+    );
   }
 
-  for (const url of [...new Set(discoveredUrls)].slice(0, maxDiscoveredSalePages)) {
+  for (const url of [...new Set(discoveredUrls)].slice(
+    0,
+    maxDiscoveredSalePages,
+  )) {
     await addPage(url, "discovered-sale-link", "sale");
   }
 
   if (options.followPagination !== false && genericMaxPages > 1) {
     let paginationPageCount = 0;
-    for (let pageIndex = 0; pageIndex < pages.length && paginationPageCount < genericMaxPages - 1; pageIndex += 1) {
+    for (
+      let pageIndex = 0;
+      pageIndex < pages.length && paginationPageCount < genericMaxPages - 1;
+      pageIndex += 1
+    ) {
       const page = pages[pageIndex];
       const paginationUrls = discoverRetailPaginationLinks(
         page.html,
@@ -1750,7 +2145,12 @@ async function fetchSourcePages(source, options = {}) {
 
 function collectionContextPriority(value) {
   if (!value) return 0;
-  if (/\b(?:sale|clearance|outlet|deal|discount|last-chance|warehouse|closeout|deep-cuts|50-off)\b/i.test(value)) return 2;
+  if (
+    /\b(?:sale|clearance|outlet|deal|discount|last-chance|warehouse|closeout|deep-cuts|50-off)\b/i.test(
+      value,
+    )
+  )
+    return 2;
   return 1;
 }
 
@@ -1767,7 +2167,11 @@ function salePathHintLimit(source) {
 }
 
 function sourceEntryRole(source, target) {
-  if (source.sourceType === "deal-aggregator" || source.sourceType === "social-feed") return "sale";
+  if (
+    source.sourceType === "deal-aggregator" ||
+    source.sourceType === "social-feed"
+  )
+    return "sale";
   if (target.purpose === "configured-sale-hint") return "sale";
   if (target.purpose === "homepage") return "catalog";
   const value = target.url;
@@ -1777,7 +2181,9 @@ function sourceEntryRole(source, target) {
     if (
       (source.salePathHints ?? []).some((hint) => {
         try {
-          return parsed.pathname.startsWith(new URL(hint, parsed.origin).pathname);
+          return parsed.pathname.startsWith(
+            new URL(hint, parsed.origin).pathname,
+          );
         } catch {
           return false;
         }
@@ -1803,28 +2209,43 @@ function sourceEntryRole(source, target) {
 }
 
 function pageCoverage(pageReports, source) {
-  const catalog = pageReports.filter((report) => (report.role ?? inferredPageRole(report.purpose)) === "catalog");
-  const sale = pageReports.filter((report) => (report.role ?? inferredPageRole(report.purpose)) === "sale");
+  const catalog = pageReports.filter(
+    (report) => (report.role ?? inferredPageRole(report.purpose)) === "catalog",
+  );
+  const sale = pageReports.filter(
+    (report) => (report.role ?? inferredPageRole(report.purpose)) === "sale",
+  );
   return {
     catalogHealth: coverageHealth(catalog, "not_attempted"),
     catalogPageAttemptCount: catalog.length,
-    catalogPageAvailableCount: catalog.filter((report) => report.status === "available").length,
+    catalogPageAvailableCount: catalog.filter(
+      (report) => report.status === "available",
+    ).length,
     configuredSalePathCount: (source.salePathHints ?? []).length,
     salePageAttemptCount: sale.length,
-    salePageAvailableCount: sale.filter((report) => report.status === "available").length,
+    salePageAvailableCount: sale.filter(
+      (report) => report.status === "available",
+    ).length,
     salePageHealth: coverageHealth(sale, "not_checked"),
   };
 }
 
 function coverageHealth(reports, emptyStatus) {
   if (reports.length === 0) return emptyStatus;
-  const available = reports.filter((report) => report.status === "available").length;
+  const available = reports.filter(
+    (report) => report.status === "available",
+  ).length;
   if (available === reports.length) return "healthy";
   if (available > 0) return "partial";
   return "failed";
 }
 
-function annotateSourceYield(reports, enrichedCandidates, selectedProductFinds, diagnostics = {}) {
+function annotateSourceYield(
+  reports,
+  enrichedCandidates,
+  selectedProductFinds,
+  diagnostics = {},
+) {
   const enrichedBySource = groupBySourceId(enrichedCandidates);
   const selectedBySource = groupBySourceId(selectedProductFinds);
   const researchDiagnosticsBySource = selectionDiagnosticsBySource(
@@ -1837,7 +2258,9 @@ function annotateSourceYield(reports, enrichedCandidates, selectedProductFinds, 
   return reports.map((report) => {
     const enriched = enrichedBySource.get(report.id) ?? [];
     const selected = selectedBySource.get(report.id) ?? [];
-    const highSignalCandidateCount = enriched.filter(isHighSignalProductFind).length;
+    const highSignalCandidateCount = enriched.filter(
+      isHighSignalProductFind,
+    ).length;
     const ownHistoryMatchedCandidateCount = enriched.filter(
       (candidate) => Number(candidate.artistSoldUnits365Days) > 0,
     ).length;
@@ -1876,11 +2299,14 @@ function annotateSourceYield(reports, enrichedCandidates, selectedProductFinds, 
       highSignalCandidateCount,
       ownHistoryMatchedCandidateCount,
       productParseHealth,
-      researchPoolSelectedProductFindCount: researchPoolSelection.selectedCandidateCount,
+      researchPoolSelectedProductFindCount:
+        researchPoolSelection.selectedCandidateCount,
       researchPoolSelection,
       selectionExclusionReason:
         activeSelection.primaryExclusionReason ??
-        (activeSelection.selectionStatus === "selected" ? null : activeSelection.selectionStatus),
+        (activeSelection.selectionStatus === "selected"
+          ? null
+          : activeSelection.selectionStatus),
       selectionStatus: activeSelection.selectionStatus,
       selectedProductFindCount,
       usableCoverage,
@@ -1927,24 +2353,38 @@ function groupBySourceId(items) {
 function sourceProductParseHealth(report) {
   if (Number(report.candidateCount) > 0) return "productive";
   const attemptedPages =
-    Number(report.catalogPageAttemptCount ?? 0) + Number(report.salePageAttemptCount ?? 0);
+    Number(report.catalogPageAttemptCount ?? 0) +
+    Number(report.salePageAttemptCount ?? 0);
   const availablePages =
-    Number(report.catalogPageAvailableCount ?? 0) + Number(report.salePageAvailableCount ?? 0);
+    Number(report.catalogPageAvailableCount ?? 0) +
+    Number(report.salePageAvailableCount ?? 0);
   if (attemptedPages === 0) return "not_attempted";
   if (availablePages > 0) return "empty";
   return "failed";
 }
 
 function inferredPageRole(purpose) {
-  return /\b(?:deal|sale|sitewide)\b/i.test(String(purpose ?? "")) ? "sale" : "catalog";
+  return /\b(?:deal|sale|sitewide)\b/i.test(String(purpose ?? ""))
+    ? "sale"
+    : "catalog";
 }
 
 function sourceReportStatus(coverage, candidates, saleEvents) {
-  const attemptedHealth = [coverage.catalogHealth, coverage.salePageHealth].filter(
-    (health) => health !== "not_attempted" && health !== "not_checked",
-  );
-  if (attemptedHealth.length && attemptedHealth.every((health) => health === "failed")) return "error";
-  if (attemptedHealth.some((health) => health === "failed" || health === "partial")) return "partial";
+  const attemptedHealth = [
+    coverage.catalogHealth,
+    coverage.salePageHealth,
+  ].filter((health) => health !== "not_attempted" && health !== "not_checked");
+  if (
+    attemptedHealth.length &&
+    attemptedHealth.every((health) => health === "failed")
+  )
+    return "error";
+  if (
+    attemptedHealth.some(
+      (health) => health === "failed" || health === "partial",
+    )
+  )
+    return "partial";
   if (candidates.length) return "candidates";
   if (saleEvents.length) return "sale_signals";
   return "empty";
@@ -1973,7 +2413,9 @@ function sourceFailureMessage(source, pageReports) {
     .filter((report) => report.status === "error")
     .map((report) => report.error)
     .slice(0, 3);
-  return failures.length ? `All entry pages failed for ${source.name}: ${failures.join("; ")}` : `No usable entry page was found for ${source.name}.`;
+  return failures.length
+    ? `All entry pages failed for ${source.name}: ${failures.join("; ")}`
+    : `No usable entry page was found for ${source.name}.`;
 }
 
 function dedupeCandidates(candidates) {
@@ -1983,7 +2425,8 @@ function dedupeCandidates(candidates) {
     if (
       !current ||
       candidateQualityScore(candidate) > candidateQualityScore(current) ||
-      (candidateQualityScore(candidate) === candidateQualityScore(current) && candidate.purchasePrice < current.purchasePrice)
+      (candidateQualityScore(candidate) === candidateQualityScore(current) &&
+        candidate.purchasePrice < current.purchasePrice)
     ) {
       byId.set(candidate.id, {
         ...current,
@@ -1999,7 +2442,10 @@ function dedupeCandidates(candidates) {
 
 function preferredSourceUrl(currentUrl, pageReports) {
   const configuredWasStale = pageReports.some(
-    (report) => report.purpose === "configured" && report.status === "error" && report.failureKind === "not_found",
+    (report) =>
+      report.purpose === "configured" &&
+      report.status === "error" &&
+      report.failureKind === "not_found",
   );
   if (!configuredWasStale) return currentUrl;
   const recoveredCatalog = pageReports
@@ -2012,11 +2458,16 @@ function preferredSourceUrl(currentUrl, pageReports) {
     .map((report) => report.resolvedUrl)
     .sort(
       (left, right) =>
-        preferredRecoveryScore(right, currentUrl) - preferredRecoveryScore(left, currentUrl) ||
-        left.localeCompare(right),
+        preferredRecoveryScore(right, currentUrl) -
+          preferredRecoveryScore(left, currentUrl) || left.localeCompare(right),
     )[0];
   if (recoveredCatalog) return recoveredCatalog;
-  return pageReports.find((report) => report.purpose === "homepage" && report.status === "available")?.resolvedUrl ?? currentUrl;
+  return (
+    pageReports.find(
+      (report) =>
+        report.purpose === "homepage" && report.status === "available",
+    )?.resolvedUrl ?? currentUrl
+  );
 }
 
 function compatiblePreferredSourceUrl(configuredUrl, preferredUrl) {
@@ -2030,13 +2481,25 @@ function compatiblePreferredSourceUrl(configuredUrl, preferredUrl) {
     return false;
   }
   if (configured.origin !== preferred.origin) return false;
-  if (isSaleSpecificUrl(configuredUrl) && !isSaleSpecificUrl(preferredUrl)) return false;
+  if (isSaleSpecificUrl(configuredUrl) && !isSaleSpecificUrl(preferredUrl))
+    return false;
 
-  const preferredCollection = preferred.pathname.match(/\/collections\/([^/?#]+)/i)?.[1] ?? null;
+  const preferredCollection =
+    preferred.pathname.match(/\/collections\/([^/?#]+)/i)?.[1] ?? null;
   if (preferredCollection) {
-    const selection = selectShopifyCollectionLanes([preferredUrl], configuredUrl, 2);
-    const preferredCanonical = `${preferred.origin}/collections/${preferredCollection}`.toLowerCase();
-    if (!selection.selected.some((lane) => lane.url.toLowerCase() === preferredCanonical)) return false;
+    const selection = selectShopifyCollectionLanes(
+      [preferredUrl],
+      configuredUrl,
+      2,
+    );
+    const preferredCanonical =
+      `${preferred.origin}/collections/${preferredCollection}`.toLowerCase();
+    if (
+      !selection.selected.some(
+        (lane) => lane.url.toLowerCase() === preferredCanonical,
+      )
+    )
+      return false;
   }
   return true;
 }
@@ -2044,7 +2507,10 @@ function compatiblePreferredSourceUrl(configuredUrl, preferredUrl) {
 function preferredRecoveryScore(value, currentUrl) {
   let pathText = "";
   try {
-    pathText = decodeURIComponent(new URL(value).pathname).replace(/[-_/]+/g, " ");
+    pathText = decodeURIComponent(new URL(value).pathname).replace(
+      /[-_/]+/g,
+      " ",
+    );
   } catch {
     return 0;
   }
@@ -2076,19 +2542,31 @@ async function scanReddit(source) {
     adapter = "reddit-old-html";
     try {
       const page = await fetchPage(fallbackUrl);
-      pageReports.push(availablePageReport("fallback", fallbackUrl, page.url, "sale"));
+      pageReports.push(
+        availablePageReport("fallback", fallbackUrl, page.url, "sale"),
+      );
       deals = parseOldRedditDealPage(page.html, page.url);
     } catch (fallbackError) {
-      pageReports.push(failedPageReport("fallback", fallbackUrl, fallbackError, "sale"));
+      pageReports.push(
+        failedPageReport("fallback", fallbackUrl, fallbackError, "sale"),
+      );
       fallbackError.pageReports = pageReports;
       throw fallbackError;
     }
   }
 
   const activeDeals = deals.filter((deal) => !deal.expired);
-  const candidates = activeDeals.map((deal) => discoveryDealToCandidate(source, deal)).filter(Boolean);
+  const candidates = activeDeals
+    .map((deal) => discoveryDealToCandidate(source, deal))
+    .filter(Boolean);
   const saleEvents = dedupeSaleEvents(
-    activeDeals.flatMap((deal) => detectSaleEventsFromText(source, deal.title, deal.directUrl ?? deal.discussionUrl ?? source.url)),
+    activeDeals.flatMap((deal) =>
+      detectSaleEventsFromText(
+        source,
+        deal.title,
+        deal.directUrl ?? deal.discussionUrl ?? source.url,
+      ),
+    ),
   );
 
   return {
@@ -2113,7 +2591,9 @@ async function scanVinylPriceDrop(source) {
   let dealsPage;
   try {
     dealsPage = await fetchPage(dealsUrl);
-    pageReports.push(availablePageReport("deal-index", dealsUrl, dealsPage.url));
+    pageReports.push(
+      availablePageReport("deal-index", dealsUrl, dealsPage.url),
+    );
   } catch (error) {
     pageReports.push(failedPageReport("deal-index", dealsUrl, error));
     error.pageReports = pageReports;
@@ -2123,13 +2603,20 @@ async function scanVinylPriceDrop(source) {
   let sitewidePage = null;
   try {
     sitewidePage = await fetchPage(sitewideUrl);
-    pageReports.push(availablePageReport("sitewide-index", sitewideUrl, sitewidePage.url));
+    pageReports.push(
+      availablePageReport("sitewide-index", sitewideUrl, sitewidePage.url),
+    );
   } catch (error) {
     pageReports.push(failedPageReport("sitewide-index", sitewideUrl, error));
   }
 
-  const productCards = extractVinylPriceDropCards(dealsPage.html, dealsPage.url).slice(0, discoveryDetailLimit);
-  const sitewideCards = sitewidePage ? extractVinylPriceDropCards(sitewidePage.html, sitewidePage.url) : [];
+  const productCards = extractVinylPriceDropCards(
+    dealsPage.html,
+    dealsPage.url,
+  ).slice(0, discoveryDetailLimit);
+  const sitewideCards = sitewidePage
+    ? extractVinylPriceDropCards(sitewidePage.html, sitewidePage.url)
+    : [];
   const cards = dedupeByKey(
     [
       ...productCards.map((card) => ({ ...card, dealType: "product" })),
@@ -2142,7 +2629,10 @@ async function scanVinylPriceDrop(source) {
     await mapWithConcurrency(cards, discoveryConcurrency, async (card) => {
       try {
         const page = await fetchPage(card.detailUrl);
-        return { ...parseVinylPriceDropDetail(page.html, page.url, card.title), dealType: card.dealType };
+        return {
+          ...parseVinylPriceDropDetail(page.html, page.url, card.title),
+          dealType: card.dealType,
+        };
       } catch {
         detailErrorCount += 1;
         return null;
@@ -2153,7 +2643,9 @@ async function scanVinylPriceDrop(source) {
   const activeDetails = details.filter((detail) => !detail.expired);
   const expiredDealCount = details.length - activeDetails.length;
   const candidates = activeDetails
-    .filter((detail) => detail.dealType === "product" && detail.currentPrice !== null)
+    .filter(
+      (detail) => detail.dealType === "product" && detail.currentPrice !== null,
+    )
     .map((detail) =>
       discoveryDealToCandidate(source, {
         directUrl: detail.directUrl,
@@ -2229,7 +2721,13 @@ function discoveryDealToCandidate(source, deal) {
 }
 
 function slickdealsDealCardToCandidate(source, deal, discoveryUrl) {
-  if (deal.expired || !deal.currentPrice || deal.currentPrice < 2 || deal.currentPrice > 250) return null;
+  if (
+    deal.expired ||
+    !deal.currentPrice ||
+    deal.currentPrice < 2 ||
+    deal.currentPrice > 250
+  )
+    return null;
   const artist = inferRetailArtist(deal.title);
   const title = inferRetailTitle(deal.title);
   if (!title || title.length < 3) return null;
@@ -2264,12 +2762,27 @@ function slickdealsDealCardToCandidate(source, deal, discoveryUrl) {
 
 function vinylPriceDropSaleEvent(source, detail) {
   const rawSignal = cleanText(detail.title);
-  const discountPercent = detail.discountPercent ?? extractMaxDiscountPercent(rawSignal);
+  const discountPercent =
+    detail.discountPercent ?? extractMaxDiscountPercent(rawSignal);
   const discountQualifier = discountQualifierFor(rawSignal, discountPercent);
-  const scope = /\ball\s+(?:vinyl|records|lps|music)\b/i.test(rawSignal) ? "vinyl-wide" : "sitewide";
+  const scope = /\ball\s+(?:vinyl|records|lps|music)\b/i.test(rawSignal)
+    ? "vinyl-wide"
+    : "sitewide";
   const url = detail.directUrl ?? detail.detailUrl ?? source.url;
-  const signal = saleSignalSummary(source, rawSignal, discountPercent, scope, discountQualifier);
-  const fingerprint = saleFingerprint(source, rawSignal, url, discountPercent, scope);
+  const signal = saleSignalSummary(
+    source,
+    rawSignal,
+    discountPercent,
+    scope,
+    discountQualifier,
+  );
+  const fingerprint = saleFingerprint(
+    source,
+    rawSignal,
+    url,
+    discountPercent,
+    scope,
+  );
   return {
     capturedAt,
     discountPercent,
@@ -2287,11 +2800,21 @@ function vinylPriceDropSaleEvent(source, detail) {
   };
 }
 
-function availablePageReport(purpose, requestedUrl, resolvedUrl, role = inferredPageRole(purpose)) {
+function availablePageReport(
+  purpose,
+  requestedUrl,
+  resolvedUrl,
+  role = inferredPageRole(purpose),
+) {
   return { purpose, requestedUrl, resolvedUrl, role, status: "available" };
 }
 
-function failedPageReport(purpose, requestedUrl, error, role = inferredPageRole(purpose)) {
+function failedPageReport(
+  purpose,
+  requestedUrl,
+  error,
+  role = inferredPageRole(purpose),
+) {
   return {
     error: error instanceof Error ? error.message : String(error),
     failureKind: error?.failureKind ?? "network_error",
@@ -2305,7 +2828,15 @@ function failedPageReport(purpose, requestedUrl, error, role = inferredPageRole(
 async function mapWithConcurrency(values, concurrency, mapper) {
   const results = new Array(values.length);
   let nextIndex = 0;
-  const workerCount = Math.max(1, Math.min(values.length || 1, Number.isFinite(concurrency) ? Math.floor(concurrency) : DEFAULT_DISCOVERY_CONCURRENCY));
+  const workerCount = Math.max(
+    1,
+    Math.min(
+      values.length || 1,
+      Number.isFinite(concurrency)
+        ? Math.floor(concurrency)
+        : DEFAULT_DISCOVERY_CONCURRENCY,
+    ),
+  );
   await Promise.all(
     Array.from({ length: workerCount }, async () => {
       while (nextIndex < values.length) {
@@ -2333,21 +2864,30 @@ async function scanCraigslist(source) {
   const page = await fetchPage(requestedUrl);
   return {
     candidates: extractCandidatesFromHtml(source, page.html, page.url),
-    pageReports: [availablePageReport("configured", requestedUrl, page.url, "catalog")],
+    pageReports: [
+      availablePageReport("configured", requestedUrl, page.url, "catalog"),
+    ],
     saleEvents: detectSaleEvents(source, page.html, page.url),
   };
 }
 
 function extractCandidatesFromHtml(source, html, pageUrl = source.url) {
   const candidates = [];
-  const anchors = [...html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]{0,500}?)<\/a>/gi)];
+  const anchors = [
+    ...html.matchAll(
+      /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]{0,500}?)<\/a>/gi,
+    ),
+  ];
   const seen = new Set();
 
   for (const match of anchors) {
     const href = absolutize(pageUrl, decodeHtmlEntities(match[1]));
     if (!/^https?:\/\//i.test(href)) continue;
     const text = cleanText(stripTags(match[2]));
-    const nearby = html.slice(Math.max(0, match.index - 300), Math.min(html.length, match.index + 900));
+    const nearby = html.slice(
+      Math.max(0, match.index - 300),
+      Math.min(html.length, match.index + 900),
+    );
     const assessment = assessRecordCandidate({
       context: stripTags(nearby),
       source,
@@ -2357,14 +2897,23 @@ function extractCandidatesFromHtml(source, html, pageUrl = source.url) {
     if (!assessment.accepted) continue;
 
     const afterAnchor = stripTags(
-      html.slice(match.index + match[0].length, Math.min(html.length, match.index + match[0].length + 450)),
+      html.slice(
+        match.index + match[0].length,
+        Math.min(html.length, match.index + match[0].length + 450),
+      ),
     );
-    const beforeAnchor = stripTags(html.slice(Math.max(0, match.index - 250), match.index));
-    const primaryPrices = parseRetailProductPrices(cleanText(`${text} ${afterAnchor}`)).filter((price) => price >= 2 && price <= 250);
+    const beforeAnchor = stripTags(
+      html.slice(Math.max(0, match.index - 250), match.index),
+    );
+    const primaryPrices = parseRetailProductPrices(
+      cleanText(`${text} ${afterAnchor}`),
+    ).filter((price) => price >= 2 && price <= 250);
     const prices =
       primaryPrices.length > 0
         ? primaryPrices
-        : parseRetailProductPrices(cleanText(`${beforeAnchor} ${text}`)).filter((price) => price >= 2 && price <= 250);
+        : parseRetailProductPrices(cleanText(`${beforeAnchor} ${text}`)).filter(
+            (price) => price >= 2 && price <= 250,
+          );
     const price = prices.length ? Math.min(...prices) : null;
     if (!price || price < 2 || price > 250) continue;
     const originalPrice = prices.length > 1 ? Math.max(...prices) : null;
@@ -2384,10 +2933,13 @@ function extractCandidatesFromHtml(source, html, pageUrl = source.url) {
       id: stableId(source.id, href, title),
       purchasePrice: price,
       sourceDiscountPercent:
-        originalPrice && originalPrice > price ? Math.round(((originalPrice - price) / originalPrice) * 100) : null,
+        originalPrice && originalPrice > price
+          ? Math.round(((originalPrice - price) / originalPrice) * 100)
+          : null,
       sourceId: source.id,
       sourceName: source.name,
-      sourceOriginalPrice: originalPrice && originalPrice > price ? originalPrice : null,
+      sourceOriginalPrice:
+        originalPrice && originalPrice > price ? originalPrice : null,
       sourceListingTitle: text,
       sourceUrl: href,
       title,
@@ -2408,18 +2960,35 @@ function extractCandidatesFromHtml(source, html, pageUrl = source.url) {
 
 function extractJsonLdCandidates(source, html, pageUrl = source.url) {
   const candidates = [];
-  const scripts = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  const scripts = [
+    ...html.matchAll(
+      /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
+    ),
+  ];
   for (const script of scripts) {
     try {
       const parsed = JSON.parse(script[1].trim());
       const items = Array.isArray(parsed) ? parsed : [parsed];
       for (const item of flattenJsonLd(items)) {
         const name = item.name ?? item.title;
-        const offers = item.offers ? (Array.isArray(item.offers) ? item.offers : [item.offers]) : [];
-        const offer = offers.find((candidate) => !/outofstock|soldout|discontinued/i.test(String(candidate?.availability ?? ""))) ?? null;
+        const offers = item.offers
+          ? Array.isArray(item.offers)
+            ? item.offers
+            : [item.offers]
+          : [];
+        const offer =
+          offers.find(
+            (candidate) =>
+              !/outofstock|soldout|discontinued/i.test(
+                String(candidate?.availability ?? ""),
+              ),
+          ) ?? null;
         if (offers.length > 0 && !offer) continue;
         const price = parsePrice(offer?.price ?? offer?.lowPrice ?? item.price);
-        const sourceUrl = absolutize(pageUrl, item.url ?? offer?.url ?? pageUrl);
+        const sourceUrl = absolutize(
+          pageUrl,
+          item.url ?? offer?.url ?? pageUrl,
+        );
         if (!/^https?:\/\//i.test(sourceUrl)) continue;
         const assessment = assessRecordCandidate({
           context: offer?.description ?? item.description ?? "",
@@ -2458,9 +3027,14 @@ function flattenJsonLd(items) {
   const flattened = [];
   for (const item of items) {
     if (!item || typeof item !== "object") continue;
-    if (Array.isArray(item["@graph"])) flattened.push(...flattenJsonLd(item["@graph"]));
+    if (Array.isArray(item["@graph"]))
+      flattened.push(...flattenJsonLd(item["@graph"]));
     if (Array.isArray(item.itemListElement)) {
-      flattened.push(...flattenJsonLd(item.itemListElement.map((entry) => entry.item ?? entry)));
+      flattened.push(
+        ...flattenJsonLd(
+          item.itemListElement.map((entry) => entry.item ?? entry),
+        ),
+      );
     }
     flattened.push(item);
   }
@@ -2469,68 +3043,28 @@ function flattenJsonLd(items) {
 
 function detectSaleEvents(source, html, pageUrl = source.url) {
   if (!html) return [];
-  if (source.sourceType === "deal-aggregator" || source.sourceType === "social-feed") {
+  if (
+    source.sourceType === "deal-aggregator" ||
+    source.sourceType === "social-feed"
+  ) {
     return detectDiscoverySaleEvents(source, html, pageUrl);
   }
-  const text = cleanText(stripTags(html));
-  const snippets = [];
-  const signalPattern =
-    /.{0,100}\b(?:sitewide|site-wide|storewide|store-wide|entire\s+site|all\s+(?:vinyl|records|lps|music)|vinyl\s+deals?|warehouse\s+(?:sale|overstock)|overstock|clearance|final\s+sale|closeout|special\s+price|daily\s+deal|specials?\s+(?:and|&)\s+sales?|garage\s+sale|buy\s+more\s+save\s+more|vinyl\s+discount|promo\s+code|discount\s+code|use\s+code|under\s+\$?\s*(?:10|15|20)|bogo|buy\s+(?:one|1|2)\s+get\s+(?:one|1)|[3-9][0-9]\s*%\s*off|[3-9][0-9]\s*percent\s*off).{0,160}/gi;
-  for (const match of text.matchAll(signalPattern)) {
-    snippets.push(match[0]);
-    if (snippets.length >= 8) break;
-  }
-
-  const events = snippets.flatMap((snippet) =>
-    detectSaleEventsFromText(source, snippet, pageUrl),
-  );
-  const pathOffer = sourceIsVinylFocused(source)
-    ? verifiedSalePathOffer(pageUrl)
-    : null;
-  if (pathOffer) {
-    const discountQualifier = discountQualifierFor(pathOffer.evidence, pathOffer.discountPercent);
-    const fingerprint = saleFingerprint(
-      source,
-      pathOffer.evidence,
-      pageUrl,
-      pathOffer.discountPercent,
-      pathOffer.scope,
-    );
-    events.push({
-      capturedAt,
-      discountPercent: pathOffer.discountPercent,
-      discountQualifier,
-      evidence: pathOffer.evidence,
-      fingerprint,
-      id: stableId("sale", source.id, fingerprint),
-      promoCode: null,
-      purchaseOfferVerification: pathOffer.purchaseOfferVerification,
-      scope: pathOffer.scope,
-      signal: saleSignalSummary(
-        source,
-        pathOffer.evidence,
-        pathOffer.discountPercent,
-        pathOffer.scope,
-        discountQualifier,
-      ),
-      sourceId: source.id,
-      sourceName: source.name,
-      sourceUrl: pageUrl,
-      title: `${discountLabel(pathOffer.discountPercent, discountQualifier)} sale: ${source.name}`,
-      verification: pathOffer.saleVerification,
-    });
-  }
-
-  return dedupeSaleEvents(events);
+  return extractRetailCampaigns(source, html, pageUrl, capturedAt);
 }
 
 function detectDiscoverySaleEvents(source, html, pageUrl) {
   const events = [];
-  const anchors = [...String(html).matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]{0,700}?)<\/a>/gi)];
+  const anchors = [
+    ...String(html).matchAll(
+      /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]{0,700}?)<\/a>/gi,
+    ),
+  ];
   for (const match of anchors) {
     const text = cleanText(stripTags(match[2]));
     if (!hasVinylContext(text)) continue;
-    events.push(...detectSaleEventsFromText(source, text, absolutize(pageUrl, match[1])));
+    events.push(
+      ...detectSaleEventsFromText(source, text, absolutize(pageUrl, match[1])),
+    );
   }
   return dedupeSaleEvents(events);
 }
@@ -2542,9 +3076,25 @@ function detectSaleEventsFromText(source, text, url = source.url) {
   const discountPercent = extractMaxDiscountPercent(rawSignal);
   const discountQualifier = discountQualifierFor(rawSignal, discountPercent);
   const scope = saleScope(rawSignal, source);
-  const titlePrefix = discountPercent ? `${discountLabel(discountPercent, discountQualifier)} sale` : hasBogoSignal(rawSignal) ? "BOGO sale" : "Broad sale";
-  const signal = saleSignalSummary(source, rawSignal, discountPercent, scope, discountQualifier);
-  const fingerprint = saleFingerprint(source, rawSignal, url, discountPercent, scope);
+  const titlePrefix = discountPercent
+    ? `${discountLabel(discountPercent, discountQualifier)} sale`
+    : hasBogoSignal(rawSignal)
+      ? "BOGO sale"
+      : "Broad sale";
+  const signal = saleSignalSummary(
+    source,
+    rawSignal,
+    discountPercent,
+    scope,
+    discountQualifier,
+  );
+  const fingerprint = saleFingerprint(
+    source,
+    rawSignal,
+    url,
+    discountPercent,
+    scope,
+  );
 
   return [
     {
@@ -2561,7 +3111,11 @@ function detectSaleEventsFromText(source, text, url = source.url) {
       sourceName: source.name,
       sourceUrl: url,
       title: `${titlePrefix}: ${source.name}`,
-      verification: source.sourceType === "deal-aggregator" || source.sourceType === "social-feed" ? "discovery-lead" : "retailer-page",
+      verification:
+        source.sourceType === "deal-aggregator" ||
+        source.sourceType === "social-feed"
+          ? "discovery-lead"
+          : "retailer-page",
     },
   ];
 }
@@ -2572,29 +3126,55 @@ function dedupeSaleEvents(events) {
 
 function saleEventPriority(event) {
   const scope = event.scope ?? event.saleScope;
-  const scopeScore = scope === "sitewide" ? 5 : scope === "vinyl-wide" ? 4 : scope === "clearance" ? 3 : 2;
-  const discountScore = event.discountPercent ?? event.saleDiscountPercent ?? (hasBogoSignal(event.signal ?? event.saleSignal) ? 45 : 0);
-  const verificationScore = (event.verification ?? event.saleVerification) === "retailer-page" ? 100_000 : 0;
-  const salePageScore = /\b(?:sale|clearance|deal|garage|overstock|promo)\b/i.test(String(event.sourceUrl ?? "")) ? 1_000 : 0;
+  const scopeScore =
+    scope === "sitewide"
+      ? 5
+      : scope === "vinyl-wide"
+        ? 4
+        : scope === "clearance"
+          ? 3
+          : 2;
+  const discountScore =
+    event.discountPercent ??
+    event.saleDiscountPercent ??
+    (hasBogoSignal(event.signal ?? event.saleSignal) ? 45 : 0);
+  const verificationScore =
+    (event.verification ?? event.saleVerification) === "retailer-page"
+      ? 100_000
+      : 0;
+  const salePageScore =
+    /\b(?:sale|clearance|deal|garage|overstock|promo)\b/i.test(
+      String(event.sourceUrl ?? ""),
+    )
+      ? 1_000
+      : 0;
   return verificationScore + salePageScore + discountScore * 10 + scopeScore;
 }
 
 function saleEventDedupeKey(event) {
   const rawDiscount = event.discountPercent ?? event.saleDiscountPercent;
-  const discount = typeof rawDiscount === "number" && Number.isFinite(rawDiscount) && rawDiscount > 0
-    ? Math.round(rawDiscount * 100) / 100
-    : "none";
-  const qualifier = event.discountQualifier ?? event.saleDiscountQualifier ?? discountQualifierFor(
-    `${event.evidence ?? event.saleEvidence ?? ""} ${event.signal ?? event.saleSignal ?? ""}`,
-    discount === "none" ? null : discount,
-  );
+  const discount =
+    typeof rawDiscount === "number" &&
+    Number.isFinite(rawDiscount) &&
+    rawDiscount > 0
+      ? Math.round(rawDiscount * 100) / 100
+      : "none";
+  const qualifier =
+    event.discountQualifier ??
+    event.saleDiscountQualifier ??
+    discountQualifierFor(
+      `${event.evidence ?? event.saleEvidence ?? ""} ${event.signal ?? event.saleSignal ?? ""}`,
+      discount === "none" ? null : discount,
+    );
   return `${saleCampaignIdFor(saleEventToFind(event))}|discount:${discount}|qualifier:${qualifier}`;
 }
 
 function isLargeSaleSignal(text, source, evidenceUrl = source.url) {
-  if (/\bexpired\b/i.test(text)) return false;
+  if (/\b(?:expired|funko|figurines?|vinyl\s+figures?)\b/i.test(text))
+    return false;
   if (
-    (source.sourceType === "deal-aggregator" || source.sourceType === "social-feed") &&
+    (source.sourceType === "deal-aggregator" ||
+      source.sourceType === "social-feed") &&
     /^(?:filter\s+amazon(?:\s+vinyl\s+records?)?\s+by\s+price|(?:vinyl\s+)?records?\s+under\s+\$?\d+|vinyl\s+under\s+\$?\d+)$/i.test(
       cleanText(text),
     )
@@ -2602,7 +3182,11 @@ function isLargeSaleSignal(text, source, evidenceUrl = source.url) {
     return false;
   }
   if (!hasVinylContext(text) && hasNonVinylSaleContext(text)) return false;
-  if (!hasVinylContext(text) && !sourceIsVinylFocused({ ...source, url: evidenceUrl })) return false;
+  if (
+    !hasVinylContext(text) &&
+    !sourceIsVinylFocused({ ...source, url: evidenceUrl })
+  )
+    return false;
   if (
     hasVinylContext(text) &&
     hasNonVinylSaleContext(text) &&
@@ -2613,7 +3197,11 @@ function isLargeSaleSignal(text, source, evidenceUrl = source.url) {
   const percent = extractMaxDiscountPercent(text);
   const largeDiscount = percent !== null && percent >= 30;
   const bogo = hasBogoSignal(text);
-  const sourceIsKnownSalePage = isBroadSaleSource(source.id, source.name, evidenceUrl);
+  const sourceIsKnownSalePage = isBroadSaleSource(
+    source.id,
+    source.name,
+    evidenceUrl,
+  );
   const claimedScope = saleScope(text, source);
   if (
     (claimedScope === "sitewide" || claimedScope === "vinyl-wide") &&
@@ -2623,9 +3211,18 @@ function isLargeSaleSignal(text, source, evidenceUrl = source.url) {
   }
   const broad = hasBroadSaleScope(text) || sourceIsKnownSalePage || bogo;
   const priceThreshold = hasPriceThresholdSignal(text) && hasVinylContext(text);
-  const coupon = hasCouponSignal(text) && (hasVinylContext(text) || sourceIsKnownSalePage);
+  const coupon =
+    hasCouponSignal(text) && (hasVinylContext(text) || sourceIsKnownSalePage);
   const salePageSignal = sourceIsKnownSalePage && hasSalePageSignal(text);
-  return (largeDiscount || bogo || coupon || priceThreshold || hasVolumeDiscountSignal(text) || salePageSignal) && broad;
+  return (
+    (largeDiscount ||
+      bogo ||
+      coupon ||
+      priceThreshold ||
+      hasVolumeDiscountSignal(text) ||
+      salePageSignal) &&
+    broad
+  );
 }
 
 function hasBogoSignal(text) {
@@ -2639,12 +3236,28 @@ function hasBroadSaleScope(text) {
 }
 
 function saleScope(text, source) {
-  if (/\b(?:sitewide|site-wide|storewide|store-wide|entire\s+site|everything)\b/i.test(text)) return "sitewide";
+  if (
+    /\b(?:sitewide|site-wide|storewide|store-wide|entire\s+site|everything)\b/i.test(
+      text,
+    )
+  )
+    return "sitewide";
   if (/\ball\s+(?:vinyl|records|lps|music)\b/i.test(text)) return "vinyl-wide";
-  if (/\b(?:warehouse\s+(?:sale|overstock)|overstock|clearance|final\s+sale|closeout|super\s+sale|garage\s+sale|special\s+price|under\s+\$?\s*(?:10|15|20))\b/i.test(text))
+  if (
+    /\b(?:warehouse\s+(?:sale|overstock)|overstock|clearance|final\s+sale|closeout|super\s+sale|garage\s+sale|special\s+price|under\s+\$?\s*(?:10|15|20))\b/i.test(
+      text,
+    )
+  )
     return "clearance";
-  if (/\b(?:daily\s+deal|specials?\s+(?:and|&)\s+sales?|buy\s+more\s+save\s+more|vinyl\s+discount)\b/i.test(text)) return "deal-source";
-  return isFinalDealSource(source.id, source.name, source.url) ? "deal-source" : "unknown";
+  if (
+    /\b(?:daily\s+deal|specials?\s+(?:and|&)\s+sales?|buy\s+more\s+save\s+more|vinyl\s+discount)\b/i.test(
+      text,
+    )
+  )
+    return "deal-source";
+  return isFinalDealSource(source.id, source.name, source.url)
+    ? "deal-source"
+    : "unknown";
 }
 
 function hasPriceThresholdSignal(text) {
@@ -2654,12 +3267,16 @@ function hasPriceThresholdSignal(text) {
 function hasVolumeDiscountSignal(text) {
   return (
     hasBogoSignal(text) ||
-    /\b(?:buy\s+more\s+save\s+more|buy\s+2\s+get\s+(?:one|1)|spend\s+\$?\d+\s+(?:get|save))\b/i.test(text)
+    /\b(?:buy\s+more\s+save\s+more|buy\s+2\s+get\s+(?:one|1)|spend\s+\$?\d+\s+(?:get|save))\b/i.test(
+      text,
+    )
   );
 }
 
 function hasSalePageSignal(text) {
-  return /\b(?:clearance|closeout|special\s+price|warehouse|overstock|daily\s+deal|specials?\s+(?:and|&)\s+sales?|garage\s+sale|vinyl\s+discount|buy\s+more\s+save\s+more|[3-9][0-9]\s*%\s*off)\b/i.test(text);
+  return /\b(?:clearance|closeout|special\s+price|warehouse|overstock|daily\s+deal|specials?\s+(?:and|&)\s+sales?|garage\s+sale|vinyl\s+discount|buy\s+more\s+save\s+more|[3-9][0-9]\s*%\s*off)\b/i.test(
+    text,
+  );
 }
 
 function hasVinylContext(text) {
@@ -2672,25 +3289,43 @@ function hasNonVinylSaleContext(text) {
   );
 }
 
-function saleSignalSummary(source, rawSignal, discountPercent, scope, discountQualifier = discountQualifierFor(rawSignal, discountPercent)) {
+function saleSignalSummary(
+  source,
+  rawSignal,
+  discountPercent,
+  scope,
+  discountQualifier = discountQualifierFor(rawSignal, discountPercent),
+) {
   const scopeLabel = scope === "unknown" ? "broad" : scope.replace(/-/g, " ");
-  const verb = source.sourceType === "deal-aggregator" || source.sourceType === "social-feed" ? "surfaced" : "has";
-  if (discountPercent) return `${source.name} ${verb} a ${scopeLabel} vinyl sale signal at ${discountLabel(discountPercent, discountQualifier)}.`;
-  if (hasBogoSignal(rawSignal)) return `${source.name} ${verb} a ${scopeLabel} vinyl BOGO or volume-discount sale signal.`;
-  if (hasCouponSignal(rawSignal)) return `${source.name} ${verb} a ${scopeLabel} vinyl coupon or promo-code sale signal.`;
+  const verb =
+    source.sourceType === "deal-aggregator" ||
+    source.sourceType === "social-feed"
+      ? "surfaced"
+      : "has";
+  if (discountPercent)
+    return `${source.name} ${verb} a ${scopeLabel} vinyl sale signal at ${discountLabel(discountPercent, discountQualifier)}.`;
+  if (hasBogoSignal(rawSignal))
+    return `${source.name} ${verb} a ${scopeLabel} vinyl BOGO or volume-discount sale signal.`;
+  if (hasCouponSignal(rawSignal))
+    return `${source.name} ${verb} a ${scopeLabel} vinyl coupon or promo-code sale signal.`;
   return `${source.name} ${verb} a ${scopeLabel} vinyl sale signal.`;
 }
 
 function discountQualifierFor(text, discountPercent) {
   if (discountPercent === null || discountPercent === undefined) return "none";
   const escapedDiscount = String(discountPercent).replace(".", "\\.");
-  return new RegExp(`\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`, "i").test(String(text ?? ""))
+  return new RegExp(
+    `\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`,
+    "i",
+  ).test(String(text ?? ""))
     ? "up_to"
     : "exact";
 }
 
 function discountLabel(discountPercent, qualifier) {
-  return qualifier === "up_to" ? `up to ${discountPercent}% off` : `${discountPercent}% off`;
+  return qualifier === "up_to"
+    ? `up to ${discountPercent}% off`
+    : `${discountPercent}% off`;
 }
 
 function extractMaxDiscountPercent(text) {
@@ -2720,9 +3355,13 @@ function saleEventToFind(event) {
     oneSellerSoldCount: null,
     opportunityType: "sitewide_sale",
     purchasePrice: 0,
+    campaignTerms: event.campaignTerms,
+    basketScenario: event.basketScenario,
+    saleCampaignId: event.saleCampaignId,
     saleDiscountPercent: event.discountPercent,
     saleDiscountQualifier: event.discountQualifier,
-    saleCode: event.promoCode ?? extractPromoCode(event.evidence ?? event.signal),
+    saleCode:
+      event.promoCode ?? extractPromoCode(event.evidence ?? event.signal),
     saleEvidence: event.evidence,
     saleFingerprint: event.fingerprint,
     saleScope: event.scope,
@@ -2740,7 +3379,13 @@ function saleEventToFind(event) {
 
 function saleFingerprint(source, rawSignal, url, discountPercent, scope) {
   const promoCode = extractPromoCode(rawSignal) ?? "no-code";
-  const offerType = hasBogoSignal(rawSignal) ? "bogo" : hasVolumeDiscountSignal(rawSignal) ? "volume" : hasCouponSignal(rawSignal) ? "coupon" : "sale";
+  const offerType = hasBogoSignal(rawSignal)
+    ? "bogo"
+    : hasVolumeDiscountSignal(rawSignal)
+      ? "volume"
+      : hasCouponSignal(rawSignal)
+        ? "coupon"
+        : "sale";
   let path = "/";
   try {
     path = new URL(url).pathname.toLowerCase().replace(/\/+$/, "") || "/";
@@ -2752,20 +3397,36 @@ function saleFingerprint(source, rawSignal, url, discountPercent, scope) {
     .replace(/\b(?:today|now|currently|limited\s+time)\b/g, " ")
     .replace(/\s+/g, " ")
     .slice(0, 240);
-  return stableId("sale-fingerprint", source.id, path, scope, discountPercent ?? "none", offerType, promoCode, contentSignature);
+  return stableId(
+    "sale-fingerprint",
+    source.id,
+    path,
+    scope,
+    discountPercent ?? "none",
+    offerType,
+    promoCode,
+    contentSignature,
+  );
 }
 
 function loadPreviousScanState(outputDir) {
   const preferredUrls = new Map();
-  if (!existsSync(outputDir)) return { preferredUrls, saleCampaignLedger: null };
+  if (!existsSync(outputDir))
+    return { preferredUrls, saleCampaignLedger: null };
 
   let latest = null;
   for (const fileName of readdirSync(outputDir)) {
     if (!/^retail-arbitrage-.*\.json$/i.test(fileName)) continue;
     try {
-      const payload = JSON.parse(readFileSync(join(outputDir, fileName), "utf8"));
+      const payload = JSON.parse(
+        readFileSync(join(outputDir, fileName), "utf8"),
+      );
       const createdAtMs = new Date(payload.createdAt ?? 0).getTime();
-      if (!Number.isFinite(createdAtMs) || (latest && createdAtMs <= latest.createdAtMs)) continue;
+      if (
+        !Number.isFinite(createdAtMs) ||
+        (latest && createdAtMs <= latest.createdAtMs)
+      )
+        continue;
       latest = { createdAtMs, payload };
     } catch {
       // Ignore incomplete or unrelated export files.
@@ -2779,30 +3440,44 @@ function loadPreviousScanState(outputDir) {
       continue;
     }
     const configuredWasStale = report.pageErrors?.some(
-      (page) => page.purpose === "configured" && page.failureKind === "not_found",
+      (page) =>
+        page.purpose === "configured" && page.failureKind === "not_found",
     );
-    if (configuredWasStale && report.resolvedUrls?.[0]) preferredUrls.set(report.id, report.resolvedUrls[0]);
+    if (configuredWasStale && report.resolvedUrls?.[0])
+      preferredUrls.set(report.id, report.resolvedUrls[0]);
   }
 
   return {
     preferredUrls,
-    saleCampaignLedger: latest?.payload ? saleCampaignLedgerFromPayload(latest.payload) : null,
+    saleCampaignLedger: latest?.payload
+      ? saleCampaignLedgerFromPayload(latest.payload)
+      : null,
   };
 }
 
 function enrichCandidate(candidate, index) {
   const sourceMetadata = sourceMetadataById.get(candidate.sourceId);
-  const purchaseOfferVerification = purchaseOfferVerificationForSource(candidate, sourceMetadata);
-  const sourceCurrency =
-    normalizeCurrency(candidate.sourceCurrency) ?? defaultCurrencyForCountry(sourceMetadata?.country);
-  const compMatch = index ? bestCompMatch(candidate, index.comps) : null;
-  const artistAggregate = index ? bestArtistAggregateMatch(candidate, index.artistAggregates) : null;
-  const notes = [];
-  const { metrics: conditionMetrics, soldEvidence } = buildLocalSoldEvidence(compMatch, index, {
+  const purchaseOfferVerification = purchaseOfferVerificationForSource(
     candidate,
-    condition: "new_sealed",
-    referenceAt: capturedAt,
-  });
+    sourceMetadata,
+  );
+  const sourceCurrency =
+    normalizeCurrency(candidate.sourceCurrency) ??
+    defaultCurrencyForCountry(sourceMetadata?.country);
+  const compMatch = index ? bestCompMatch(candidate, index.comps) : null;
+  const artistAggregate = index
+    ? bestArtistAggregateMatch(candidate, index.artistAggregates)
+    : null;
+  const notes = [];
+  const { metrics: conditionMetrics, soldEvidence } = buildLocalSoldEvidence(
+    compMatch,
+    index,
+    {
+      candidate,
+      condition: "new_sealed",
+      referenceAt: capturedAt,
+    },
+  );
   const averageSoldPrice = conditionMetrics?.averageSoldFor ?? null;
   const averageSoldShipping = conditionMetrics?.averageShipping ?? null;
   const totalSoldCount = conditionMetrics?.unitsSold ?? null;
@@ -2817,15 +3492,23 @@ function enrichCandidate(candidate, index) {
     notes.push(
       `Condition evidence: ${conditionCounts?.new_sealed ?? 0} new/sealed, ${conditionCounts?.used ?? 0} used, ${conditionCounts?.unknown ?? 0} unknown; latest condition-matched sale ${conditionMetrics?.latestSaleDate ?? "n/a"}.`,
     );
-    notes.push("Local CSV history is this account's own sales and does not prove repeat sales by one marketplace seller.");
+    notes.push(
+      "Local CSV history is this account's own sales and does not prove repeat sales by one marketplace seller.",
+    );
     if (soldEvidence?.artistMatchConfirmed === false) {
-      notes.push(`Local sold-history artist evidence was downgraded: ${soldEvidence.artistMismatchReasons.join(", ")}.`);
+      notes.push(
+        `Local sold-history artist evidence was downgraded: ${soldEvidence.artistMismatchReasons.join(", ")}.`,
+      );
     }
     if (soldEvidence?.editionMatchConfirmed === false) {
-      notes.push(`Local sold-history edition evidence was downgraded: ${soldEvidence.editionMismatchReasons.join(", ")}.`);
+      notes.push(
+        `Local sold-history edition evidence was downgraded: ${soldEvidence.editionMismatchReasons.join(", ")}.`,
+      );
     }
   } else {
-    notes.push("No strong local sold-history match; eBay Product Research needed.");
+    notes.push(
+      "No strong local sold-history match; eBay Product Research needed.",
+    );
   }
   if (artistAggregate) {
     notes.push(
@@ -2840,19 +3523,32 @@ function enrichCandidate(candidate, index) {
     if (candidate.appliedSaleEvidence) {
       notes.push(`Sale evidence: ${candidate.appliedSaleEvidence}`);
     }
-  } else if (candidate.sourceOriginalPrice && candidate.sourceOriginalPrice > candidate.purchasePrice) {
+  } else if (
+    candidate.sourceOriginalPrice &&
+    candidate.sourceOriginalPrice > candidate.purchasePrice
+  ) {
     notes.push(
       `Discovery source listed a previous price of ${formatSourcePrice(candidate.sourceOriginalPrice, sourceCurrency)}${candidate.sourceDiscountPercent ? ` (${candidate.sourceDiscountPercent}% drop)` : ""}.`,
     );
   }
-  if (candidate.discoveryUrl && candidate.discoveryUrl !== candidate.sourceUrl) {
+  if (
+    candidate.discoveryUrl &&
+    candidate.discoveryUrl !== candidate.sourceUrl
+  ) {
     notes.push(`Discovery evidence: ${candidate.discoveryUrl}`);
   }
-  if (candidate.sourcePublishedAt) notes.push(`Discovery source published this deal at ${candidate.sourcePublishedAt}.`);
+  if (candidate.sourcePublishedAt)
+    notes.push(
+      `Discovery source published this deal at ${candidate.sourcePublishedAt}.`,
+    );
   if (candidate.walmartAvailabilityVerificationSource === "product_page") {
-    notes.push("Walmart availability was rechecked on the product page after the search catalog reported stale or location-default stock.");
+    notes.push(
+      "Walmart availability was rechecked on the product page after the search catalog reported stale or location-default stock.",
+    );
   } else if (candidate.sourceId === "walmart") {
-    notes.push("Walmart availability came from the structured search catalog; confirm the signed-in delivery or pickup location before purchasing.");
+    notes.push(
+      "Walmart availability came from the structured search catalog; confirm the signed-in delivery or pickup location before purchasing.",
+    );
   }
   notes.push(
     candidate.purchasePriceIncludesShipping
@@ -2885,7 +3581,10 @@ function bestArtistAggregateMatch(candidate, aggregates) {
   if (!Array.isArray(aggregates) || aggregates.length === 0) return null;
   const artist = normalizeSoldText(candidate.artist ?? "");
   if (!artist || artist === "unknown artist") return null;
-  return aggregates.find((aggregate) => aggregate.normalizedArtist === artist) ?? null;
+  return (
+    aggregates.find((aggregate) => aggregate.normalizedArtist === artist) ??
+    null
+  );
 }
 
 function sourceMetadataForCandidate(source) {
@@ -2905,12 +3604,16 @@ function sourceMetadataForCandidate(source) {
 }
 
 function normalizeCurrency(value) {
-  const currency = String(value ?? "").trim().toUpperCase();
+  const currency = String(value ?? "")
+    .trim()
+    .toUpperCase();
   return /^[A-Z]{3}$/.test(currency) ? currency : null;
 }
 
 function defaultCurrencyForCountry(value) {
-  const country = String(value ?? "").trim().toUpperCase();
+  const country = String(value ?? "")
+    .trim()
+    .toUpperCase();
   if (["US", "USA", "UNITED STATES"].includes(country)) return "USD";
   if (["UK", "GB", "UNITED KINGDOM"].includes(country)) return "GBP";
   if (["CA", "CANADA"].includes(country)) return "CAD";
@@ -2931,13 +3634,20 @@ function bestCompMatch(candidate, comps) {
 
   let best = null;
   for (const comp of comps) {
-    const compTokens = new Set(comp.normalizedKey.replace(/::/g, " ").split(/\s+/).filter(Boolean));
+    const compTokens = new Set(
+      comp.normalizedKey.replace(/::/g, " ").split(/\s+/).filter(Boolean),
+    );
     let overlap = 0;
     for (const token of queryTokens) {
       if (compTokens.has(token)) overlap += 1;
     }
     const score = overlap / Math.max(queryTokens.size, compTokens.size);
-    const conditionBoost = (comp.conditionCounts?.new_sealed ?? comp.conditionMetrics?.new_sealed?.unitsSold ?? 0) > 0 ? 0.05 : 0;
+    const conditionBoost =
+      (comp.conditionCounts?.new_sealed ??
+        comp.conditionMetrics?.new_sealed?.unitsSold ??
+        0) > 0
+        ? 0.05
+        : 0;
     const adjustedScore = score + conditionBoost;
     if (!best || adjustedScore > best.matchScore) {
       best = { comp, matchScore: adjustedScore };
@@ -2949,11 +3659,18 @@ function bestCompMatch(candidate, comps) {
 }
 
 async function fetchPage(url, options = {}) {
+  const host = new URL(url).host;
+  if (inaccessibleRetailHosts.has(host))
+    throw Object.assign(
+      new Error(`Retailer requests deferred after access failure for ${host}`),
+      { failureKind: "blocked" },
+    );
   const { headers: additionalHeaders = {}, ...requestOptions } = options;
   const response = await scheduledFetch(url, {
     ...requestOptions,
     headers: {
-      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
       "accept-language": "en-US,en;q=0.9",
       "cache-control": "no-cache",
       "user-agent":
@@ -2964,7 +3681,10 @@ async function fetchPage(url, options = {}) {
   });
 
   if (!response.ok) {
-    const error = new Error(`HTTP ${response.status} ${response.statusText || "Error"} for ${url}`);
+    if ([403, 429].includes(response.status)) inaccessibleRetailHosts.add(host);
+    const error = new Error(
+      `HTTP ${response.status} ${response.statusText || "Error"} for ${url}`,
+    );
     error.failureKind = httpFailureKind(response.status);
     error.status = response.status;
     error.url = url;
@@ -2987,16 +3707,26 @@ async function fetchPage(url, options = {}) {
 function summarize(finds, reports, selectionDiagnostics = null) {
   const byDecision = { BUY: 0, REVIEW: 0, REJECT: 0, WATCH: 0 };
   for (const find of finds) {
-    const decision = find.status ?? (find.opportunityType === "sitewide_sale" ? "WATCH" : "REVIEW");
+    const decision =
+      find.status ??
+      (find.opportunityType === "sitewide_sale" ? "WATCH" : "REVIEW");
     byDecision[decision] += 1;
   }
-  const productFinds = finds.filter((find) => find.opportunityType !== "sitewide_sale");
+  const productFinds = finds.filter(
+    (find) => find.opportunityType !== "sitewide_sale",
+  );
   const productSourceCounts = new Map();
   for (const find of productFinds) {
     const sourceId = find.sourceId ?? find.sourceName ?? "unknown";
-    productSourceCounts.set(sourceId, (productSourceCounts.get(sourceId) ?? 0) + 1);
+    productSourceCounts.set(
+      sourceId,
+      (productSourceCounts.get(sourceId) ?? 0) + 1,
+    );
   }
-  const largestProductSourceCount = Math.max(0, ...productSourceCounts.values());
+  const largestProductSourceCount = Math.max(
+    0,
+    ...productSourceCounts.values(),
+  );
   const largestProductSourceShare = productFinds.length
     ? roundMetric(largestProductSourceCount / productFinds.length)
     : 0;
@@ -3030,7 +3760,8 @@ function summarize(finds, reports, selectionDiagnostics = null) {
       0,
     ),
     ownHistoryMatchedCandidateCount: reports.reduce(
-      (total, report) => total + Number(report.ownHistoryMatchedCandidateCount ?? 0),
+      (total, report) =>
+        total + Number(report.ownHistoryMatchedCandidateCount ?? 0),
       0,
     ),
     selectedProductFindCount: reports.reduce(
@@ -3039,9 +3770,13 @@ function summarize(finds, reports, selectionDiagnostics = null) {
     ),
     unrepresentedEligibleProductSourceCount:
       selectionDiagnostics?.unrepresentedEligibleSourceCount ?? 0,
-    sourcesWithCatalogCoverage: reports.filter((report) => ["healthy", "partial"].includes(report.catalogHealth)).length,
-    sourcesWithCandidates: reports.filter((report) => report.candidateCount > 0).length,
-    sourcesWithErrors: reports.filter((report) => report.status === "error").length,
+    sourcesWithCatalogCoverage: reports.filter((report) =>
+      ["healthy", "partial"].includes(report.catalogHealth),
+    ).length,
+    sourcesWithCandidates: reports.filter((report) => report.candidateCount > 0)
+      .length,
+    sourcesWithErrors: reports.filter((report) => report.status === "error")
+      .length,
     sourcesWithHighSignalCandidates: reports.filter(
       (report) => Number(report.highSignalCandidateCount) > 0,
     ).length,
@@ -3054,9 +3789,14 @@ function summarize(finds, reports, selectionDiagnostics = null) {
     sourcesWithProductiveParsing: reports.filter(
       (report) => report.productParseHealth === "productive",
     ).length,
-    sourcesWithSalePageCoverage: reports.filter((report) => ["healthy", "partial"].includes(report.salePageHealth)).length,
-    sourcesWithSalePageFailures: reports.filter((report) => report.salePageHealth === "failed").length,
-    sourcesWithSaleEvents: reports.filter((report) => report.saleEventCount > 0).length,
+    sourcesWithSalePageCoverage: reports.filter((report) =>
+      ["healthy", "partial"].includes(report.salePageHealth),
+    ).length,
+    sourcesWithSalePageFailures: reports.filter(
+      (report) => report.salePageHealth === "failed",
+    ).length,
+    sourcesWithSaleEvents: reports.filter((report) => report.saleEventCount > 0)
+      .length,
     sourcesWithSelectedProductFinds: reports.filter(
       (report) => Number(report.selectedProductFindCount) > 0,
     ).length,
@@ -3075,14 +3815,38 @@ function inferPurchaseRetailer(directUrl) {
     return {};
   }
   const knownRetailers = [
-    { domain: "amazon.com", name: "Amazon", pattern: /(?:^|\.)(?:amazon\.[a-z.]+|amzn\.to|a\.co)$/i },
+    {
+      domain: "amazon.com",
+      name: "Amazon",
+      pattern: /(?:^|\.)(?:amazon\.[a-z.]+|amzn\.to|a\.co)$/i,
+    },
     { domain: "ebay.com", name: "eBay", pattern: /(?:^|\.)ebay\.[a-z.]+$/i },
-    { domain: "walmart.com", name: "Walmart", pattern: /(?:^|\.)walmart\.com$/i },
+    {
+      domain: "walmart.com",
+      name: "Walmart",
+      pattern: /(?:^|\.)walmart\.com$/i,
+    },
     { domain: "target.com", name: "Target", pattern: /(?:^|\.)target\.com$/i },
-    { domain: "thesoundofvinyl.us", name: "The Sound of Vinyl", pattern: /(?:^|\.)thesoundofvinyl\.us$/i },
-    { domain: "urbanoutfitters.com", name: "Urban Outfitters", pattern: /(?:^|\.)urbanoutfitters\.com$/i },
-    { domain: "barnesandnoble.com", name: "Barnes & Noble", pattern: /(?:^|\.)barnesandnoble\.com$/i },
-    { domain: "roughtrade.com", name: "Rough Trade", pattern: /(?:^|\.)roughtrade\.com$/i },
+    {
+      domain: "thesoundofvinyl.us",
+      name: "The Sound of Vinyl",
+      pattern: /(?:^|\.)thesoundofvinyl\.us$/i,
+    },
+    {
+      domain: "urbanoutfitters.com",
+      name: "Urban Outfitters",
+      pattern: /(?:^|\.)urbanoutfitters\.com$/i,
+    },
+    {
+      domain: "barnesandnoble.com",
+      name: "Barnes & Noble",
+      pattern: /(?:^|\.)barnesandnoble\.com$/i,
+    },
+    {
+      domain: "roughtrade.com",
+      name: "Rough Trade",
+      pattern: /(?:^|\.)roughtrade\.com$/i,
+    },
   ];
   const retailer = knownRetailers.find(({ pattern }) => pattern.test(hostname));
   return retailer
@@ -3117,7 +3881,8 @@ function roundMetric(value) {
 function runSoldHistorySyncIfConfigured() {
   if (skipEbaySync) {
     return {
-      reason: "Disabled by --skipEbaySync, --skip-ebay-sync, or --ebaySync=false.",
+      reason:
+        "Disabled by --skipEbaySync, --skip-ebay-sync, or --ebaySync=false.",
       status: "skipped",
     };
   }
@@ -3195,7 +3960,10 @@ function runSoldHistorySyncIfConfigured() {
 
 function runActiveEnrichmentIfConfigured(outputPath) {
   if (skipActiveEnrichment) {
-    return { status: "skipped", reason: "Disabled by --skipActiveEnrichment or --enrichActive=false." };
+    return {
+      status: "skipped",
+      reason: "Disabled by --skipActiveEnrichment or --enrichActive=false.",
+    };
   }
 
   const hasStaticApplicationToken = Boolean(
@@ -3214,7 +3982,9 @@ function runActiveEnrichmentIfConfigured(outputPath) {
     };
   }
 
-  const relativeOutputPath = outputPath.startsWith(WORKSPACE) ? outputPath.slice(WORKSPACE.length + 1) : outputPath;
+  const relativeOutputPath = outputPath.startsWith(WORKSPACE)
+    ? outputPath.slice(WORKSPACE.length + 1)
+    : outputPath;
   const result = spawnSync(
     process.execPath,
     [
@@ -3242,7 +4012,8 @@ function runActiveEnrichmentIfConfigured(outputPath) {
       Number(completion.withoutResults ?? 0) === 0
     ) {
       return {
-        error: "Every active eBay query failed; enrichment produced no usable supply evidence.",
+        error:
+          "Every active eBay query failed; enrichment produced no usable supply evidence.",
         failed: Number(completion.failed),
         maxQueries: maxActiveQueries,
         status: "failed",
@@ -3260,11 +4031,12 @@ function runActiveEnrichmentIfConfigured(outputPath) {
     };
   }
 
-  const processError = result.error instanceof Error
-    ? result.error.message
-    : result.error
-      ? String(result.error)
-      : "";
+  const processError =
+    result.error instanceof Error
+      ? result.error.message
+      : result.error
+        ? String(result.error)
+        : "";
   return {
     error:
       processError ||
@@ -3288,10 +4060,14 @@ function tailLines(text, count) {
 }
 
 function lastJsonLine(text) {
-  for (const line of String(text ?? "").trim().split(/\r?\n/).reverse()) {
+  for (const line of String(text ?? "")
+    .trim()
+    .split(/\r?\n/)
+    .reverse()) {
     try {
       const value = JSON.parse(line);
-      if (value && typeof value === "object" && !Array.isArray(value)) return value;
+      if (value && typeof value === "object" && !Array.isArray(value))
+        return value;
     } catch {
       // Ignore progress text and keep looking for the final structured summary.
     }
@@ -3347,9 +4123,18 @@ function compareEvaluatedFinds(left, right) {
 
 function evaluatedCandidateScore(candidate) {
   const tierRank = candidateTierRank(candidate.candidateTier);
-  const candidateScore = Math.max(0, Math.min(100, Number(candidate.candidateScore) || 0));
-  const priorityScore = Math.max(0, Math.min(100, Number(candidate.priorityScore) || 0));
-  const qualityScore = Math.max(0, Math.min(100, candidateQualityScore(candidate)));
+  const candidateScore = Math.max(
+    0,
+    Math.min(100, Number(candidate.candidateScore) || 0),
+  );
+  const priorityScore = Math.max(
+    0,
+    Math.min(100, Number(candidate.priorityScore) || 0),
+  );
+  const qualityScore = Math.max(
+    0,
+    Math.min(100, candidateQualityScore(candidate)),
+  );
   return (
     tierRank * 1_000_000 +
     candidateScore * 1_000 +
@@ -3365,7 +4150,8 @@ function estimatedMargin(find) {
 }
 
 function soldTotal(find) {
-  if (find.averageSoldPrice === null || find.averageSoldPrice === undefined) return null;
+  if (find.averageSoldPrice === null || find.averageSoldPrice === undefined)
+    return null;
   return find.averageSoldPrice + (find.averageSoldShipping ?? 0);
 }
 
@@ -3381,7 +4167,9 @@ function parsePrice(value) {
 
 function parsePrices(value) {
   return [
-    ...String(value).matchAll(/(?:\$|USD\s*)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]+(?:\.[0-9]{2})?)/gi),
+    ...String(value).matchAll(
+      /(?:\$|USD\s*)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]+(?:\.[0-9]{2})?)/gi,
+    ),
   ]
     .map((match) => Number(match[1].replace(/,/g, "")))
     .filter(Number.isFinite);
@@ -3400,18 +4188,22 @@ function cleanProductTitle(text) {
     text
       .replace(/\bbest\s+seller\b/gi, " ")
       .replace(/\b(?:vinyl|lp|record|records|album)\b/gi, " ")
-      .replace(/\b(?:sale|deal|clearance|limited|edition|exclusive|colored|colour|color)\b/gi, " "),
+      .replace(
+        /\b(?:sale|deal|clearance|limited|edition|exclusive|colored|colour|color)\b/gi,
+        " ",
+      ),
   );
 }
 
 function cleanText(text) {
-  return decodeHtmlEntities(text)
-    .replace(/\s+/g, " ")
-    .trim();
+  return decodeHtmlEntities(text).replace(/\s+/g, " ").trim();
 }
 
 function stripTags(html) {
-  return String(html).replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ");
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ");
 }
 
 function looksRecordRelated(text) {
@@ -3419,11 +4211,15 @@ function looksRecordRelated(text) {
 }
 
 function hasVinylProductSignal(text) {
-  return /\b(?:vinyl|record|records|(?:[1-9]\s*(?:[x\u00d7-]\s*)?)?lp|(?:7|10|12)\s*(?:inch|in\.|["”']))\b/i.test(String(text ?? ""));
+  return /\b(?:vinyl|record|records|(?:[1-9]\s*(?:[x\u00d7-]\s*)?)?lp|(?:7|10|12)\s*(?:inch|in\.|["”']))\b/i.test(
+    String(text ?? ""),
+  );
 }
 
 function sourceIsVinylFocused(source) {
-  return /\b(?:vinyl|records?|lps?|all-vinyl|super-sale-lps|deep-cuts)\b/i.test(`${source.id} ${source.name} ${source.url}`);
+  return /\b(?:vinyl|records?|lps?|all-vinyl|super-sale-lps|deep-cuts)\b/i.test(
+    `${source.id} ${source.name} ${source.url}`,
+  );
 }
 
 function normalize(value) {
@@ -3432,7 +4228,20 @@ function normalize(value) {
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((token) => token && !["the", "a", "an", "new", "sealed", "brand", "factory", "used"].includes(token))
+    .filter(
+      (token) =>
+        token &&
+        ![
+          "the",
+          "a",
+          "an",
+          "new",
+          "sealed",
+          "brand",
+          "factory",
+          "used",
+        ].includes(token),
+    )
     .join(" ")
     .trim();
 }
@@ -3444,20 +4253,36 @@ function ebayResearchUrl(candidate) {
 
 function researchKeywords(candidate) {
   const normalizedArtist = normalizeResearchArtist(candidate.artist);
-  const normalizedTitle = normalizeResearchTitle(candidate.title || candidate.sourceListingTitle || "");
+  const normalizedTitle = normalizeResearchTitle(
+    candidate.title || candidate.sourceListingTitle || "",
+  );
   if (!normalizedArtist) return normalizedTitle;
-  return cleanResearchText(startsWithSameWords(normalizedTitle, normalizedArtist) ? normalizedTitle : `${normalizedArtist} ${normalizedTitle}`);
+  return cleanResearchText(
+    startsWithSameWords(normalizedTitle, normalizedArtist)
+      ? normalizedTitle
+      : `${normalizedArtist} ${normalizedTitle}`,
+  );
 }
 
 function researchKeywordVariants(candidate) {
   const primary = researchKeywords(candidate);
   const variants = new Set([primary]);
-  const rawTitle = cleanResearchText(String(candidate.title || candidate.sourceListingTitle || "").replace(/[()]/g, " "));
+  const rawTitle = cleanResearchText(
+    String(candidate.title || candidate.sourceListingTitle || "").replace(
+      /[()]/g,
+      " ",
+    ),
+  );
 
   if (/\bsoundtrack\b|\bmotion\s+picture\b/i.test(rawTitle)) {
-    const baseTitle = normalizeResearchTitle(candidate.title || candidate.sourceListingTitle || "");
+    const baseTitle = normalizeResearchTitle(
+      candidate.title || candidate.sourceListingTitle || "",
+    );
     const normalizedArtist = normalizeResearchArtist(candidate.artist);
-    const prefix = normalizedArtist && !startsWithSameWords(baseTitle, normalizedArtist) ? `${normalizedArtist} ` : "";
+    const prefix =
+      normalizedArtist && !startsWithSameWords(baseTitle, normalizedArtist)
+        ? `${normalizedArtist} `
+        : "";
     if (baseTitle) {
       variants.add(cleanResearchText(`${prefix}${baseTitle}`));
       variants.add(cleanResearchText(`${prefix}${baseTitle} Soundtrack`));
@@ -3512,7 +4337,10 @@ function loadLocalEnv(path) {
     const separatorIndex = trimmed.indexOf("=");
     if (separatorIndex <= 0) continue;
     const key = trimmed.slice(0, separatorIndex).trim();
-    const value = trimmed.slice(separatorIndex + 1).trim().replace(/^['"]|['"]$/g, "");
+    const value = trimmed
+      .slice(separatorIndex + 1)
+      .trim()
+      .replace(/^['"]|['"]$/g, "");
     if (key && process.env[key] === undefined) {
       process.env[key] = value;
     }
@@ -3520,21 +4348,29 @@ function loadLocalEnv(path) {
 }
 
 function startsWithSameWords(value, prefix) {
-  return value.toLowerCase().split(/\s+/).slice(0, 4).join(" ") === prefix.toLowerCase().split(/\s+/).slice(0, 4).join(" ");
+  return (
+    value.toLowerCase().split(/\s+/).slice(0, 4).join(" ") ===
+    prefix.toLowerCase().split(/\s+/).slice(0, 4).join(" ")
+  );
 }
 
 function normalizeResearchArtist(rawArtist) {
   return cleanResearchText(
     String(rawArtist)
       .replace(/[|:]+/g, " ")
-      .replace(/\b(?:def\s+jam|official\s+store|records?|recordings|music|shop|store|sound\s+of\s+vinyl)\b/gi, " ")
+      .replace(
+        /\b(?:def\s+jam|official\s+store|records?|recordings|music|shop|store|sound\s+of\s+vinyl)\b/gi,
+        " ",
+      )
       .replace(/\b(?:unknown\s+artist|various\s+artists?)\b/gi, " "),
   );
 }
 
 function isStoreVendor(vendor) {
   if (!vendor || vendor === "Default Title") return true;
-  return /\b(?:official\s+store|sound\s+of\s+vinyl|def\s+jam|records?|recordings|shop|store)\b/i.test(vendor);
+  return /\b(?:official\s+store|sound\s+of\s+vinyl|def\s+jam|records?|recordings|shop|store)\b/i.test(
+    vendor,
+  );
 }
 
 function normalizeResearchTitle(rawTitle) {
@@ -3543,22 +4379,49 @@ function normalizeResearchTitle(rawTitle) {
     .replace(/\s+-\s+/g, " ")
     .replace(/\$\s*[0-9.,]+/g, " ")
     .trim();
-  const firstUsefulSegment = title.split(/\s+(?:music\s+(?:on|and|from|by|performance)|was\s*\/\s*ea)\b/i)[0] ?? title;
+  const firstUsefulSegment =
+    title.split(
+      /\s+(?:music\s+(?:on|and|from|by|performance)|was\s*\/\s*ea)\b/i,
+    )[0] ?? title;
   return cleanResearchText(
     firstUsefulSegment
       .replace(/\bmusic\s+(?:on|and|from|by|performance)\b.*$/gi, " ")
       .replace(/\bmusic\s*(?:&|and)\s*performance\b.*$/gi, " ")
       .replace(/\bwas\s*\/\s*ea\b.*$/gi, " ")
-      .replace(/\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban outfitters|uo)\s+edition\b/gi, " ")
-      .replace(/\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban outfitters|uo)\b/gi, " ")
-      .replace(/\b(?:colored|colour|color|clear|red|blue|green|yellow|pink|purple|orange|white|black|gold|silver|splatter|swirl|marbled|translucent|transparent)\s+vinyl\b/gi, " ")
-      .replace(/\b(?:vinyl|record|records|album|lp|2lp|3lp|4lp|ep|single)\b/gi, " ")
-      .replace(/\b(?:180g|180gram|180grams|heavyweight|remaster(?:ed)?|half-speed\s+master)\b/gi, " ")
-      .replace(/\b(?:pre[-\s]?order|sale|clearance|new|sealed|brand\s+new)\b/gi, " ")
+      .replace(
+        /\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban outfitters|uo)\s+edition\b/gi,
+        " ",
+      )
+      .replace(
+        /\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban outfitters|uo)\b/gi,
+        " ",
+      )
+      .replace(
+        /\b(?:colored|colour|color|clear|red|blue|green|yellow|pink|purple|orange|white|black|gold|silver|splatter|swirl|marbled|translucent|transparent)\s+vinyl\b/gi,
+        " ",
+      )
+      .replace(
+        /\b(?:vinyl|record|records|album|lp|2lp|3lp|4lp|ep|single)\b/gi,
+        " ",
+      )
+      .replace(
+        /\b(?:180g|180gram|180grams|heavyweight|remaster(?:ed)?|half-speed\s+master)\b/gi,
+        " ",
+      )
+      .replace(
+        /\b(?:pre[-\s]?order|sale|clearance|new|sealed|brand\s+new)\b/gi,
+        " ",
+      )
       .replace(/\bstaff\s+pick\b/gi, " ")
-      .replace(/\bat\s+(?:amazon|target|walmart|urban outfitters|barnes\s*&\s*noble|deep discount)\b.*$/gi, " ")
+      .replace(
+        /\bat\s+(?:amazon|target|walmart|urban outfitters|barnes\s*&\s*noble|deep discount)\b.*$/gi,
+        " ",
+      )
       .replace(/\[[^\]]*\]/g, " ")
-      .replace(/\([^)]*(?:vinyl|lp|record|edition|exclusive|color|colour|soundtrack|remaster|sale|deal)[^)]*\)/gi, " ")
+      .replace(
+        /\([^)]*(?:vinyl|lp|record|edition|exclusive|color|colour|soundtrack|remaster|sale|deal)[^)]*\)/gi,
+        " ",
+      )
       .replace(/[()]/g, " "),
   );
 }
@@ -3570,4 +4433,28 @@ function cleanResearchText(value) {
     .replace(/[^A-Za-z0-9&'./\s-]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+async function readScannerFeedback() {
+  if (!process.env.ARBITRAGE_UPLOAD_URL || !process.env.ARBITRAGE_UPLOAD_TOKEN)
+    return [];
+  try {
+    const url = new URL(
+      "/api/arbitrage/operations?action=feedback",
+      process.env.ARBITRAGE_UPLOAD_URL,
+    );
+    const response = await fetch(url, {
+      headers: {
+        Authorization: "Bearer " + process.env.ARBITRAGE_UPLOAD_TOKEN,
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    return (await response.json()).entries ?? [];
+  } catch {
+    console.log(
+      "Review learning unavailable for this run; no offers were suppressed.",
+    );
+    return [];
+  }
 }

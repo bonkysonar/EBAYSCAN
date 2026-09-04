@@ -1,3 +1,5 @@
+import { retailEligibility } from "./retailIdentity.mjs";
+
 const NAVIGATION_LABEL =
   /^(?:all|back|browse|cart|clearance|contact|deals?|discover|explore|featured|filter\s+amazon(?:\s+by\s+price)?|home|learn\s+more|log\s*in|lps?|menu|more|new|new\s+releases|next|previous|records?|sale|search|shop|shop\s+(?:all|now)|sign\s+in|specials?|view\s+(?:all|details|more)|vinyl)[\s!\u2192\u203a\u00bb]*$/i;
 const PRODUCT_PATH =
@@ -19,31 +21,56 @@ const NON_NEW_PRODUCT =
   /(?:^\s*[\[(]?\s*damaged\b|\b(?:damaged|used|pre[-\s]?owned)\s+(?:copy|lp|record|vinyl)\b|\b(?:open[\s-]?box|scratch\s+and\s+dent|shopworn)\b|\/(?:collections|products?)\/(?:damaged|pre[-_]?owned|used)(?:[-_/]|$))/i;
 const DEFAULT_PURCHASE_TAX_RATE = 0.095;
 
-export function assessRecordCandidate({ context = "", productType = "", source = {}, tags = "", title = "", url = "" } = {}) {
+export function assessRecordCandidate({
+  context = "",
+  productType = "",
+  source = {},
+  tags = "",
+  title = "",
+  url = "",
+} = {}) {
   const cleanTitle = cleanText(title);
   const directEvidence = cleanText(`${cleanTitle} ${productType} ${tags}`);
   const urlEvidence = safePathname(url).replace(/[-_/]+/g, " ");
   const negativeEvidence = cleanText(`${directEvidence} ${urlEvidence}`);
   const reasons = [];
 
+  const eligibility = retailEligibility({ sourceListingTitle: cleanTitle });
+  if (!eligibility.eligible)
+    return rejected(
+      eligibility.reason === "damaged_stock"
+        ? "non_new_condition"
+        : eligibility.reason,
+    );
   if (cleanTitle.length < 3) return rejected("title_too_short");
   if (NAVIGATION_LABEL.test(cleanTitle)) return rejected("navigation_label");
   if (isExpiredDealUrl(url)) return rejected("expired_deal");
-  if (NON_NEW_PRODUCT.test(`${directEvidence} ${urlEvidence}`)) return rejected("non_new_condition");
-  if (isMarketplaceNonRecordTitle(negativeEvidence)) return rejected("record_accessory");
-  if (RECORD_ACCESSORY.test(negativeEvidence)) return rejected("record_accessory");
+  if (NON_NEW_PRODUCT.test(`${directEvidence} ${urlEvidence}`))
+    return rejected("non_new_condition");
+  if (isMarketplaceNonRecordTitle(negativeEvidence))
+    return rejected("record_accessory");
+  if (RECORD_ACCESSORY.test(negativeEvidence))
+    return rejected("record_accessory");
 
   const explicitVinyl = VINYL_FORMAT.test(directEvidence);
   const contextualVinyl = explicitVinyl || VINYL_FORMAT.test(context);
-  const sourceIdentity = cleanText(`${source.id ?? ""} ${source.name ?? source.displayName ?? ""}`).toLowerCase();
+  const sourceIdentity = cleanText(
+    `${source.id ?? ""} ${source.name ?? source.displayName ?? ""}`,
+  ).toLowerCase();
   const marketplaceRetailer =
     source.sourceType === "marketplace_retailer" ||
-    /\b(?:barnes-noble|barnes\s+&\s+noble|target|urban-outfitters|urban\s+outfitters|walmart)\b/i.test(sourceIdentity);
-  if (marketplaceRetailer && !explicitVinyl) return rejected("marketplace_requires_explicit_vinyl");
-  if (/(?:[?&]ean=)(?:978|979)\d{10}\b/i.test(String(url))) return rejected("isbn_book_listing");
+    /\b(?:barnes-noble|barnes\s+&\s+noble|target|urban-outfitters|urban\s+outfitters|walmart)\b/i.test(
+      sourceIdentity,
+    );
+  if (marketplaceRetailer && !explicitVinyl)
+    return rejected("marketplace_requires_explicit_vinyl");
+  if (/(?:[?&]ean=)(?:978|979)\d{10}\b/i.test(String(url)))
+    return rejected("isbn_book_listing");
   if (
     /\bcheap-vinyl\b|\bcheap\s+vinyl\b/i.test(sourceIdentity) &&
-    /^(?:filter\s+amazon(?:\s+vinyl\s+records?)?\s+by\s+price|(?:vinyl\s+)?records?\s+under\s+\$?\d+|vinyl\s+under\s+\$?\d+|under)$/i.test(cleanTitle)
+    /^(?:filter\s+amazon(?:\s+vinyl\s+records?)?\s+by\s+price|(?:vinyl\s+)?records?\s+under\s+\$?\d+|vinyl\s+under\s+\$?\d+|under)$/i.test(
+      cleanTitle,
+    )
   ) {
     return rejected("deal_category_navigation");
   }
@@ -57,18 +84,25 @@ export function assessRecordCandidate({ context = "", productType = "", source =
   if (/\/[^/?#]*digital[-_/]album(?:[/?#]|$)/i.test(String(url))) {
     return rejected("digital_only_product");
   }
-  if (PHYSICAL_NON_RECORD.test(negativeEvidence)) return rejected("non_vinyl_format");
-  if (DIGITAL_NON_RECORD.test(directEvidence) && !explicitVinyl) return rejected("non_vinyl_format");
-  if (RETAIL_NOISE.test(negativeEvidence) && !explicitVinyl) return rejected("non_music_retail_category");
+  if (PHYSICAL_NON_RECORD.test(negativeEvidence))
+    return rejected("non_vinyl_format");
+  if (DIGITAL_NON_RECORD.test(directEvidence) && !explicitVinyl)
+    return rejected("non_vinyl_format");
+  if (RETAIL_NOISE.test(negativeEvidence) && !explicitVinyl)
+    return rejected("non_music_retail_category");
 
   const productUrl = PRODUCT_PATH.test(safePathname(url));
   const sourceFocused = sourceIsVinylFocused(source);
   const musicShaped = MUSIC_SHAPE.test(cleanTitle);
-  if (PROMOTION_LABEL.test(cleanTitle) && !musicShaped) return rejected("promotion_label");
-  if (!explicitVinyl && !musicShaped && RETAIL_NOISE.test(context)) return rejected("non_music_retail_context");
+  if (PROMOTION_LABEL.test(cleanTitle) && !musicShaped)
+    return rejected("promotion_label");
+  if (!explicitVinyl && !musicShaped && RETAIL_NOISE.test(context))
+    return rejected("non_music_retail_context");
 
-  if (!explicitVinyl && !productUrl) return rejected("no_product_or_format_signal");
-  if (!contextualVinyl && !sourceFocused && !musicShaped) return rejected("weak_record_signal");
+  if (!explicitVinyl && !productUrl)
+    return rejected("no_product_or_format_signal");
+  if (!contextualVinyl && !sourceFocused && !musicShaped)
+    return rejected("weak_record_signal");
 
   let score = 20;
   if (explicitVinyl) {
@@ -108,12 +142,21 @@ export function candidateQualityScore(candidate) {
     Number.isFinite(embeddedQuality);
   // Parser confidence answers "is this a real record listing?"; it should not
   // outweigh demand, price, and market evidence when ordering the buy queue.
-  let score = hasEmbeddedQuality ? embeddedQuality * 0.35 : sourceMetadataScore(candidate);
+  let score = hasEmbeddedQuality
+    ? embeddedQuality * 0.35
+    : sourceMetadataScore(candidate);
 
   const originalPrice = Number(candidate.sourceOriginalPrice);
   const purchasePrice = Number(candidate.purchasePrice);
-  if (Number.isFinite(originalPrice) && Number.isFinite(purchasePrice) && originalPrice > purchasePrice) {
-    score += Math.min(20, Math.round(((originalPrice - purchasePrice) / originalPrice) * 40));
+  if (
+    Number.isFinite(originalPrice) &&
+    Number.isFinite(purchasePrice) &&
+    originalPrice > purchasePrice
+  ) {
+    score += Math.min(
+      20,
+      Math.round(((originalPrice - purchasePrice) / originalPrice) * 40),
+    );
   }
 
   const averageSoldPrice = Number(candidate.averageSoldPrice);
@@ -126,7 +169,10 @@ export function candidateQualityScore(candidate) {
       ? averageSoldPrice + (Number(candidate.averageSoldShipping) || 0)
       : null;
   if (soldTotal !== null && Number.isFinite(purchasePrice)) {
-    score += Math.min(30, Math.max(-20, Math.round((soldTotal - purchasePrice) * 1.5)));
+    score += Math.min(
+      30,
+      Math.max(-20, Math.round((soldTotal - purchasePrice) * 1.5)),
+    );
   }
   const validatedRecentUnits =
     candidate.soldEvidence?.status === "validated"
@@ -141,7 +187,10 @@ export function candidateQualityScore(candidate) {
   if (/^unknown artist$/i.test(cleanText(candidate.artist))) {
     score -= /\b(?:soundtrack|score)\b/i.test(listingIdentity) ? 8 : 25;
   }
-  if (/\b(?:7\s*(?:inch|in\.|["\u201d])|7-inch|single)\b/i.test(listingIdentity)) score -= 15;
+  if (
+    /\b(?:7\s*(?:inch|in\.|["\u201d])|7-inch|single)\b/i.test(listingIdentity)
+  )
+    score -= 15;
   if (/\bpromo\b/i.test(listingIdentity)) score -= 12;
   if (/\b(?:bundle|lot)\b/i.test(listingIdentity)) score -= 8;
   if (Number.isFinite(purchasePrice)) {
@@ -152,7 +201,9 @@ export function candidateQualityScore(candidate) {
     else if (purchasePrice > 25) score -= 10;
     else score -= 5;
   }
-  const sourceCurrency = String(candidate.sourceCurrency ?? "").trim().toUpperCase();
+  const sourceCurrency = String(candidate.sourceCurrency ?? "")
+    .trim()
+    .toUpperCase();
   if (sourceCurrency && sourceCurrency !== "USD") score -= 8;
   if (candidate.discoveryUrl) score += 4;
   if (candidate.barcode) score += 4;
@@ -168,6 +219,20 @@ export function candidateQualityScore(candidate) {
 }
 
 export function isHighSignalProductFind(find) {
+  if (!retailEligibility(find).eligible) return false;
+  if (find.identityStatus === "unresolved") return false;
+  if (
+    find.appliedSaleCampaignId &&
+    find.purchasePrice > 0 &&
+    find.purchasePrice <= 100
+  )
+    return true;
+  if (
+    find.soldEvidence?.status === "validated" &&
+    Number(find.soldEvidence.unitsSold90Days) >= 3 &&
+    soldTotal(find) > Number(find.purchasePrice) * 1.5
+  )
+    return true;
   const sourceEvidence = `${find.sourceUrl ?? ""} ${find.discoveryUrl ?? ""} ${find.collectionContext ?? ""}`;
   const walmartSource = /\bwalmart\b/i.test(
     `${find.sourceId ?? ""} ${find.sourceName ?? ""} ${sourceEvidence}`,
@@ -180,8 +245,7 @@ export function isHighSignalProductFind(find) {
     );
   if (
     walmartSource &&
-    (find.retailerSoldBySource === false ||
-      explicitUnavailable)
+    (find.retailerSoldBySource === false || explicitUnavailable)
   ) {
     return false;
   }
@@ -193,18 +257,27 @@ export function isHighSignalProductFind(find) {
     isVerifiedDirectUsNewRetailOffer(find);
   const credibleSlickdealsResearchLead =
     !explicitUnavailable && isCredibleSlickdealsResearchLead(find);
-  const fromFinalDealSource = isFinalDealSource(find.sourceId, find.sourceName, sourceEvidence);
+  const fromFinalDealSource = isFinalDealSource(
+    find.sourceId,
+    find.sourceName,
+    sourceEvidence,
+  );
   const trustedFinalDealSource = fromFinalDealSource && !discoveryOnlySource;
-  const productSaleSignal = hasProductSaleSignal(`${find.sourceListingTitle ?? ""} ${sourceEvidence}`);
-  const observedDiscount =
-    Number.isFinite(Number(find.sourceDiscountPercent))
-      ? Number(find.sourceDiscountPercent) / 100
-      : Number.isFinite(Number(find.sourceOriginalPrice)) && Number(find.sourceOriginalPrice) > find.purchasePrice
-        ? (Number(find.sourceOriginalPrice) - find.purchasePrice) / Number(find.sourceOriginalPrice)
-        : 0;
+  const productSaleSignal = hasProductSaleSignal(
+    `${find.sourceListingTitle ?? ""} ${sourceEvidence}`,
+  );
+  const observedDiscount = Number.isFinite(Number(find.sourceDiscountPercent))
+    ? Number(find.sourceDiscountPercent) / 100
+    : Number.isFinite(Number(find.sourceOriginalPrice)) &&
+        Number(find.sourceOriginalPrice) > find.purchasePrice
+      ? (Number(find.sourceOriginalPrice) - find.purchasePrice) /
+        Number(find.sourceOriginalPrice)
+      : 0;
   const configuredDiscount = Number(find.sourceDefaultDiscountThreshold);
   const meetsConfiguredDiscount =
-    Number.isFinite(configuredDiscount) && configuredDiscount > 0 && observedDiscount >= configuredDiscount;
+    Number.isFinite(configuredDiscount) &&
+    configuredDiscount > 0 &&
+    observedDiscount >= configuredDiscount;
   const hasRealCompareAtPrice =
     Number.isFinite(Number(find.sourceOriginalPrice)) &&
     Number(find.sourceOriginalPrice) > Number(find.purchasePrice);
@@ -232,7 +305,8 @@ export function isHighSignalProductFind(find) {
       sourceEvidence,
     ) && observedDiscount <= 0;
   if (volumeOfferWithoutNormalizedItemPrice) return false;
-  if (directUsAbsolutePriceCandidate || credibleSlickdealsResearchLead) return true;
+  if (directUsAbsolutePriceCandidate || credibleSlickdealsResearchLead)
+    return true;
 
   const sale = soldTotal(find);
   const margin = estimatedMargin(find);
@@ -248,114 +322,43 @@ export function isHighSignalProductFind(find) {
     return find.purchasePrice <= (find.sourceNoiseLevel === "high" ? 30 : 100);
   }
   const exploratoryPriceCeiling = find.sourceNoiseLevel === "high" ? 30 : 45;
-  return find.purchasePrice <= exploratoryPriceCeiling && (trustedFinalDealSource || productSaleSignal);
+  return (
+    find.purchasePrice <= exploratoryPriceCeiling &&
+    (trustedFinalDealSource || productSaleSignal)
+  );
 }
 
-export function applyVerifiedSaleCampaigns(candidates, campaigns) {
-  const campaignsBySource = new Map();
-  for (const campaign of campaigns ?? []) {
-    const sourceId = cleanText(campaign?.sourceId);
-    const discountPercent = Number(
-      campaign?.discountPercent ?? campaign?.saleDiscountPercent,
-    );
-    const verification = cleanText(
-      campaign?.verification ?? campaign?.saleVerification,
-    ).toLowerCase();
-    const evidence = campaignEvidence(campaign);
-    if (!sourceId || verification !== "retailer-page") continue;
-    if (!Number.isFinite(discountPercent) || discountPercent <= 0 || discountPercent >= 90) continue;
-    if (/\b(?:up\s+to|as\s+much\s+as)\s+\d+\s*(?:%|percent\b)/i.test(evidence)) continue;
-    if (/\b(?:bogo|buy\s+(?:one|1|2)\s+get|buy\s+more\s+save\s+more)\b/i.test(evidence)) continue;
-    if (hasConditionalDiscountRequirement(evidence)) continue;
-
-    const sourceCampaigns = campaignsBySource.get(sourceId) ?? [];
-    sourceCampaigns.push({
-      campaign,
-      collectionId: collectionIdFromUrl(campaign?.sourceUrl),
-      discountPercent,
-      evidence,
-      scope: cleanText(campaign?.scope ?? campaign?.saleScope).toLowerCase(),
-    });
-    campaignsBySource.set(sourceId, sourceCampaigns);
-  }
-
-  return (candidates ?? []).map((candidate) => {
-    if (candidate?.appliedSaleCampaignId) return candidate;
-    const currentPrice = finitePositive(candidate?.purchasePrice);
-    if (currentPrice === null) return candidate;
-    const existingListPrice = finitePositive(
-      candidate?.sourceOriginalPrice ?? candidate?.listPrice,
-    );
-    const alreadyMarkedDown =
-      (existingListPrice !== null && existingListPrice > currentPrice) ||
-      Number(candidate?.sourceDiscountPercent) > 0;
-    if (alreadyMarkedDown) return candidate;
-
-    const candidateCollectionIds = new Set(
-      [
-        candidate?.collectionContext,
-        ...(candidate?.collectionContexts ?? []),
-        collectionIdFromUrl(candidate?.discoveryUrl),
-        ...(candidate?.discoveryUrls ?? []).map(collectionIdFromUrl),
-      ]
-        .map(normalizedCollectionId)
-        .filter(Boolean),
-    );
-    const applicable = (campaignsBySource.get(candidateSourceId(candidate)) ?? [])
-      .map((entry) => ({
-        ...entry,
-        exactCollectionMatch:
-          Boolean(entry.collectionId) && candidateCollectionIds.has(entry.collectionId),
-      }))
-      .filter(
-        (entry) =>
-          entry.exactCollectionMatch ||
-          entry.scope === "sitewide" ||
-          entry.scope === "vinyl-wide",
-      )
-      .sort(
-        (left, right) =>
-          Number(right.exactCollectionMatch) - Number(left.exactCollectionMatch) ||
-          right.discountPercent - left.discountPercent,
-      );
-    const applied = applicable[0];
-    if (!applied) return candidate;
-
-    const listPrice = finitePositive(candidate?.listPrice) ?? currentPrice;
-    const effectivePrice = roundMoney(listPrice * (1 - applied.discountPercent / 100));
-    if (effectivePrice <= 0 || effectivePrice >= currentPrice) return candidate;
-    const campaign = applied.campaign;
-
-    return {
-      ...candidate,
-      appliedSaleCampaignId:
-        cleanText(campaign.saleCampaignId ?? campaign.campaignId ?? campaign.id ?? campaign.fingerprint) ||
-        null,
-      appliedSaleCode: campaignPromoCode(campaign),
-      appliedSaleDiscountPercent: applied.discountPercent,
-      appliedSaleEvidence: applied.evidence,
-      appliedSaleScope: applied.scope || null,
-      appliedSaleUrl: campaign.sourceUrl ?? null,
-      listPrice,
-      purchasePrice: effectivePrice,
-      purchaseOfferVerification: "campaign_advertised",
-      sourceDiscountPercent: applied.discountPercent,
-      sourceOriginalPrice: listPrice,
-    };
-  });
-}
-
-export function purchaseOfferVerificationForSource(candidate = {}, source = {}) {
-  const explicit = cleanText(candidate?.purchaseOfferVerification).toLowerCase();
-  if (["campaign_advertised", "direct_retailer", "discovery_lead", "official_api"].includes(explicit)) {
+export function purchaseOfferVerificationForSource(
+  candidate = {},
+  source = {},
+) {
+  const explicit = cleanText(
+    candidate?.purchaseOfferVerification,
+  ).toLowerCase();
+  if (
+    [
+      "campaign_advertised",
+      "direct_retailer",
+      "discovery_lead",
+      "official_api",
+    ].includes(explicit)
+  ) {
     return explicit;
   }
-  const crawlType = cleanText(source?.crawlType ?? source?.sourceType).toLowerCase();
+  const crawlType = cleanText(
+    source?.crawlType ?? source?.sourceType,
+  ).toLowerCase();
   const group = cleanText(source?.group).toLowerCase();
-  const retailSourceType = cleanText(source?.retailSourceType ?? source?.sourceType).toLowerCase();
+  const retailSourceType = cleanText(
+    source?.retailSourceType ?? source?.sourceType,
+  ).toLowerCase();
   const sourceId = cleanText(source?.id).toLowerCase();
   if (sourceId === "ebay-purchase") return "discovery_lead";
-  if (crawlType === "deal-aggregator" || crawlType === "social-feed" || group === "discovery sources") {
+  if (
+    crawlType === "deal-aggregator" ||
+    crawlType === "social-feed" ||
+    group === "discovery sources"
+  ) {
     return "discovery_lead";
   }
   if (
@@ -367,49 +370,6 @@ export function purchaseOfferVerificationForSource(candidate = {}, source = {}) 
   return "direct_retailer";
 }
 
-function hasConditionalDiscountRequirement(value) {
-  return /\b(?:members?\s+only|membership\s+(?:only|required)|(?:rewards?|loyalty|club)\s+members?|prime\s+members?|app(?:-?only|\s+exclusive)|mobile\s+app|first\s+(?:order|purchase)|new\s+customers?|subscribe(?:rs?|\s+and\s+save)?|subscription\s+(?:only|required)|cardholders?|with\s+(?:the\s+)?(?:store|credit)\s+card|spend\s+\$?\d+|orders?\s+(?:over|above|of)\s+\$?\d+|minimum\s+(?:order|purchase|spend)|when\s+you\s+(?:buy|purchase)\s+\d+|(?:buy|purchase)\s+\d+\s+(?:or\s+more|items?|titles?)|tiered\s+(?:sale|discount|savings?))\b/i.test(
-    String(value ?? ""),
-  );
-}
-
-function campaignEvidence(campaign) {
-  return cleanText(
-    `${campaign?.evidence ?? campaign?.saleEvidence ?? ""} ${campaign?.signal ?? campaign?.saleSignal ?? ""} ${campaign?.title ?? campaign?.sourceListingTitle ?? ""}`,
-  );
-}
-
-function campaignPromoCode(campaign) {
-  const explicit = cleanText(
-    campaign?.promoCode ?? campaign?.saleCode ?? campaign?.couponCode ?? campaign?.code,
-  );
-  if (explicit) return explicit;
-  const match = campaignEvidence(campaign).match(
-    /\b(?:promo(?:tional)?\s+code|discount\s+code|coupon\s+code|use\s+code|code)\s*[:\-]?\s*([a-z0-9][a-z0-9_-]{2,19})\b/i,
-  );
-  return match?.[1] ?? null;
-}
-
-function collectionIdFromUrl(value) {
-  if (!value) return null;
-  try {
-    const match = new URL(String(value)).pathname.match(/\/collections\/([^/?#]+)/i);
-    return normalizedCollectionId(match?.[1]);
-  } catch {
-    const match = String(value).match(/\/collections\/([^/?#]+)/i);
-    return normalizedCollectionId(match?.[1]);
-  }
-}
-
-function normalizedCollectionId(value) {
-  if (!value) return null;
-  try {
-    return decodeURIComponent(String(value)).trim().toLowerCase() || null;
-  } catch {
-    return String(value).trim().toLowerCase() || null;
-  }
-}
-
 function roundMoney(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
@@ -418,26 +378,34 @@ export function rankAndSelectCandidates(candidates, options = {}) {
   return rankAndSelectCandidatesWithDiagnostics(candidates, options).selected;
 }
 
-export function rankAndSelectCandidatesWithDiagnostics(candidates, options = {}) {
+export function rankAndSelectCandidatesWithDiagnostics(
+  candidates,
+  options = {},
+) {
   const inputCandidates = [...candidates];
   const dedupeResult =
     options.dedupePressings === false
       ? { candidates: inputCandidates, excluded: [] }
       : dedupePressingOffersWithDiagnostics(inputCandidates);
-  const compareCandidates = options.compareCandidates ?? compareRankedCandidates;
+  const compareCandidates =
+    options.compareCandidates ?? compareRankedCandidates;
   const ranked = dedupeResult.candidates.sort(compareCandidates);
   const requestedLimit = options.limit ?? ranked.length;
   const finiteRequestedLimit = Number.isFinite(requestedLimit)
     ? Math.max(0, Math.floor(requestedLimit))
     : null;
   const limit = Math.min(ranked.length, finiteRequestedLimit ?? ranked.length);
-  const limitApplied = finiteRequestedLimit !== null && finiteRequestedLimit < ranked.length;
+  const limitApplied =
+    finiteRequestedLimit !== null && finiteRequestedLimit < ranked.length;
   const familyKey = (candidate) =>
-    cleanText(options.familyKey?.(candidate)) || candidateSourceFamily(candidate);
+    cleanText(options.familyKey?.(candidate)) ||
+    candidateSourceFamily(candidate);
 
   if (!limitApplied || limit <= 0 || ranked.length === 0) {
     const selected = limit <= 0 ? [] : ranked.slice(0, limit);
-    const selectionPhases = new Map(selected.map((candidate) => [candidate, "ranked_fill"]));
+    const selectionPhases = new Map(
+      selected.map((candidate) => [candidate, "ranked_fill"]),
+    );
     return {
       diagnostics: buildCandidateSelectionDiagnostics({
         dedupeExcluded: dedupeResult.excluded,
@@ -506,7 +474,8 @@ export function rankAndSelectCandidatesWithDiagnostics(candidates, options = {})
       if (selected.length >= limit) break;
       const familyId = familyKey(candidate);
       if (representedFamilies.has(familyId)) continue;
-      if (add(candidate, "family_representation", true)) representedFamilies.add(familyId);
+      if (add(candidate, "family_representation", true))
+        representedFamilies.add(familyId);
     }
   }
 
@@ -565,7 +534,8 @@ export function rankAndSelectCandidatesWithDiagnostics(candidates, options = {})
     const identity = candidateSelectionIdentity(candidate, sourceId);
     if (selectedIds.has(identity)) return false;
     if ((perSource.get(sourceId) ?? 0) >= maxPerSource) return false;
-    if (enforceFamilyCap && (perFamily.get(familyId) ?? 0) >= maxPerFamily) return false;
+    if (enforceFamilyCap && (perFamily.get(familyId) ?? 0) >= maxPerFamily)
+      return false;
     selectedIds.add(identity);
     selected.push(candidate);
     selectionPhases.set(candidate, phase);
@@ -604,7 +574,9 @@ function buildCandidateSelectionDiagnostics({
   selected,
   selectionPhases,
 }) {
-  const rankByCandidate = new Map(ranked.map((candidate, index) => [candidate, index + 1]));
+  const rankByCandidate = new Map(
+    ranked.map((candidate, index) => [candidate, index + 1]),
+  );
   const selectedSet = new Set(selected);
   const selectedIdentities = new Set(
     selected.map((candidate) =>
@@ -630,10 +602,15 @@ function buildCandidateSelectionDiagnostics({
     const diagnostic = sourceDiagnostic(candidateSourceId(candidate));
     const rank = rankByCandidate.get(candidate) ?? null;
     diagnostic.eligibleCandidateCount += 1;
-    if (diagnostic.bestCandidateRank === null || rank < diagnostic.bestCandidateRank) {
+    if (
+      diagnostic.bestCandidateRank === null ||
+      rank < diagnostic.bestCandidateRank
+    ) {
       diagnostic.bestCandidateRank = rank;
       const score = Number(scoreCandidate(candidate));
-      diagnostic.bestCandidateScore = Number.isFinite(score) ? roundSelectionMetric(score) : null;
+      diagnostic.bestCandidateScore = Number.isFinite(score)
+        ? roundSelectionMetric(score)
+        : null;
     }
 
     if (selectedSet.has(candidate)) {
@@ -641,7 +618,10 @@ function buildCandidateSelectionDiagnostics({
       diagnostic.selectedCandidateCount += 1;
       diagnostic.selectedByPhase[phase] += 1;
       selectedByPhase[phase] += 1;
-      if (diagnostic.bestSelectedRank === null || rank < diagnostic.bestSelectedRank) {
+      if (
+        diagnostic.bestSelectedRank === null ||
+        rank < diagnostic.bestSelectedRank
+      ) {
         diagnostic.bestSelectedRank = rank;
       }
       continue;
@@ -650,22 +630,23 @@ function buildCandidateSelectionDiagnostics({
     const sourceId = candidateSourceId(candidate);
     const familyId = familyKey(candidate);
     const identity = candidateSelectionIdentity(candidate, sourceId);
-    const reason =
-      selectedIdentities.has(identity)
-        ? "duplicate_candidate_identity"
-        : (selectedPerSource.get(sourceId) ?? 0) >= maxPerSource
-          ? "source_cap"
-          : selected.length >= limit
-            ? "selection_limit"
-            : (selectedPerFamily.get(familyId) ?? 0) >= maxPerFamily
-              ? "family_cap"
-              : "selection_limit";
+    const reason = selectedIdentities.has(identity)
+      ? "duplicate_candidate_identity"
+      : (selectedPerSource.get(sourceId) ?? 0) >= maxPerSource
+        ? "source_cap"
+        : selected.length >= limit
+          ? "selection_limit"
+          : (selectedPerFamily.get(familyId) ?? 0) >= maxPerFamily
+            ? "family_cap"
+            : "selection_limit";
     recordExclusion(candidate, reason);
   }
 
   const sources = [...sourceDiagnostics.values()]
     .map((diagnostic) => {
-      const primaryExclusionReason = highestCountKey(diagnostic.excludedByReason);
+      const primaryExclusionReason = highestCountKey(
+        diagnostic.excludedByReason,
+      );
       return {
         ...diagnostic,
         excludedCandidateCount:
@@ -673,12 +654,14 @@ function buildCandidateSelectionDiagnostics({
         primaryExclusionReason,
         selectedShare:
           selected.length > 0
-            ? roundSelectionMetric(diagnostic.selectedCandidateCount / selected.length)
+            ? roundSelectionMetric(
+                diagnostic.selectedCandidateCount / selected.length,
+              )
             : 0,
         selectionStatus:
           diagnostic.selectedCandidateCount > 0
             ? "selected"
-            : primaryExclusionReason ?? "not_selected",
+            : (primaryExclusionReason ?? "not_selected"),
       };
     })
     .sort(
@@ -690,7 +673,9 @@ function buildCandidateSelectionDiagnostics({
   const representedSourceCount = sources.filter(
     (source) => source.selectedCandidateCount > 0,
   ).length;
-  const eligibleSourceCount = sources.filter((source) => source.eligibleCandidateCount > 0).length;
+  const eligibleSourceCount = sources.filter(
+    (source) => source.eligibleCandidateCount > 0,
+  ).length;
   const largestSourceSelectedCount = Math.max(
     0,
     ...sources.map((source) => source.selectedCandidateCount),
@@ -728,7 +713,8 @@ function buildCandidateSelectionDiagnostics({
     selectedCandidateCount: selected.length,
     sourceConcentrationHhi,
     sources,
-    unrepresentedEligibleSourceCount: eligibleSourceCount - representedSourceCount,
+    unrepresentedEligibleSourceCount:
+      eligibleSourceCount - representedSourceCount,
   };
 
   function sourceDiagnostic(sourceId) {
@@ -751,7 +737,8 @@ function buildCandidateSelectionDiagnostics({
   }
 
   function recordExclusion(candidate, reason) {
-    sourceDiagnostic(candidateSourceId(candidate)).excludedByReason[reason] += 1;
+    sourceDiagnostic(candidateSourceId(candidate)).excludedByReason[reason] +=
+      1;
     excludedByReason[reason] += 1;
   }
 }
@@ -770,9 +757,11 @@ function emptyCountRecord(keys) {
 }
 
 function highestCountKey(counts) {
-  return Object.entries(counts)
-    .filter(([, count]) => count > 0)
-    .sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+  return (
+    Object.entries(counts)
+      .filter(([, count]) => count > 0)
+      .sort((left, right) => right[1] - left[1])[0]?.[0] ?? null
+  );
 }
 
 function roundSelectionMetric(value) {
@@ -789,7 +778,11 @@ export function sourceMetadataScore(source) {
   else if (saleLikelihood === "medium") score += 4;
   if (noiseLevel === "low") score += 4;
   else if (noiseLevel === "high") score -= 6;
-  if (source.sourceType === "deal-aggregator" || source.crawlType === "deal-aggregator") score -= 4;
+  if (
+    source.sourceType === "deal-aggregator" ||
+    source.crawlType === "deal-aggregator"
+  )
+    score -= 4;
   return score;
 }
 
@@ -831,7 +824,9 @@ function dedupePressingOffersWithDiagnostics(candidates) {
     }
   }
   return {
-    candidates: [...offersByPressing.values()].map(({ candidate }) => candidate),
+    candidates: [...offersByPressing.values()].map(
+      ({ candidate }) => candidate,
+    ),
     excluded,
   };
 }
@@ -862,7 +857,8 @@ function normalizedGtin(...values) {
     const digits = String(value ?? "").replace(/\D/g, "");
     if (![8, 12, 13, 14].includes(digits.length)) continue;
     let normalized = digits;
-    while (normalized.length > 12 && normalized.startsWith("0")) normalized = normalized.slice(1);
+    while (normalized.length > 12 && normalized.startsWith("0"))
+      normalized = normalized.slice(1);
     return normalized;
   }
   return null;
@@ -871,7 +867,9 @@ function normalizedGtin(...values) {
 function normalizedReleaseTitle(candidate, normalizedArtist) {
   let value = cleanText(candidate.title ?? candidate.sourceListingTitle);
   value = value.replace(/\(([^)]*)\)|\[([^\]]*)\]/g, (group) =>
-    hasEditionIdentitySignal(group) || /\b(?:ep|lp|record|vinyl)\b/i.test(group) ? " " : group,
+    hasEditionIdentitySignal(group) || /\b(?:ep|lp|record|vinyl)\b/i.test(group)
+      ? " "
+      : group,
   );
   value = value.replace(/\s+[-\u2013\u2014:|]\s+([^|]+)$/g, (group, suffix) =>
     hasEditionIdentitySignal(suffix) ? " " : group,
@@ -881,7 +879,10 @@ function normalizedReleaseTitle(candidate, normalizedArtist) {
     normalized = normalized.slice(normalizedArtist.length + 1);
   }
   return normalized
-    .replace(/\b(?:on\s+)?(?:vinyl\s+record|vinyl\s+lp|record\s+lp|vinyl|record|lp)\b$/g, " ")
+    .replace(
+      /\b(?:on\s+)?(?:vinyl\s+record|vinyl\s+lp|record\s+lp|vinyl|record|lp)\b$/g,
+      " ",
+    )
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -898,14 +899,21 @@ function editionIdentity(candidate) {
   const normalized = normalizeIdentityText(raw);
   const parts = new Set();
 
-  for (const match of normalized.matchAll(/\b(\d{1,3})(?:st|nd|rd|th)? anniversary\b/g)) {
+  for (const match of normalized.matchAll(
+    /\b(\d{1,3})(?:st|nd|rd|th)? anniversary\b/g,
+  )) {
     parts.add(`anniversary-${match[1]}`);
   }
-  if (/\banniversary\b/.test(normalized) && ![...parts].some((part) => part.startsWith("anniversary-"))) {
+  if (
+    /\banniversary\b/.test(normalized) &&
+    ![...parts].some((part) => part.startsWith("anniversary-"))
+  ) {
     parts.add("anniversary");
   }
-  for (const match of normalized.matchAll(/\b([2-9])\s*(?:x\s*)?lp\b/g)) parts.add(`${match[1]}lp`);
-  for (const match of normalized.matchAll(/\b(180|200)\s*g\b/g)) parts.add(`${match[1]}g`);
+  for (const match of normalized.matchAll(/\b([2-9])\s*(?:x\s*)?lp\b/g))
+    parts.add(`${match[1]}lp`);
+  for (const match of normalized.matchAll(/\b(180|200)\s*g\b/g))
+    parts.add(`${match[1]}g`);
 
   const fixedSignals = [
     ["audiophile", /\baudiophile\b/],
@@ -929,7 +937,10 @@ function editionIdentity(candidate) {
   const exclusiveMatch = normalized.match(
     /\b(target|walmart|amazon|indie|urban outfitters|barnes and noble|barnes noble|b and n)\s+exclusive\b/,
   );
-  if (exclusiveMatch) parts.add(`exclusive-${normalizeIdentityText(exclusiveMatch[1]).replace(/\s/g, "-")}`);
+  if (exclusiveMatch)
+    parts.add(
+      `exclusive-${normalizeIdentityText(exclusiveMatch[1]).replace(/\s/g, "-")}`,
+    );
   else if (/\bexclusive\b/.test(normalized)) parts.add("exclusive");
 
   const colorNames = [
@@ -954,14 +965,21 @@ function editionIdentity(candidate) {
   ];
   for (const color of colorNames) {
     if (
-      new RegExp(`\\b${color}\\s+(?:colored\\s+)?(?:vinyl|lp)\\b|\\b(?:vinyl|lp)\\s+(?:in\\s+)?${color}\\b`).test(
-        normalized,
-      )
+      new RegExp(
+        `\\b${color}\\s+(?:colored\\s+)?(?:vinyl|lp)\\b|\\b(?:vinyl|lp)\\s+(?:in\\s+)?${color}\\b`,
+      ).test(normalized)
     ) {
       parts.add(`color-${color === "grey" ? "gray" : color}`);
     }
   }
-  for (const texture of ["galaxy", "marble", "marbled", "smoke", "splatter", "swirl"]) {
+  for (const texture of [
+    "galaxy",
+    "marble",
+    "marbled",
+    "smoke",
+    "splatter",
+    "swirl",
+  ]) {
     if (new RegExp(`\\b${texture}\\b`).test(normalized)) {
       parts.add(`texture-${texture === "marbled" ? "marble" : texture}`);
     }
@@ -978,10 +996,15 @@ function hasEditionIdentitySignal(value) {
 
 function conditionIdentity(value) {
   const condition = String(value ?? "");
-  if (/\b(?:pre[-\s]?owned|used|very\s+good|vg|near\s+mint|nm|fair|poor)\b/i.test(condition)) {
+  if (
+    /\b(?:pre[-\s]?owned|used|very\s+good|vg|near\s+mint|nm|fair|poor)\b/i.test(
+      condition,
+    )
+  ) {
     return "used";
   }
-  if (/\b(?:brand\s+new|factory\s+sealed|new|sealed)\b/i.test(condition)) return "new";
+  if (/\b(?:brand\s+new|factory\s+sealed|new|sealed)\b/i.test(condition))
+    return "new";
   return "unknown";
 }
 
@@ -998,8 +1021,16 @@ function normalizeIdentityText(value) {
 }
 
 function compareDuplicateOffers(left, right) {
-  const leftUnavailable = left.available === false || /\b(?:out\s+of\s+stock|sold\s+out|unavailable)\b/i.test(String(left.stockStatus ?? ""));
-  const rightUnavailable = right.available === false || /\b(?:out\s+of\s+stock|sold\s+out|unavailable)\b/i.test(String(right.stockStatus ?? ""));
+  const leftUnavailable =
+    left.available === false ||
+    /\b(?:out\s+of\s+stock|sold\s+out|unavailable)\b/i.test(
+      String(left.stockStatus ?? ""),
+    );
+  const rightUnavailable =
+    right.available === false ||
+    /\b(?:out\s+of\s+stock|sold\s+out|unavailable)\b/i.test(
+      String(right.stockStatus ?? ""),
+    );
   if (leftUnavailable !== rightUnavailable) return leftUnavailable ? 1 : -1;
   const leftThirdParty = left.retailerSoldBySource === false;
   const rightThirdParty = right.retailerSoldBySource === false;
@@ -1007,15 +1038,19 @@ function compareDuplicateOffers(left, right) {
 
   const leftPrice = finitePositive(left.purchasePrice);
   const rightPrice = finitePositive(right.purchasePrice);
-  if (leftPrice !== null && rightPrice !== null && leftPrice !== rightPrice) return leftPrice - rightPrice;
-  if (leftPrice !== null || rightPrice !== null) return leftPrice === null ? 1 : -1;
+  if (leftPrice !== null && rightPrice !== null && leftPrice !== rightPrice)
+    return leftPrice - rightPrice;
+  if (leftPrice !== null || rightPrice !== null)
+    return leftPrice === null ? 1 : -1;
   return compareRankedCandidates(left, right);
 }
 
 function compareRankedCandidates(left, right) {
   return (
     candidateQualityScore(right) - candidateQualityScore(left) ||
-    String(left.sourceName ?? "").localeCompare(String(right.sourceName ?? "")) ||
+    String(left.sourceName ?? "").localeCompare(
+      String(right.sourceName ?? ""),
+    ) ||
     String(left.title ?? "").localeCompare(String(right.title ?? ""))
   );
 }
@@ -1027,7 +1062,9 @@ function candidateSourceId(candidate) {
 function candidateSourceFamily(candidate) {
   const group = normalizeIdentityText(candidate.sourceGroup ?? candidate.group);
   const retailType = normalizeIdentityText(candidate.sourceRetailType);
-  const crawlType = normalizeIdentityText(candidate.sourceCrawlType ?? candidate.crawlType);
+  const crawlType = normalizeIdentityText(
+    candidate.sourceCrawlType ?? candidate.crawlType,
+  );
   const sourceType = normalizeIdentityText(candidate.sourceType);
   const parts = [
     group ? `group:${group}` : null,
@@ -1035,7 +1072,10 @@ function candidateSourceFamily(candidate) {
     crawlType ? `crawl:${crawlType}` : null,
     sourceType && sourceType !== crawlType ? `type:${sourceType}` : null,
   ].filter(Boolean);
-  return parts.join("|") || `source:${normalizeIdentityText(candidateSourceId(candidate)) || "unknown"}`;
+  return (
+    parts.join("|") ||
+    `source:${normalizeIdentityText(candidateSourceId(candidate)) || "unknown"}`
+  );
 }
 
 function candidateSelectionIdentity(candidate, sourceId) {
@@ -1052,7 +1092,12 @@ function finitePositive(value) {
 
 function isVerifiedDirectUsNewRetailOffer(find) {
   if (!isUsCountry(find.sourceCountry)) return false;
-  if (String(find.sourceCurrency ?? "").trim().toUpperCase() !== "USD") return false;
+  if (
+    String(find.sourceCurrency ?? "")
+      .trim()
+      .toUpperCase() !== "USD"
+  )
+    return false;
   if (!isNewCondition(find.condition)) return false;
   if (isDiscoveryOnlySource(find)) return false;
   if (hasExplicitThirdPartySeller(find)) return false;
@@ -1062,34 +1107,54 @@ function isVerifiedDirectUsNewRetailOffer(find) {
   const directDomainMatch =
     Boolean(productHost) &&
     Boolean(configuredHost) &&
-    (productHost === configuredHost || productHost.endsWith(`.${configuredHost}`));
-  return directDomainMatch || (find.retailerSoldBySource === true && Boolean(productHost));
+    (productHost === configuredHost ||
+      productHost.endsWith(`.${configuredHost}`));
+  return (
+    directDomainMatch ||
+    (find.retailerSoldBySource === true && Boolean(productHost))
+  );
 }
 
 function isCredibleSlickdealsResearchLead(find) {
   const purchasePrice = finitePositive(find.purchasePrice);
   if (purchasePrice === null || purchasePrice > 20) return false;
   if (!isUsCountry(find.sourceCountry)) return false;
-  if (String(find.sourceCurrency ?? "").trim().toUpperCase() !== "USD") return false;
+  if (
+    String(find.sourceCurrency ?? "")
+      .trim()
+      .toUpperCase() !== "USD"
+  )
+    return false;
   if (!isNewCondition(find.condition)) return false;
-  if (!/^slickdeals-vinyl-records(?:$|-)/i.test(String(find.sourceId ?? ""))) return false;
+  if (!/^slickdeals-vinyl-records(?:$|-)/i.test(String(find.sourceId ?? "")))
+    return false;
   if (Number(find.candidateQualityScore ?? 0) < 55) return false;
-  if (!VINYL_FORMAT.test(String(find.sourceListingTitle ?? find.title ?? ""))) return false;
+  if (!VINYL_FORMAT.test(String(find.sourceListingTitle ?? find.title ?? "")))
+    return false;
   try {
     const url = new URL(String(find.sourceUrl ?? ""));
-    return /(?:^|\.)slickdeals\.net$/i.test(url.hostname) && /^\/f\/\d+/i.test(url.pathname);
+    return (
+      /(?:^|\.)slickdeals\.net$/i.test(url.hostname) &&
+      /^\/f\/\d+/i.test(url.pathname)
+    );
   } catch {
     return false;
   }
 }
 
 function isUsCountry(value) {
-  return /^(?:us|usa|united states|united states of america)$/i.test(String(value ?? "").trim());
+  return /^(?:us|usa|united states|united states of america)$/i.test(
+    String(value ?? "").trim(),
+  );
 }
 
 function isNewCondition(value) {
   const condition = String(value ?? "").trim();
-  if (/\b(?:fair|near\s+mint|nm|poor|pre[-\s]?owned|used|very\s+good|vg)\b/i.test(condition)) {
+  if (
+    /\b(?:fair|near\s+mint|nm|poor|pre[-\s]?owned|used|very\s+good|vg)\b/i.test(
+      condition,
+    )
+  ) {
     return false;
   }
   return /\b(?:brand\s+new|factory\s+sealed|new|sealed)\b/i.test(condition);
@@ -1106,7 +1171,11 @@ function isDiscoveryOnlySource(find) {
   ]
     .filter(Boolean)
     .join(" ");
-  if (/\b(?:deal[-_\s]?aggregator|discovery[-_\s]?lead|discovery\s+sources?|distributor[-_\s]?discovery|social[-_\s]?feed)\b/i.test(sourceFamily)) {
+  if (
+    /\b(?:deal[-_\s]?aggregator|discovery[-_\s]?lead|discovery\s+sources?|distributor[-_\s]?discovery|social[-_\s]?feed)\b/i.test(
+      sourceFamily,
+    )
+  ) {
     return true;
   }
   return /^(?:cheap-vinyl(?:$|-)|reddit-|slickdeals-vinyl-records(?:$|-)|vinyl-price-drop(?:$|-))/i.test(
@@ -1134,7 +1203,10 @@ function normalizedSellerIdentity(value) {
   return String(value ?? "")
     .toLowerCase()
     .replace(/&/g, " and ")
-    .replace(/\b(?:com|company|corp|corporation|inc|llc|online|store|stores)\b/g, " ")
+    .replace(
+      /\b(?:com|company|corp|corporation|inc|llc|online|store|stores)\b/g,
+      " ",
+    )
     .replace(/[^a-z0-9]+/g, "")
     .trim();
 }
@@ -1143,7 +1215,9 @@ function normalizedHostname(value) {
   const text = String(value ?? "").trim();
   if (!text) return "";
   try {
-    return new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`).hostname
+    return new URL(
+      /^https?:\/\//i.test(text) ? text : `https://${text}`,
+    ).hostname
       .toLowerCase()
       .replace(/^www\./, "");
   } catch {
@@ -1156,7 +1230,9 @@ function canonicalProductIdentityUrl(value) {
   if (!text) return null;
   try {
     const url = new URL(text);
-    const shopifyProduct = url.pathname.match(/(?:^|\/)collections\/[^/]+\/products\/([^/?#]+)/i);
+    const shopifyProduct = url.pathname.match(
+      /(?:^|\/)collections\/[^/]+\/products\/([^/?#]+)/i,
+    );
     if (shopifyProduct) url.pathname = `/products/${shopifyProduct[1]}`;
     url.hash = "";
     for (const key of [...url.searchParams.keys()]) {
@@ -1186,7 +1262,8 @@ function estimatedMargin(find) {
 }
 
 function soldTotal(find) {
-  if (find.averageSoldPrice === null || find.averageSoldPrice === undefined) return null;
+  if (find.averageSoldPrice === null || find.averageSoldPrice === undefined)
+    return null;
   return find.averageSoldPrice + (find.averageSoldShipping ?? 0);
 }
 
@@ -1209,3 +1286,56 @@ function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 import { isMarketplaceNonRecordTitle } from "../../src/lib/arbitrage/marketplaceProductClassification.mjs";
+
+/** Preserve research capacity for exact own-sales matches, campaign prices, and exploration. */
+export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
+  const ranked = rankAndSelectCandidatesWithDiagnostics(candidates, {
+    limit: Number.POSITIVE_INFINITY,
+    dedupePressings: false,
+  });
+  const selected = [],
+    seen = new Set();
+  const add = (rows, count, lane) => {
+    let added = 0;
+    for (const row of rows) {
+      if (added >= count || selected.length >= limit) break;
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      selected.push({ ...row, discoveryLane: lane });
+      added++;
+    }
+  };
+  const own = ranked.selected.filter(
+    (f) =>
+      f.soldEvidence?.status === "validated" &&
+      Number(f.soldEvidence?.unitsSold90Days) >= 3 &&
+      f.soldEvidence?.artistMatchConfirmed !== false &&
+      f.soldEvidence?.editionMatchConfirmed !== false,
+  );
+  const campaigns = ranked.selected.filter(
+    (f) =>
+      f.appliedSaleCampaignId ||
+      f.campaignChecks?.some((c) => c.reasons.length === 0),
+  );
+  add(own, Math.floor(limit * 0.4), "exact_own_sales");
+  add(campaigns, Math.floor(limit * 0.4), "campaign");
+  add(ranked.selected, Math.floor(limit * 0.2), "exploration");
+  add(ranked.selected, limit - selected.length, "remaining_capacity");
+  const diagnostics = rankAndSelectCandidatesWithDiagnostics(selected, {
+    limit,
+    dedupePressings: false,
+  }).diagnostics;
+  return {
+    selected,
+    diagnostics: {
+      ...diagnostics,
+      byDiscoveryLane: selected.reduce(
+        (counts, f) => (
+          (counts[f.discoveryLane] = (counts[f.discoveryLane] ?? 0) + 1),
+          counts
+        ),
+        {},
+      ),
+    },
+  };
+}

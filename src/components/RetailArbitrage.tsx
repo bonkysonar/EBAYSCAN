@@ -1,6 +1,15 @@
+import {
+  consideration,
+  selectDecisionList,
+  releaseGroupKey,
+} from "../lib/arbitrage/decisionList.mjs";
+import { RetailScanStatus } from "./RetailScanStatus";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
-import { buildSoldResearchLinks, type SoldResearchLink } from "../lib/arbitrage/soldResearchLinks.mjs";
+import {
+  buildSoldResearchLinks,
+  type SoldResearchLink,
+} from "../lib/arbitrage/soldResearchLinks.mjs";
 import {
   loadReviewFeedback,
   pruneStaleRecordFeedback,
@@ -27,6 +36,7 @@ import type {
 import { readJsonResponse } from "../lib/http/jsonResponse";
 
 type CandidateQueueFilter =
+  | "WORTH"
   | "A"
   | "AUTOMATIC_BUY"
   | "B"
@@ -100,7 +110,8 @@ const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const EVALUATION_CLOCK_INTERVAL_MS = 60 * 1000;
 
 const queueOptions: Array<{ label: string; value: CandidateQueueFilter }> = [
-  { label: "All candidates", value: "CANDIDATES" },
+  { label: "Worth considering · up to 15 releases", value: "WORTH" },
+  { label: "Research candidates", value: "CANDIDATES" },
   { label: "Tier A · verified", value: "A" },
   { label: "Tier B · promising", value: "B" },
   { label: "Tier C · research", value: "C" },
@@ -114,6 +125,10 @@ const queueOptions: Array<{ label: string; value: CandidateQueueFilter }> = [
 ];
 
 const outcomeOptions: Array<{ label: string; value: RecordOutcome }> = [
+  { label: "Worth opening", value: "worth_opening" },
+  { label: "Wrong identity", value: "bad_identity" },
+  { label: "Wrong format", value: "wrong_format" },
+  { label: "Stale offer", value: "stale_offer" },
   { label: "Bought", value: "bought" },
   { label: "Listed", value: "listed" },
   { label: "Sold", value: "sold" },
@@ -136,15 +151,30 @@ const sortableColumns: Array<{ key: SortKey; label: string }> = [
 ];
 
 export function RetailArbitrage() {
-  const [finds, setFinds] = useState<ArbitrageFind[]>(() => loadArbitrageFinds());
-  const [settings, setSettings] = useState<ArbitrageSettings>(() => loadArbitrageSettings());
-  const [feedback, setFeedback] = useState<ReviewFeedback>(() => loadReviewFeedback());
-  const [latestPayload, setLatestPayload] = useState<PayloadWithDiagnostics | null>(null);
-  const [queueFilter, setQueueFilter] = useState<CandidateQueueFilter>("CANDIDATES");
-  const [sourceFilter, setSourceFilter] = useState("ALL");
+  const [finds, setFinds] = useState<ArbitrageFind[]>(() =>
+    loadArbitrageFinds(),
+  );
+  const [settings, setSettings] = useState<ArbitrageSettings>(() =>
+    loadArbitrageSettings(),
+  );
+  const [feedback, setFeedback] = useState<ReviewFeedback>(() =>
+    loadReviewFeedback(),
+  );
+  const [latestPayload, setLatestPayload] =
+    useState<PayloadWithDiagnostics | null>(null);
+  const [queueFilter, setQueueFilter] = useState<CandidateQueueFilter>(() =>
+    window.location.hash.includes("?") ? "CANDIDATES" : "WORTH",
+  );
+  const [sourceFilter, setSourceFilter] = useState(
+    () =>
+      new URLSearchParams(window.location.hash.split("?")[1]).get("source") ??
+      "ALL",
+  );
   const [sortKey, setSortKey] = useState<SortKey>("priority");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    new URLSearchParams(window.location.hash.split("?")[1]).get("find"),
+  );
   const [latestMessage, setLatestMessage] = useState<string | null>(null);
   const [isLoadingLatest, setIsLoadingLatest] = useState(true);
   const [hasAuthoritativeLatest, setHasAuthoritativeLatest] = useState(false);
@@ -176,16 +206,23 @@ export function RetailArbitrage() {
     [feedback, queueFilter, scoredFinds, sortDirection, sortKey, sourceFilter],
   );
   const selectedFind =
-    visibleFinds.find((find) => find.id === selectedId) ?? visibleFinds[0] ?? null;
+    visibleFinds.find((find) => find.id === selectedId) ??
+    visibleFinds[0] ??
+    null;
   const stats = summarizeFinds(scoredFinds, feedback);
   const coverage = summarizeCoverage(latestPayload);
   const runQuality = latestPayload?.runQuality;
   const selectionDiagnostics = latestPayload?.selectionDiagnostics;
   const sourceOptions = useMemo(
     () =>
-      [...new Map(scoredFinds.map((find) => [purchaseRetailerKey(find), purchaseRetailerLabel(find)])).entries()].sort((left, right) =>
-        left[1].localeCompare(right[1]),
-      ),
+      [
+        ...new Map(
+          scoredFinds.map((find) => [
+            purchaseRetailerKey(find),
+            purchaseRetailerLabel(find),
+          ]),
+        ).entries(),
+      ].sort((left, right) => left[1].localeCompare(right[1])),
     [scoredFinds],
   );
 
@@ -220,14 +257,19 @@ export function RetailArbitrage() {
     };
   }, []);
 
-  function updateSetting<K extends keyof ArbitrageSettings>(key: K, value: ArbitrageSettings[K]) {
+  function updateSetting<K extends keyof ArbitrageSettings>(
+    key: K,
+    value: ArbitrageSettings[K],
+  ) {
     setSettings((current) => ({ ...current, [key]: value }));
   }
 
   function dismissFind(findId: string) {
     setFinds((current) => {
       const next = current.map((find) =>
-        find.id === findId ? { ...find, dismissedAt: new Date().toISOString() } : find,
+        find.id === findId
+          ? { ...find, dismissedAt: new Date().toISOString() }
+          : find,
       );
       findsRef.current = next;
       return next;
@@ -256,6 +298,20 @@ export function RetailArbitrage() {
         find ? retailOfferFeedbackKey(find) : undefined,
       ),
     );
+    if (find?.feedbackReceipt)
+      void fetch("/api/arbitrage/operations?action=feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ receipt: find.feedbackReceipt, outcome }),
+      })
+        .then((response) => {
+          if (!response.ok) throw new Error("Review sync failed");
+        })
+        .catch(() =>
+          setLatestMessage(
+            "Review saved in this browser. Scanner sync failed; refresh and retry the outcome to sync it.",
+          ),
+        );
   }
 
   function toggleSort(nextSortKey: SortKey) {
@@ -271,11 +327,12 @@ export function RetailArbitrage() {
     const requestId = ++latestRequestRef.current;
     setIsLoadingLatest(true);
     try {
-      const response = await fetch(`/api/arbitrage/latest?ts=${Date.now()}`, { cache: "no-store" });
-      const payload = await readJsonResponse<LatestFindsErrorResponse | LatestFindsResponse>(
-        response,
-        "Latest finds endpoint",
-      );
+      const response = await fetch(`/api/arbitrage/latest?ts=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const payload = await readJsonResponse<
+        LatestFindsErrorResponse | LatestFindsResponse
+      >(response, "Latest finds endpoint");
       if (requestId !== latestRequestRef.current) return;
       if ("error" in payload) throw new Error(payload.error);
       if (!response.ok) throw new Error("Latest finds load failed.");
@@ -304,7 +361,8 @@ export function RetailArbitrage() {
       );
     } catch (caught) {
       if (requestId !== latestRequestRef.current) return;
-      const message = caught instanceof Error ? caught.message : "Latest finds load failed.";
+      const message =
+        caught instanceof Error ? caught.message : "Latest finds load failed.";
       if (!authoritativeLatestRef.current) {
         findsRef.current = [];
         setFinds([]);
@@ -313,7 +371,9 @@ export function RetailArbitrage() {
         setHasAuthoritativeLatest(false);
         setLatestMessage(message);
       } else {
-        setLatestMessage(`Refresh failed; keeping the last verified publication. ${message}`);
+        setLatestMessage(
+          `Refresh failed; keeping the last verified publication. ${message}`,
+        );
       }
     } finally {
       if (requestId === latestRequestRef.current) setIsLoadingLatest(false);
@@ -325,14 +385,19 @@ export function RetailArbitrage() {
       <div className="seller-hero panel compact-seller-hero arbitrage-hero">
         <div>
           <span className="eyebrow">Retail candidate finder</span>
-          <h2>Viable records first. Evidence underneath.</h2>
+          <h2>Worth considering today.</h2>
           <p>
-            Tier A is fully validated, Tier B is a promising product-level opportunity, and Tier C is a
-            real source-linked record worth researching. Automatic BUY remains the stricter proof badge.
+            Up to 15 distinct releases with defensible profit and demand
+            evidence. Each has passed verification or has one clearly stated
+            remaining check. Broader leads live in Research candidates.
           </p>
         </div>
         <div className="seller-actions">
-          <button type="button" onClick={loadLatestFinds} disabled={isLoadingLatest}>
+          <button
+            type="button"
+            onClick={loadLatestFinds}
+            disabled={isLoadingLatest}
+          >
             {isLoadingLatest ? "Loading..." : "Reload scan data"}
           </button>
           <button
@@ -345,86 +410,151 @@ export function RetailArbitrage() {
         </div>
       </div>
 
-      {latestMessage ? <div className="warning-box">{latestMessage}</div> : null}
+      {selectedFind &&
+      queueFilter === "WORTH" &&
+      scoredFinds.some(
+        (f) =>
+          f.id !== selectedFind.id &&
+          releaseGroupKey(f) === releaseGroupKey(selectedFind),
+      ) ? (
+        <details className="panel">
+          <summary>
+            Other offers for {selectedFind.artist} — {selectedFind.title}
+          </summary>
+          {scoredFinds
+            .filter(
+              (f) =>
+                f.id !== selectedFind.id &&
+                releaseGroupKey(f) === releaseGroupKey(selectedFind),
+            )
+            .map((f) => (
+              <p key={f.id}>
+                <a href={f.sourceUrl} target="_blank" rel="noreferrer">
+                  {f.sourceName} · {f.shopifyVariantTitle ?? f.title}
+                </a>{" "}
+                · {f.sourceCurrency} {f.purchasePrice.toFixed(2)} · edition
+                evidence remains separate
+              </p>
+            ))}
+        </details>
+      ) : null}
+      {latestMessage && !latestMessage.startsWith("Loaded ") ? (
+        <div className="warning-box">{latestMessage}</div>
+      ) : null}
+      <RetailScanStatus payload={latestPayload} />
 
-      <div className="seller-stats compact-seller-stats arbitrage-stats">
-        <Stat label="Tier A · verified" value={stats.A} tone="buy" />
-        <Stat label="Tier B · promising" value={stats.B} tone="review" />
-        <Stat label="Tier C · research" value={stats.C} />
-        <Stat label="Price watch" value={stats.WATCH} />
-        <Stat label="Automatic BUY" value={stats.automaticBuy} tone="buy" />
-        <Stat label="Sold evidence" value={`${stats.soldValidated}/${stats.total}`} />
-        <Stat label="Exact supply" value={`${stats.activeValidated}/${stats.total}`} />
-        <Stat
-          label="Sale coverage"
-          value={coverage.hasSaleDiagnostics ? `${coverage.saleCapable}/${coverage.attempted}` : "Unavailable"}
-        />
-        <Stat
-          label="Product coverage"
-          value={
-            coverage.hasProductDiagnostics
-              ? `${coverage.productUsable}/${coverage.productAttempted}`
-              : "Unavailable"
-          }
-          tone={coverage.parserEmpty || coverage.productFailed ? "warn" : undefined}
-        />
-        <Stat label="Blocked" value={coverage.blocked} tone={coverage.blocked ? "warn" : undefined} />
-      </div>
+      <details className="panel retail-diagnostics">
+        <summary>
+          Scan diagnostics · {stats.total} research candidates ·{" "}
+          {coverage.blocked} blocked sources
+        </summary>
+        <div className="seller-stats compact-seller-stats arbitrage-stats">
+          <Stat label="Tier A · verified" value={stats.A} tone="buy" />
+          <Stat label="Tier B · promising" value={stats.B} tone="review" />
+          <Stat label="Tier C · research" value={stats.C} />
+          <Stat label="Price watch" value={stats.WATCH} />
+          <Stat label="Automatic BUY" value={stats.automaticBuy} tone="buy" />
+          <Stat
+            label="Sold evidence"
+            value={`${stats.soldValidated}/${stats.total}`}
+          />
+          <Stat
+            label="Exact supply"
+            value={`${stats.activeValidated}/${stats.total}`}
+          />
+          <Stat
+            label="Sale coverage"
+            value={
+              coverage.hasSaleDiagnostics
+                ? `${coverage.saleCapable}/${coverage.attempted}`
+                : "Unavailable"
+            }
+          />
+          <Stat
+            label="Product coverage"
+            value={
+              coverage.hasProductDiagnostics
+                ? `${coverage.productUsable}/${coverage.productAttempted}`
+                : "Unavailable"
+            }
+            tone={
+              coverage.parserEmpty || coverage.productFailed
+                ? "warn"
+                : undefined
+            }
+          />
+          <Stat
+            label="Blocked"
+            value={coverage.blocked}
+            tone={coverage.blocked ? "warn" : undefined}
+          />
+        </div>
 
-      <section className="panel arbitrage-run-strip">
-        <div>
-          <strong>{latestPayload?.runId ?? "No run loaded"}</strong>
-          <span>
-            {latestPayload ? `Scanned ${formatAge(latestPayload.createdAt)}` : "Waiting for scan data"}
-          </span>
-        </div>
-        <div>
-          <strong>{coverage.healthy} healthy · {coverage.degraded} degraded · {coverage.blocked} blocked</strong>
-          <span>
-            {coverage.hasProductDiagnostics
-              ? `Product yield ${coverage.productUsable}/${coverage.productAttempted}; ${coverage.parserEmpty} parser-empty, ${coverage.productFailed} unavailable. Priority coverage ${coverage.priorityHealthy}/${coverage.priorityTotal}; phase ${latestPayload?.phase ?? "unknown"}`
-              : `Legacy coverage report; rerun required for product-yield diagnostics. Phase ${latestPayload?.phase ?? "unknown"}`}
-          </span>
-        </div>
-        {runQuality || selectionDiagnostics ? (
+        <section className="panel arbitrage-run-strip">
           <div>
-            <strong>
-              {runQuality
-                ? `${humanize(runQuality.status)} run · catalog reach ${runQuality.directCatalogCoverageCount}/${runQuality.directSourceCount}`
-                : "Selection breadth"}
-            </strong>
+            <strong>{latestPayload?.runId ?? "No run loaded"}</strong>
             <span>
-              {[
-                runQuality
-                  ? `${runQuality.directProductiveSourceCount}/${runQuality.directSourceCount} direct sources produced candidates`
-                  : null,
-                selectionDiagnostics
-                  ? `Selected from ${selectionDiagnostics.representedSourceCount ?? 0}/${selectionDiagnostics.eligibleSourceCount ?? 0} eligible sources; largest source ${percent(selectionDiagnostics.largestSourceShare)}`
-                  : null,
-                runQuality?.reasons?.[0] ?? null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+              {latestPayload
+                ? `Scanned ${formatAge(latestPayload.createdAt)}`
+                : "Waiting for scan data"}
             </span>
           </div>
-        ) : null}
-      </section>
+          <div>
+            <strong>
+              {coverage.healthy} healthy · {coverage.degraded} degraded ·{" "}
+              {coverage.blocked} blocked
+            </strong>
+            <span>
+              {coverage.hasProductDiagnostics
+                ? `Product yield ${coverage.productUsable}/${coverage.productAttempted}; ${coverage.parserEmpty} parser-empty, ${coverage.productFailed} unavailable. Priority coverage ${coverage.priorityHealthy}/${coverage.priorityTotal}; phase ${latestPayload?.phase ?? "unknown"}`
+                : `Legacy coverage report; rerun required for product-yield diagnostics. Phase ${latestPayload?.phase ?? "unknown"}`}
+            </span>
+          </div>
+          {runQuality || selectionDiagnostics ? (
+            <div>
+              <strong>
+                {runQuality
+                  ? `${humanize(runQuality.status)} run · catalog reach ${runQuality.directCatalogCoverageCount}/${runQuality.directSourceCount}`
+                  : "Selection breadth"}
+              </strong>
+              <span>
+                {[
+                  runQuality
+                    ? `${runQuality.directProductiveSourceCount}/${runQuality.directSourceCount} direct sources produced candidates`
+                    : null,
+                  selectionDiagnostics
+                    ? `Selected from ${selectionDiagnostics.representedSourceCount ?? 0}/${selectionDiagnostics.eligibleSourceCount ?? 0} eligible sources; largest source ${percent(selectionDiagnostics.largestSourceShare)}`
+                    : null,
+                  runQuality?.reasons?.[0] ?? null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </div>
+          ) : null}
+        </section>
 
-      <SourceCoveragePanel reports={latestPayload?.sourceReports ?? []} />
+        <SourceCoveragePanel reports={latestPayload?.sourceReports ?? []} />
+      </details>
 
       <section className="arbitrage-workbench">
         <section className="panel arbitrage-table-panel">
           <div className="section-heading seller-table-heading">
             <div>
               <h2>{filterHeading(queueFilter)}</h2>
-              <span>{visibleFinds.length} visible of {scoredFinds.length} record candidates</span>
+              <span>
+                {visibleFinds.length} visible of {scoredFinds.length} record
+                candidates
+              </span>
             </div>
             <div className="seller-controls">
               <label>
                 Queue
                 <select
                   value={queueFilter}
-                  onChange={(event) => setQueueFilter(event.target.value as CandidateQueueFilter)}
+                  onChange={(event) =>
+                    setQueueFilter(event.target.value as CandidateQueueFilter)
+                  }
                 >
                   {queueOptions.map((option) => (
                     <option value={option.value} key={option.value}>
@@ -435,7 +565,10 @@ export function RetailArbitrage() {
               </label>
               <label>
                 Buy at
-                <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
+                <select
+                  value={sourceFilter}
+                  onChange={(event) => setSourceFilter(event.target.value)}
+                >
                   <option value="ALL">All sources</option>
                   {sourceOptions.map(([id, name]) => (
                     <option value={id} key={id}>
@@ -452,23 +585,31 @@ export function RetailArbitrage() {
               <h2>
                 {!hasAuthoritativeLatest && isLoadingLatest
                   ? "Checking the latest publication"
-                  : queueFilter === "A"
-                    ? "No Tier A verified candidates in this run"
-                    : queueFilter === "AUTOMATIC_BUY"
-                      ? "No automatic buys in this run"
-                      : queueFilter === "CANDIDATES" || queueFilter === "ALL"
-                      ? "No record candidates in this run"
-                      : "No records in this view"}
+                  : queueFilter === "WORTH"
+                    ? "No records currently meet the decision-list requirements"
+                    : queueFilter === "A"
+                      ? "No Tier A verified candidates in this run"
+                      : queueFilter === "AUTOMATIC_BUY"
+                        ? "No automatic buys in this run"
+                        : queueFilter === "CANDIDATES" || queueFilter === "ALL"
+                          ? "No record candidates in this run"
+                          : "No records in this view"}
               </h2>
               <p>
                 {!hasAuthoritativeLatest && isLoadingLatest
                   ? "Cached recommendations stay hidden until the latest published scan is verified."
                   : queueFilter === "A" || queueFilter === "AUTOMATIC_BUY"
-                  ? "Nothing currently clears every demand, supply, freshness, match, currency, and profit gate. The candidate queue still shows promising and research-ready options."
-                  : "Choose another queue or source."}
+                    ? "Nothing currently clears every demand, supply, freshness, match, currency, and profit gate. The candidate queue still shows promising and research-ready options."
+                    : queueFilter === "WORTH"
+                      ? "No quota to fill. Research candidates are available in the queue menu; prices and evidence must qualify before records appear here."
+                      : "Choose another queue or source."}
               </p>
-              {(queueFilter === "A" || queueFilter === "AUTOMATIC_BUY") && stats.B + stats.C > 0 ? (
-                <button type="button" onClick={() => setQueueFilter("CANDIDATES")}>
+              {(queueFilter === "A" || queueFilter === "AUTOMATIC_BUY") &&
+              stats.B + stats.C > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setQueueFilter("CANDIDATES")}
+                >
                   Show {stats.B + stats.C} other candidates
                 </button>
               ) : null}
@@ -484,7 +625,11 @@ export function RetailArbitrage() {
                     onClick={() => toggleSort(column.key)}
                   >
                     {column.label}
-                    {sortKey === column.key ? (sortDirection === "asc" ? " ↑" : " ↓") : ""}
+                    {sortKey === column.key
+                      ? sortDirection === "asc"
+                        ? " ↑"
+                        : " ↓"
+                      : ""}
                   </button>
                 ))}
               </div>
@@ -499,9 +644,13 @@ export function RetailArbitrage() {
                     key={find.id}
                     onClick={() => setSelectedId(find.id)}
                   >
-                    <span className={`arbitrage-priority-cell band-${candidateBand(find).toLowerCase()}`}>
+                    <span
+                      className={`arbitrage-priority-cell band-${candidateBand(find).toLowerCase()}`}
+                    >
                       <strong>
-                        {outcome ? outcomeLabel(outcome) : `${candidateTierLabel(find.candidateTier)} · ${find.candidateScore}`}
+                        {outcome
+                          ? outcomeLabel(outcome)
+                          : `${candidateTierLabel(find.candidateTier)} · ${find.candidateScore}`}
                       </strong>
                       <small>
                         {outcome
@@ -511,16 +660,30 @@ export function RetailArbitrage() {
                     </span>
                     <span className="arbitrage-title">
                       <strong>{displayRecordTitle(find)}</strong>
-                      <small>{find.sourceListingTitle && find.sourceListingTitle !== find.title ? find.sourceListingTitle : ""}</small>
+                      <small>
+                        {find.sourceListingTitle &&
+                        find.sourceListingTitle !== find.title
+                          ? find.sourceListingTitle
+                          : ""}
+                      </small>
                     </span>
-                    <strong>{sourceMoney(find.purchasePrice, find.sourceCurrency)}</strong>
-                    <span className={`arbitrage-metric-cell ${profitClass(find.profitPer30Days)}`}>
+                    <strong>
+                      {sourceMoney(find.purchasePrice, find.sourceCurrency)}
+                    </strong>
+                    <span
+                      className={`arbitrage-metric-cell ${profitClass(find.profitPer30Days)}`}
+                    >
                       <strong>{nullableMoney(find.profitPer30Days)}</strong>
-                      <small>{nullableMoney(find.expectedNetProfit)} total</small>
+                      <small>
+                        {nullableMoney(find.expectedNetProfit)} total
+                      </small>
                     </span>
                     <span className="arbitrage-metric-cell">
                       <strong>{turnLabel(find.estimatedDaysToSell)}</strong>
-                      <small>{strategyLabel(find.recommendedStrategy) ?? "No profile yet"}</small>
+                      <small>
+                        {strategyLabel(find.recommendedStrategy) ??
+                          "No profile yet"}
+                      </small>
                     </span>
                     <span className="arbitrage-metric-cell">
                       <strong>{velocityLabel(find)}</strong>
@@ -553,7 +716,10 @@ export function RetailArbitrage() {
           ) : (
             <div className="arbitrage-detail-empty">
               <h2>Decision evidence</h2>
-              <p className="muted">Select a record to inspect profit, demand, supply, and match gates.</p>
+              <p className="muted">
+                Select a record to inspect profit, demand, supply, and match
+                gates.
+              </p>
             </div>
           )}
         </aside>
@@ -564,7 +730,8 @@ export function RetailArbitrage() {
           <span>
             <strong>Adaptive buy profiles</strong>
             <small>
-              Turnover changes the required margin. These advanced settings are saved locally.
+              Turnover changes the required margin. These advanced settings are
+              saved locally.
             </small>
           </span>
           <span>Advanced</span>
@@ -574,39 +741,136 @@ export function RetailArbitrage() {
             description="Accepts a smaller dollar return when exact evidence supports a quick sale."
             label="Fast turn"
           >
-            <NumberSetting label="Maximum days to sell" value={settings.fastTurnMaxDaysToSell} step={5} onChange={(value) => updateSetting("fastTurnMaxDaysToSell", value)} />
-            <NumberSetting label="Minimum net profit $" value={settings.fastTurnMinNetProfitDollars} step={1} onChange={(value) => updateSetting("fastTurnMinNetProfitDollars", value)} />
-            <NumberSetting label="Minimum ROI ratio" value={settings.fastTurnMinRoiRatio} step={0.05} onChange={(value) => updateSetting("fastTurnMinRoiRatio", value)} />
+            <NumberSetting
+              label="Maximum days to sell"
+              value={settings.fastTurnMaxDaysToSell}
+              step={5}
+              onChange={(value) =>
+                updateSetting("fastTurnMaxDaysToSell", value)
+              }
+            />
+            <NumberSetting
+              label="Minimum net profit $"
+              value={settings.fastTurnMinNetProfitDollars}
+              step={1}
+              onChange={(value) =>
+                updateSetting("fastTurnMinNetProfitDollars", value)
+              }
+            />
+            <NumberSetting
+              label="Minimum ROI ratio"
+              value={settings.fastTurnMinRoiRatio}
+              step={0.05}
+              onChange={(value) => updateSetting("fastTurnMinRoiRatio", value)}
+            />
           </ProfileSettings>
           <ProfileSettings
             description="The middle path for records with solid demand and reasonable competition."
             label="Balanced"
           >
-            <NumberSetting label="Maximum days to sell" value={settings.balancedMaxDaysToSell} step={5} onChange={(value) => updateSetting("balancedMaxDaysToSell", value)} />
-            <NumberSetting label="Minimum net profit $" value={settings.balancedMinNetProfitDollars} step={1} onChange={(value) => updateSetting("balancedMinNetProfitDollars", value)} />
-            <NumberSetting label="Minimum ROI ratio" value={settings.balancedMinRoiRatio} step={0.05} onChange={(value) => updateSetting("balancedMinRoiRatio", value)} />
+            <NumberSetting
+              label="Maximum days to sell"
+              value={settings.balancedMaxDaysToSell}
+              step={5}
+              onChange={(value) =>
+                updateSetting("balancedMaxDaysToSell", value)
+              }
+            />
+            <NumberSetting
+              label="Minimum net profit $"
+              value={settings.balancedMinNetProfitDollars}
+              step={1}
+              onChange={(value) =>
+                updateSetting("balancedMinNetProfitDollars", value)
+              }
+            />
+            <NumberSetting
+              label="Minimum ROI ratio"
+              value={settings.balancedMinRoiRatio}
+              step={0.05}
+              onChange={(value) => updateSetting("balancedMinRoiRatio", value)}
+            />
           </ProfileSettings>
           <ProfileSettings
             description="Allows a longer hold only when the extra profit and durable demand justify it."
             label="Higher margin"
           >
-            <NumberSetting label="Maximum days to sell" value={settings.highMarginMaxDaysToSell} step={5} onChange={(value) => updateSetting("highMarginMaxDaysToSell", value)} />
-            <NumberSetting label="Minimum net profit $" value={settings.highMarginMinNetProfitDollars} step={1} onChange={(value) => updateSetting("highMarginMinNetProfitDollars", value)} />
-            <NumberSetting label="Minimum ROI ratio" value={settings.highMarginMinRoiRatio} step={0.05} onChange={(value) => updateSetting("highMarginMinRoiRatio", value)} />
+            <NumberSetting
+              label="Maximum days to sell"
+              value={settings.highMarginMaxDaysToSell}
+              step={5}
+              onChange={(value) =>
+                updateSetting("highMarginMaxDaysToSell", value)
+              }
+            />
+            <NumberSetting
+              label="Minimum net profit $"
+              value={settings.highMarginMinNetProfitDollars}
+              step={1}
+              onChange={(value) =>
+                updateSetting("highMarginMinNetProfitDollars", value)
+              }
+            />
+            <NumberSetting
+              label="Minimum ROI ratio"
+              value={settings.highMarginMinRoiRatio}
+              step={0.05}
+              onChange={(value) =>
+                updateSetting("highMarginMinRoiRatio", value)
+              }
+            />
           </ProfileSettings>
         </div>
         <div className="arbitrage-settings-subheading">
           <strong>Evidence and cost guardrails</strong>
-          <span>These control data quality and cost assumptions shared by all three profiles.</span>
+          <span>
+            These control data quality and cost assumptions shared by all three
+            profiles.
+          </span>
         </div>
         <div className="arbitrage-settings-grid arbitrage-guardrail-settings">
-          <NumberSetting label="90-day units sold" value={settings.minSoldUnits90Days} step={1} onChange={(value) => updateSetting("minSoldUnits90Days", value)} />
-          <NumberSetting label="Sales per month" value={settings.minSalesPerMonth} step={0.25} onChange={(value) => updateSetting("minSalesPerMonth", value)} />
-          <NumberSetting label="Minimum sell-through" value={settings.minSellThroughRate} step={0.05} onChange={(value) => updateSetting("minSellThroughRate", value)} />
-          <NumberSetting label="Maximum supply months" value={settings.maxActiveSupplyMonths} step={0.5} onChange={(value) => updateSetting("maxActiveSupplyMonths", value)} />
-          <NumberSetting label="Maximum evidence age days" value={settings.maxEvidenceAgeDays} step={1} onChange={(value) => updateSetting("maxEvidenceAgeDays", value)} />
-          <NumberSetting label="Source tax %" value={settings.sourceTaxRatePercent} step={0.1} onChange={(value) => updateSetting("sourceTaxRatePercent", value)} />
-          <NumberSetting label="Default inbound shipping $" value={settings.defaultInboundShipping} step={0.5} onChange={(value) => updateSetting("defaultInboundShipping", value)} />
+          <NumberSetting
+            label="90-day units sold"
+            value={settings.minSoldUnits90Days}
+            step={1}
+            onChange={(value) => updateSetting("minSoldUnits90Days", value)}
+          />
+          <NumberSetting
+            label="Sales per month"
+            value={settings.minSalesPerMonth}
+            step={0.25}
+            onChange={(value) => updateSetting("minSalesPerMonth", value)}
+          />
+          <NumberSetting
+            label="Minimum sell-through"
+            value={settings.minSellThroughRate}
+            step={0.05}
+            onChange={(value) => updateSetting("minSellThroughRate", value)}
+          />
+          <NumberSetting
+            label="Maximum supply months"
+            value={settings.maxActiveSupplyMonths}
+            step={0.5}
+            onChange={(value) => updateSetting("maxActiveSupplyMonths", value)}
+          />
+          <NumberSetting
+            label="Maximum evidence age days"
+            value={settings.maxEvidenceAgeDays}
+            step={1}
+            onChange={(value) => updateSetting("maxEvidenceAgeDays", value)}
+          />
+          <NumberSetting
+            label="Source tax %"
+            value={settings.sourceTaxRatePercent}
+            step={0.1}
+            onChange={(value) => updateSetting("sourceTaxRatePercent", value)}
+          />
+          <NumberSetting
+            label="Default inbound shipping $"
+            value={settings.defaultInboundShipping}
+            step={0.5}
+            onChange={(value) => updateSetting("defaultInboundShipping", value)}
+          />
         </div>
       </details>
     </section>
@@ -641,7 +905,8 @@ function FindDetail({
       ? [find.ebayResearchKeyword]
       : [];
   const publishedResearchDiffers =
-    publishedResearchQueries.join("|").toLowerCase() !== currentResearchQueries.join("|").toLowerCase();
+    publishedResearchQueries.join("|").toLowerCase() !==
+    currentResearchQueries.join("|").toLowerCase();
   return (
     <>
       <div className="section-heading arbitrage-detail-heading">
@@ -650,10 +915,14 @@ function FindDetail({
           <h2>{displayRecordTitle(find)}</h2>
         </div>
         <div className="arbitrage-detail-badges">
-          <strong className={`arbitrage-priority-badge band-${candidateBand(find).toLowerCase()}`}>
+          <strong
+            className={`arbitrage-priority-badge band-${candidateBand(find).toLowerCase()}`}
+          >
             {candidateTierLabel(find.candidateTier)} · {find.candidateScore}
           </strong>
-          <strong className={`arbitrage-decision ${find.decision.toLowerCase()}`}>
+          <strong
+            className={`arbitrage-decision ${find.decision.toLowerCase()}`}
+          >
             Evidence: {find.decision}
           </strong>
         </div>
@@ -661,6 +930,18 @@ function FindDetail({
 
       <section className="arbitrage-detail-section arbitrage-candidate-summary">
         <h3>Why this candidate surfaced</h3>
+        <p>
+          Offer observed {new Date(find.capturedAt).toLocaleString()}
+          {find.retailVerification
+            ? " · " + find.retailVerification.reason.replaceAll("_", " ")
+            : ""}
+          .
+        </p>
+        {consideration(find).remainingChecks.map((check) => (
+          <p key={check} className="warning-box">
+            Remaining check: {check}
+          </p>
+        ))}
         <p className="muted">{candidateTierDescription(find.candidateTier)}</p>
         <ul className="arbitrage-reasons">
           {find.candidateReasons.map((reason) => (
@@ -694,7 +975,9 @@ function FindDetail({
       </div>
 
       <p className="arbitrage-recommendation-line">
-        <strong>{recommendedOption?.label ?? "No automatic buy profile"}</strong>
+        <strong>
+          {recommendedOption?.label ?? "No automatic buy profile"}
+        </strong>
         {recommendedOption
           ? ` · ${recommendedOption.reason}${recommendedQuantity ? ` Start with ${recommendedQuantity}.` : ""}`
           : " · Review the options below to see whether demand, economics, or evidence is holding it back."}
@@ -703,8 +986,8 @@ function FindDetail({
       <section className="arbitrage-detail-section">
         <h3>Buy options</h3>
         <p className="muted">
-          The scanner tests three inventory approaches instead of forcing every record through one
-          profit minimum.
+          The scanner tests three inventory approaches instead of forcing every
+          record through one profit minimum.
         </p>
         <div className="arbitrage-strategy-options">
           {find.strategyOptions.map((option) => (
@@ -731,7 +1014,9 @@ function FindDetail({
                 <span className={option.demandQualified ? "passed" : "failed"}>
                   Demand {option.demandQualified ? "passes" : "misses"}
                 </span>
-                <span className={option.economicsQualified ? "passed" : "failed"}>
+                <span
+                  className={option.economicsQualified ? "passed" : "failed"}
+                >
                   Economics {option.economicsQualified ? "passes" : "misses"}
                 </span>
               </div>
@@ -745,38 +1030,78 @@ function FindDetail({
         <h3>Profit ledger</h3>
         {find.appliedSaleDiscountPercent ? (
           <div className="warning-box arbitrage-sale-price-warning">
-            Using a verified {find.appliedSaleDiscountPercent}% {find.appliedSaleScope === "collection" ? "collection" : find.appliedSaleScope ?? "retailer"} campaign
+            Using a verified {find.appliedSaleDiscountPercent}%{" "}
+            {find.appliedSaleScope === "collection"
+              ? "collection"
+              : (find.appliedSaleScope ?? "retailer")}{" "}
+            campaign
             {find.appliedSaleCode ? ` with code ${find.appliedSaleCode}` : ""}
-            {find.listPrice ? `: ${sourceMoney(find.listPrice, find.sourceCurrency)} list becomes ${sourceMoney(find.purchasePrice, find.sourceCurrency)}` : ""}.
-            {" "}Confirm the discount and availability at checkout before purchasing.
+            {find.listPrice
+              ? `: ${sourceMoney(find.listPrice, find.sourceCurrency)} list becomes ${sourceMoney(find.purchasePrice, find.sourceCurrency)}`
+              : ""}
+            . Confirm the discount and availability at checkout before
+            purchasing.
           </div>
         ) : null}
         {find.currencyConversionRequired ? (
           <div className="warning-box arbitrage-fx-warning">
-            Source price: {sourceMoney(find.purchasePrice, find.sourceCurrency)}.{" "}
+            Source price: {sourceMoney(find.purchasePrice, find.sourceCurrency)}
+            .{" "}
             {find.reasonCodes.includes("SOURCE_CURRENCY_UNKNOWN")
               ? "Identify the source currency"
               : "Add a fresh dated USD conversion"}{" "}
-            before treating cost, profit, ROI, or maximum buy price as actionable.
+            before treating cost, profit, ROI, or maximum buy price as
+            actionable.
           </div>
         ) : (
           <dl className="arbitrage-ledger">
-            {find.sourceCurrency && find.sourceCurrency.toUpperCase() !== "USD" ? (
-              <Metric label="Source purchase" value={sourceMoney(find.purchasePrice, find.sourceCurrency)} />
+            {find.sourceCurrency &&
+            find.sourceCurrency.toUpperCase() !== "USD" ? (
+              <Metric
+                label="Source purchase"
+                value={sourceMoney(find.purchasePrice, find.sourceCurrency)}
+              />
             ) : null}
             <Metric label="USD purchase" value={money(ledger.purchasePrice)} />
-            <Metric label="Purchase retailer" value={purchaseRetailerLabel(find)} />
+            <Metric
+              label="Purchase retailer"
+              value={purchaseRetailerLabel(find)}
+            />
             <Metric label="Sales tax" value={money(ledger.salesTax)} />
-            <Metric label="Inbound shipping" value={money(ledger.inboundShipping)} />
-            <Metric label="Marketplace fee" value={money(ledger.marketplaceFee)} />
-            <Metric label="Promoted listing" value={money(ledger.promotedListingFee)} />
-            <Metric label="Outbound + packaging" value={money(ledger.outboundShipping + ledger.packaging)} />
-            <Metric label="Returns reserve" value={money(ledger.returnsReserve)} />
+            <Metric
+              label="Inbound shipping"
+              value={money(ledger.inboundShipping)}
+            />
+            <Metric
+              label="Marketplace fee"
+              value={money(ledger.marketplaceFee)}
+            />
+            <Metric
+              label="Promoted listing"
+              value={money(ledger.promotedListingFee)}
+            />
+            <Metric
+              label="Outbound + packaging"
+              value={money(ledger.outboundShipping + ledger.packaging)}
+            />
+            <Metric
+              label="Returns reserve"
+              value={money(ledger.returnsReserve)}
+            />
             <Metric label="Total cost" value={money(ledger.totalCost)} />
-            <Metric label="Conservative resale" value={nullableMoney(ledger.expectedResalePrice)} />
-            <Metric label="Expected net" value={nullableMoney(ledger.expectedNetProfit)} />
+            <Metric
+              label="Conservative resale"
+              value={nullableMoney(ledger.expectedResalePrice)}
+            />
+            <Metric
+              label="Expected net"
+              value={nullableMoney(ledger.expectedNetProfit)}
+            />
             <Metric label="Expected ROI" value={percent(find.roiRatio)} />
-            <Metric label="Profit / 30 days" value={nullableMoney(find.profitPer30Days)} />
+            <Metric
+              label="Profit / 30 days"
+              value={nullableMoney(find.profitPer30Days)}
+            />
           </dl>
         )}
       </section>
@@ -784,42 +1109,90 @@ function FindDetail({
       <section className="arbitrage-detail-section">
         <h3>Demand and supply</h3>
         <dl className="arbitrage-metrics">
-          <Metric label="Sold 30 / 90 / 365d" value={`${count(find.soldUnits30Days)} / ${count(find.soldUnits90Days)} / ${count(find.soldUnits365Days)}`} />
-          <Metric label="Sold over 3 years" value={count(find.soldUnits1095Days)} />
+          <Metric
+            label="Sold 30 / 90 / 365d"
+            value={`${count(find.soldUnits30Days)} / ${count(find.soldUnits90Days)} / ${count(find.soldUnits365Days)}`}
+          />
+          <Metric
+            label="Sold over 3 years"
+            value={count(find.soldUnits1095Days)}
+          />
           <Metric label="Recent velocity" value={velocityLabel(find)} />
-          <Metric label="Long-term velocity" value={longTermVelocityLabel(find)} />
-          <Metric label="Last sale" value={find.daysSinceLastSale === null || find.daysSinceLastSale === undefined ? "n/a" : `${find.daysSinceLastSale} days ago`} />
-          <Metric label="Exact active supply" value={count(find.exactActiveListingCount)} />
+          <Metric
+            label="Long-term velocity"
+            value={longTermVelocityLabel(find)}
+          />
+          <Metric
+            label="Last sale"
+            value={
+              find.daysSinceLastSale === null ||
+              find.daysSinceLastSale === undefined
+                ? "n/a"
+                : `${find.daysSinceLastSale} days ago`
+            }
+          />
+          <Metric
+            label="Exact active supply"
+            value={count(find.exactActiveListingCount)}
+          />
           <Metric label="Sell-through" value={percent(find.sellThroughRate)} />
-          <Metric label="Recent supply months" value={supplyMonthsLabel(find.activeSupplyMonths)} />
-          <Metric label="Long-term supply months" value={supplyMonthsLabel(find.longTermSupplyMonths)} />
-          <Metric label="Estimated days to sell" value={turnLabel(find.estimatedDaysToSell)} />
-          <Metric label="Sold match" value={confidenceLabel(find.soldEvidence?.matchConfidence ?? find.ebaySoldMatchConfidence)} />
-          <Metric label="Active match" value={confidenceLabel(find.activeEvidence?.matchConfidence ?? find.ebayActiveMatchConfidence)} />
+          <Metric
+            label="Recent supply months"
+            value={supplyMonthsLabel(find.activeSupplyMonths)}
+          />
+          <Metric
+            label="Long-term supply months"
+            value={supplyMonthsLabel(find.longTermSupplyMonths)}
+          />
+          <Metric
+            label="Estimated days to sell"
+            value={turnLabel(find.estimatedDaysToSell)}
+          />
+          <Metric
+            label="Sold match"
+            value={confidenceLabel(
+              find.soldEvidence?.matchConfidence ??
+                find.ebaySoldMatchConfidence,
+            )}
+          />
+          <Metric
+            label="Active match"
+            value={confidenceLabel(
+              find.activeEvidence?.matchConfidence ??
+                find.ebayActiveMatchConfidence,
+            )}
+          />
         </dl>
       </section>
 
       <section className="arbitrage-detail-section">
         <h3>Check the sold market</h3>
         <p className="muted">
-          Open eBay in your browser and confirm the exact pressing yourself. Product Research has the
-          deeper three-year view when your Seller Hub session is signed in; public sold listings are a
-          no-Seller-Hub fallback for eBay's recent public sold view.
+          Open eBay in your browser and confirm the exact pressing yourself.
+          Product Research has the deeper three-year view when your Seller Hub
+          session is signed in; public sold listings are a no-Seller-Hub
+          fallback for eBay's recent public sold view.
         </p>
         {primarySoldResearch ? (
           <>
             <p>
-              <strong>{soldResearchKindLabel(primarySoldResearch)} query:</strong>{" "}
+              <strong>
+                {soldResearchKindLabel(primarySoldResearch)} query:
+              </strong>{" "}
               <code>{primarySoldResearch.query}</code>
             </p>
             <SoldResearchActions link={primarySoldResearch} />
             {alternateSoldResearch.length ? (
               <details className="arbitrage-research-detail">
-                <summary>Try {alternateSoldResearch.length} alternate sold-search {alternateSoldResearch.length === 1 ? "query" : "queries"}</summary>
+                <summary>
+                  Try {alternateSoldResearch.length} alternate sold-search{" "}
+                  {alternateSoldResearch.length === 1 ? "query" : "queries"}
+                </summary>
                 {alternateSoldResearch.map((link) => (
                   <div key={`${link.kind}-${link.query}`}>
                     <p>
-                      <strong>{soldResearchKindLabel(link)} query:</strong> <code>{link.query}</code>
+                      <strong>{soldResearchKindLabel(link)} query:</strong>{" "}
+                      <code>{link.query}</code>
                     </p>
                     <SoldResearchActions link={link} />
                   </div>
@@ -827,23 +1200,47 @@ function FindDetail({
               </details>
             ) : null}
             <p className="muted">
-              Public sold results can include related matches and may not reveal the actual accepted Best
-              Offer. Treat this as a manual confirmation link, not automatically validated evidence.
+              Public sold results can include related matches and may not reveal
+              the actual accepted Best Offer. Treat this as a manual
+              confirmation link, not automatically validated evidence.
             </p>
           </>
         ) : (
-          <p className="muted">This candidate does not have enough identity text to build a safe sold search.</p>
+          <p className="muted">
+            This candidate does not have enough identity text to build a safe
+            sold search.
+          </p>
         )}
       </section>
 
       <section className="arbitrage-detail-section">
         <h3>Evidence priority score</h3>
         <div className="arbitrage-score-breakdown">
-          <ScoreFactor label="Demand durability" maximum={30} value={find.priorityBreakdown.demandDurability} />
-          <ScoreFactor label="Economics" maximum={30} value={find.priorityBreakdown.economics} />
-          <ScoreFactor label="Competition + supply" maximum={20} value={find.priorityBreakdown.competitionAndSupply} />
-          <ScoreFactor label="Evergreen prior" maximum={15} value={find.priorityBreakdown.evergreenPrior} />
-          <ScoreFactor label="Evidence quality" maximum={5} value={find.priorityBreakdown.evidenceQuality} />
+          <ScoreFactor
+            label="Demand durability"
+            maximum={30}
+            value={find.priorityBreakdown.demandDurability}
+          />
+          <ScoreFactor
+            label="Economics"
+            maximum={30}
+            value={find.priorityBreakdown.economics}
+          />
+          <ScoreFactor
+            label="Competition + supply"
+            maximum={20}
+            value={find.priorityBreakdown.competitionAndSupply}
+          />
+          <ScoreFactor
+            label="Evergreen prior"
+            maximum={15}
+            value={find.priorityBreakdown.evergreenPrior}
+          />
+          <ScoreFactor
+            label="Evidence quality"
+            maximum={5}
+            value={find.priorityBreakdown.evidenceQuality}
+          />
         </div>
       </section>
 
@@ -864,27 +1261,44 @@ function FindDetail({
       </section>
 
       <div className="seller-detail-actions arbitrage-links">
-        <a href={find.sourceUrl} target="_blank" rel="noreferrer">Open offer: {purchaseSourceAttribution(find)}</a>
+        <a href={find.sourceUrl} target="_blank" rel="noreferrer">
+          Open offer: {purchaseSourceAttribution(find)}
+        </a>
         {find.ebayActiveSearchUrl ? (
-          <a href={find.ebayActiveSearchUrl} target="_blank" rel="noreferrer">Open active search</a>
+          <a href={find.ebayActiveSearchUrl} target="_blank" rel="noreferrer">
+            Open active search
+          </a>
         ) : null}
         {find.dismissedAt || isNegativeRecordOutcome(outcome) ? (
-          <button type="button" onClick={onRestore}>Restore</button>
+          <button type="button" onClick={onRestore}>
+            Restore
+          </button>
         ) : (
-          <button type="button" className="secondary-button" onClick={onDismiss}>Dismiss</button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onDismiss}
+          >
+            Dismiss
+          </button>
         )}
       </div>
 
       <section className="arbitrage-detail-section">
         <h3>Outcome feedback</h3>
-        <p className="muted">This stays on this browser and lets the queue reflect what happened after review.</p>
+        <p className="muted">
+          This stays on this browser and lets the queue reflect what happened
+          after review.
+        </p>
         <div className="arbitrage-outcomes">
           {outcomeOptions.map((option) => (
             <button
               className={outcome === option.value ? "active" : ""}
               type="button"
               key={option.value}
-              onClick={() => onOutcome(outcome === option.value ? null : option.value)}
+              onClick={() =>
+                onOutcome(outcome === option.value ? null : option.value)
+              }
             >
               {option.label}
             </button>
@@ -894,12 +1308,26 @@ function FindDetail({
 
       <details className="arbitrage-research-detail">
         <summary>Research trace</summary>
-        <p>Current handoff queries: {currentResearchQueries.join(" | ") || "none"}</p>
-        <p>Sold evidence: {find.ebayResearchStatus ?? "pending"} · active evidence: {find.ebayActiveSearchStatus ?? "pending"}</p>
+        <p>
+          Current handoff queries:{" "}
+          {currentResearchQueries.join(" | ") || "none"}
+        </p>
+        <p>
+          Sold evidence: {find.ebayResearchStatus ?? "pending"} · active
+          evidence: {find.ebayActiveSearchStatus ?? "pending"}
+        </p>
         {publishedResearchDiffers && publishedResearchQueries.length ? (
-          <p>Published evidence queries: {publishedResearchQueries.join(" | ")}</p>
+          <p>
+            Published evidence queries: {publishedResearchQueries.join(" | ")}
+          </p>
         ) : null}
-        {find.notes?.length ? <ul>{find.notes.map((note) => <li key={note}>{note}</li>)}</ul> : null}
+        {find.notes?.length ? (
+          <ul>
+            {find.notes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        ) : null}
       </details>
     </>
   );
@@ -989,8 +1417,12 @@ function NumberSetting({
 
 function SourceCoveragePanel({ reports }: { reports: SourceReport[] }) {
   if (reports.length === 0) return null;
-  const parsed = reports.filter((report) => report.productParseHealth === "productive");
-  const empty = reports.filter((report) => report.productParseHealth === "empty");
+  const parsed = reports.filter(
+    (report) => report.productParseHealth === "productive",
+  );
+  const empty = reports.filter(
+    (report) => report.productParseHealth === "empty",
+  );
   const unavailable = reports.filter(
     (report) =>
       report.status === "error" ||
@@ -1005,14 +1437,20 @@ function SourceCoveragePanel({ reports }: { reports: SourceReport[] }) {
   );
 
   return (
-    <details className="panel arbitrage-source-coverage" open={reports.length <= 12}>
+    <details
+      className="panel arbitrage-source-coverage"
+      open={reports.length <= 12}
+    >
       <summary>
         <span>
           <strong>What the scanner actually checked</strong>
-          <small>Expand this audit before trusting the recommendation queue.</small>
+          <small>
+            Expand this audit before trusting the recommendation queue.
+          </small>
         </span>
         <span>
-          {parsed.length} parsed · {empty.length} empty · {unavailable.length} unavailable
+          {parsed.length} parsed · {empty.length} empty · {unavailable.length}{" "}
+          unavailable
         </span>
       </summary>
       <div className="arbitrage-source-coverage-body">
@@ -1066,7 +1504,8 @@ function SourceCoverageGroup({
                 Number(left.selectedProductFindCount ?? 0) ||
               Number(right.highSignalCandidateCount ?? 0) -
                 Number(left.highSignalCandidateCount ?? 0) ||
-              Number(right.candidateCount ?? 0) - Number(left.candidateCount ?? 0) ||
+              Number(right.candidateCount ?? 0) -
+                Number(left.candidateCount ?? 0) ||
               left.name.localeCompare(right.name),
           )
           .map((report) => (
@@ -1097,7 +1536,12 @@ function sourceCoverageDetail(report: SourceReport): string {
 }
 
 function sourceCoverageAdapter(report: SourceReport): string {
-  return report.adapterStats?.adapterFamily ?? report.adapterStats?.adapter ?? report.usableCoverage ?? report.status;
+  return (
+    report.adapterStats?.adapterFamily ??
+    report.adapterStats?.adapter ??
+    report.usableCoverage ??
+    report.status
+  );
 }
 
 function Stat({
@@ -1134,25 +1578,33 @@ function filterAndSortFinds(
   sortKey: SortKey,
   sortDirection: SortDirection,
 ): ArbitrageScoredFind[] {
-  return finds
+  const filtered = finds
     .filter((find) => {
-      if (sourceFilter !== "ALL" && purchaseRetailerKey(find) !== sourceFilter) return false;
+      if (sourceFilter !== "ALL" && purchaseRetailerKey(find) !== sourceFilter)
+        return false;
       const outcome = recordOutcomeForFind(feedback, find);
-      const hidden = Boolean(find.dismissedAt) || isNegativeRecordOutcome(outcome);
+      const hidden =
+        Boolean(find.dismissedAt) || isNegativeRecordOutcome(outcome);
       const tracked = Boolean(outcome && !isNegativeRecordOutcome(outcome));
       if (queueFilter === "DISMISSED") return hidden;
       if (queueFilter === "TRACKED") return tracked;
       if (hidden || tracked) return false;
-      if (queueFilter === "ALL") return true;
+      if (queueFilter === "ALL" || queueFilter === "WORTH") return true;
       if (queueFilter === "CANDIDATES") {
-        return find.candidateTier === "A" || find.candidateTier === "B" || find.candidateTier === "C";
+        return (
+          find.candidateTier === "A" ||
+          find.candidateTier === "B" ||
+          find.candidateTier === "C"
+        );
       }
       if (queueFilter === "AUTOMATIC_BUY") return find.decision === "BUY";
       if (queueFilter === "EVIDENCE_REVIEW") return find.decision === "REVIEW";
-      if (queueFilter === "REJECT") return find.candidateTier === "REJECT" || find.decision === "REJECT";
+      if (queueFilter === "REJECT")
+        return find.candidateTier === "REJECT" || find.decision === "REJECT";
       return find.candidateTier === queueFilter;
     })
     .sort((left, right) => compareFinds(left, right, sortKey, sortDirection));
+  return queueFilter === "WORTH" ? selectDecisionList(filtered) : filtered;
 }
 
 function compareFinds(
@@ -1168,17 +1620,29 @@ function compareFinds(
     typeof leftValue === "string" || typeof rightValue === "string"
       ? String(leftValue).localeCompare(String(rightValue))
       : leftValue - rightValue;
-  return compared * directionMultiplier || left.title.localeCompare(right.title);
+  return (
+    compared * directionMultiplier || left.title.localeCompare(right.title)
+  );
 }
 
-function sortValue(find: ArbitrageScoredFind, sortKey: SortKey): number | string {
+function sortValue(
+  find: ArbitrageScoredFind,
+  sortKey: SortKey,
+): number | string {
   if (sortKey === "priority") return priorityRank(find);
   if (sortKey === "price") return find.purchasePrice;
-  if (sortKey === "profit_rate") return find.profitPer30Days ?? Number.NEGATIVE_INFINITY;
-  if (sortKey === "turn") return find.estimatedDaysToSell ?? Number.POSITIVE_INFINITY;
-  if (sortKey === "velocity") return find.salesPerMonth ?? Number.NEGATIVE_INFINITY;
+  if (sortKey === "profit_rate")
+    return find.profitPer30Days ?? Number.NEGATIVE_INFINITY;
+  if (sortKey === "turn")
+    return find.estimatedDaysToSell ?? Number.POSITIVE_INFINITY;
+  if (sortKey === "velocity")
+    return find.salesPerMonth ?? Number.NEGATIVE_INFINITY;
   if (sortKey === "long_term_supply") {
-    return find.longTermSupplyMonths ?? find.activeSupplyMonths ?? Number.POSITIVE_INFINITY;
+    return (
+      find.longTermSupplyMonths ??
+      find.activeSupplyMonths ??
+      Number.POSITIVE_INFINITY
+    );
   }
   if (sortKey === "source") return purchaseRetailerLabel(find).toLowerCase();
   if (sortKey === "title") return displayRecordTitle(find).toLowerCase();
@@ -1197,7 +1661,13 @@ function defaultSortDirection(sortKey: SortKey): SortDirection {
 
 function priorityRank(find: ArbitrageScoredFind): number {
   const decisionRank =
-    find.decision === "BUY" ? 4 : find.decision === "WATCH" ? 3 : find.decision === "REVIEW" ? 2 : 1;
+    find.decision === "BUY"
+      ? 4
+      : find.decision === "WATCH"
+        ? 3
+        : find.decision === "REVIEW"
+          ? 2
+          : 1;
   return (
     candidateTierRank(find.candidateTier) * 1_000_000 +
     Math.max(0, Math.min(100, find.candidateScore)) * 1_000 +
@@ -1206,7 +1676,10 @@ function priorityRank(find: ArbitrageScoredFind): number {
   );
 }
 
-function summarizeFinds(finds: ArbitrageScoredFind[], feedback: ReviewFeedback) {
+function summarizeFinds(
+  finds: ArbitrageScoredFind[],
+  feedback: ReviewFeedback,
+) {
   return finds.reduce(
     (summary, find) => {
       const outcome = recordOutcomeForFind(feedback, find);
@@ -1296,9 +1769,14 @@ function summarizeCoverage(payload: PayloadWithDiagnostics | null) {
   };
 }
 
-function coverageBucket(report: SourceReport): "blocked" | "degraded" | "healthy" {
+function coverageBucket(
+  report: SourceReport,
+): "blocked" | "degraded" | "healthy" {
   if (report.status === "error") return "blocked";
-  if (report.productParseHealth === "failed" || report.usableCoverage === "unavailable") {
+  if (
+    report.productParseHealth === "failed" ||
+    report.usableCoverage === "unavailable"
+  ) {
     return "blocked";
   }
   if (
@@ -1312,16 +1790,23 @@ function coverageBucket(report: SourceReport): "blocked" | "degraded" | "healthy
     return "degraded";
   }
   const attemptedHealth = [report.catalogHealth, report.salePageHealth].filter(
-    (health) => health && health !== "not_attempted" && health !== "not_checked",
+    (health) =>
+      health && health !== "not_attempted" && health !== "not_checked",
   );
-  if (attemptedHealth.length > 0 && attemptedHealth.every((health) => health === "failed")) {
+  if (
+    attemptedHealth.length > 0 &&
+    attemptedHealth.every((health) => health === "failed")
+  ) {
     return "blocked";
   }
   if (attemptedHealth.some((health) => health === "failed")) return "degraded";
   return "healthy";
 }
 
-function replaceWithLatestFinds(current: ArbitrageFind[], incoming: ArbitrageFind[]): ArbitrageFind[] {
+function replaceWithLatestFinds(
+  current: ArbitrageFind[],
+  incoming: ArbitrageFind[],
+): ArbitrageFind[] {
   const byId = new Map(current.map((find) => [find.id, find]));
   return incoming
     .map((find) => {
@@ -1333,12 +1818,14 @@ function replaceWithLatestFinds(current: ArbitrageFind[], incoming: ArbitrageFin
     })
     .sort(
       (left, right) =>
-        new Date(right.capturedAt).getTime() - new Date(left.capturedAt).getTime(),
+        new Date(right.capturedAt).getTime() -
+        new Date(left.capturedAt).getTime(),
     );
 }
 
 function isIndividualRecordFind(find: ArbitrageFind): boolean {
-  if (find.opportunityType === "sitewide_sale" || find.purchasePrice <= 0) return false;
+  if (find.opportunityType === "sitewide_sale" || find.purchasePrice <= 0)
+    return false;
   const title = `${find.title} ${find.sourceListingTitle ?? ""}`.trim();
   if (!title || isSourceCopyTitle(title)) return false;
   return assessRecordCandidate({
@@ -1348,7 +1835,10 @@ function isIndividualRecordFind(find: ArbitrageFind): boolean {
       name: find.sourceName,
       url: find.sourceUrl,
     },
-    title: find.shopifyVariantTitle || find.sourceListingTitle || displayRecordTitle(find),
+    title:
+      find.shopifyVariantTitle ||
+      find.sourceListingTitle ||
+      displayRecordTitle(find),
     url: find.sourceUrl,
   }).accepted;
 }
@@ -1383,10 +1873,20 @@ function displayRecordTitle(find: ArbitrageFind): string {
 
 function evidenceStatusLabel(find: ArbitrageScoredFind): string {
   if (find.currencyConversionRequired) return "FX conversion needed";
-  if (find.gates.soldEvidence && find.gates.activeEvidence && find.gates.matchConfidence) return "Validated";
-  if (find.ebayResearchStatus === "failed" || find.ebayActiveSearchStatus === "failed") return "Evidence failed";
+  if (
+    find.gates.soldEvidence &&
+    find.gates.activeEvidence &&
+    find.gates.matchConfidence
+  )
+    return "Validated";
+  if (
+    find.ebayResearchStatus === "failed" ||
+    find.ebayActiveSearchStatus === "failed"
+  )
+    return "Evidence failed";
   if (find.ebayResearchStatus === "no_rows") return "No sold matches";
-  if (!find.gates.soldEvidence && !find.gates.activeEvidence) return "Sold + supply needed";
+  if (!find.gates.soldEvidence && !find.gates.activeEvidence)
+    return "Sold + supply needed";
   if (!find.gates.soldEvidence) return "Sold evidence needed";
   if (!find.gates.activeEvidence) return "Exact supply needed";
   return "Match review needed";
@@ -1408,33 +1908,45 @@ function longTermVelocityLabel(find: ArbitrageFind): string {
 }
 
 function activeListingLabel(find: ArbitrageFind): string {
-  return find.exactActiveListingCount === null || find.exactActiveListingCount === undefined
+  return find.exactActiveListingCount === null ||
+    find.exactActiveListingCount === undefined
     ? "? active"
     : `${find.exactActiveListingCount} active`;
 }
 
 function longTermSupplyLabel(find: ArbitrageFind): string {
-  return find.longTermSupplyMonths === null || find.longTermSupplyMonths === undefined
+  return find.longTermSupplyMonths === null ||
+    find.longTermSupplyMonths === undefined
     ? "n/a"
     : `${find.longTermSupplyMonths.toFixed(1)} mo`;
 }
 
 function supplyMonthsLabel(value: number | null | undefined): string {
-  return value === null || value === undefined ? "n/a" : `${value.toFixed(1)} months`;
+  return value === null || value === undefined
+    ? "n/a"
+    : `${value.toFixed(1)} months`;
 }
 
 function turnLabel(value: number | null | undefined): string {
-  return value === null || value === undefined ? "Unknown" : `${Math.round(value)} days`;
+  return value === null || value === undefined
+    ? "Unknown"
+    : `${Math.round(value)} days`;
 }
 
 function candidateBand(find: ArbitrageScoredFind): "A" | "B" | "C" | "REJECT" {
-  if (find.candidateTier === "A" || find.candidateTier === "B" || find.candidateTier === "C") {
+  if (
+    find.candidateTier === "A" ||
+    find.candidateTier === "B" ||
+    find.candidateTier === "C"
+  ) {
     return find.candidateTier;
   }
   return find.candidateTier === "REJECT" ? "REJECT" : "C";
 }
 
-function candidateTierLabel(tier: ArbitrageScoredFind["candidateTier"]): string {
+function candidateTierLabel(
+  tier: ArbitrageScoredFind["candidateTier"],
+): string {
   if (tier === "A") return "Tier A · verified";
   if (tier === "B") return "Tier B · promising";
   if (tier === "C") return "Tier C · research";
@@ -1442,24 +1954,35 @@ function candidateTierLabel(tier: ArbitrageScoredFind["candidateTier"]): string 
   return "Rejected";
 }
 
-function candidateTierDescription(tier: ArbitrageScoredFind["candidateTier"]): string {
-  if (tier === "A") return "Fresh exact demand, supply, identity, offer, and full-cost economics all passed.";
-  if (tier === "B") return "Product-level demand and deal signals are promising, but at least one automatic evidence gate still needs confirmation.";
-  if (tier === "C") return "This is a real record offer with a direct purchase path; sold-market research is still required before calling it a deal.";
-  if (tier === "WATCH") return "The record has useful evidence, but the current source price is not yet attractive enough.";
+function candidateTierDescription(
+  tier: ArbitrageScoredFind["candidateTier"],
+): string {
+  if (tier === "A")
+    return "Fresh exact demand, supply, identity, offer, and full-cost economics all passed.";
+  if (tier === "B")
+    return "Product-level demand and deal signals are promising, but at least one automatic evidence gate still needs confirmation.";
+  if (tier === "C")
+    return "This is a real record offer with a direct purchase path; sold-market research is still required before calling it a deal.";
+  if (tier === "WATCH")
+    return "The record has useful evidence, but the current source price is not yet attractive enough.";
   return "Validated evidence or an explicit preference rules this offer out.";
 }
 
-function strategyLabel(value: ArbitrageScoredFind["recommendedStrategy"]): string | null {
+function strategyLabel(
+  value: ArbitrageScoredFind["recommendedStrategy"],
+): string | null {
   if (value === "fast_turn") return "Fast turn";
   if (value === "balanced") return "Balanced";
   if (value === "high_margin") return "Higher margin";
   return null;
 }
 
-function strategyStatus(option: ArbitrageScoredFind["strategyOptions"][number]): string {
+function strategyStatus(
+  option: ArbitrageScoredFind["strategyOptions"][number],
+): string {
   if (option.eligible) return "Eligible";
-  if (option.demandQualified && option.economicsQualified) return "Needs evidence";
+  if (option.demandQualified && option.economicsQualified)
+    return "Needs evidence";
   if (option.demandQualified) return "Margin misses";
   if (option.economicsQualified) return "Turn misses";
   return "Does not fit";
@@ -1485,7 +2008,10 @@ function recommendedTestQuantity(find: ArbitrageScoredFind): number {
     quantity = 3;
   }
   if (find.quantityAvailable !== null && find.quantityAvailable !== undefined) {
-    quantity = Math.min(quantity, Math.max(1, Math.floor(find.quantityAvailable)));
+    quantity = Math.min(
+      quantity,
+      Math.max(1, Math.floor(find.quantityAvailable)),
+    );
   }
   return quantity;
 }
@@ -1497,15 +2023,23 @@ function confidenceLabel(value: unknown): string {
 }
 
 function filterHeading(filter: CandidateQueueFilter): string {
-  return queueOptions.find((option) => option.value === filter)?.label ?? "Finds";
+  return (
+    queueOptions.find((option) => option.value === filter)?.label ?? "Finds"
+  );
 }
 
 function outcomeLabel(outcome: RecordOutcome): string {
-  return outcomeOptions.find((option) => option.value === outcome)?.label ?? humanize(outcome);
+  return (
+    outcomeOptions.find((option) => option.value === outcome)?.label ??
+    humanize(outcome)
+  );
 }
 
 function isNegativeRecordOutcome(outcome?: RecordOutcome): boolean {
   return (
+    outcome === "bad_identity" ||
+    outcome === "wrong_format" ||
+    outcome === "stale_offer" ||
     outcome === "false_positive" ||
     outcome === "margin_too_thin" ||
     outcome === "not_for_me" ||
@@ -1526,7 +2060,8 @@ function humanize(value: string): string {
 }
 
 function statsMessage(finds: ArbitrageFind[]): string {
-  const sourceCount = new Set(finds.map((find) => purchaseRetailerKey(find))).size;
+  const sourceCount = new Set(finds.map((find) => purchaseRetailerKey(find)))
+    .size;
   return `${sourceCount} purchase source${sourceCount === 1 ? "" : "s"} represented; candidate strength is recalculated locally.`;
 }
 
@@ -1571,9 +2106,15 @@ function money(value: number): string {
   return `$${value.toFixed(2)}`;
 }
 
-function sourceMoney(value: number, currency: string | null | undefined): string {
-  const normalized = String(currency ?? "").trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(normalized)) return `Currency unknown ${value.toFixed(2)}`;
+function sourceMoney(
+  value: number,
+  currency: string | null | undefined,
+): string {
+  const normalized = String(currency ?? "")
+    .trim()
+    .toUpperCase();
+  if (!/^[A-Z]{3}$/.test(normalized))
+    return `Currency unknown ${value.toFixed(2)}`;
   try {
     return new Intl.NumberFormat(undefined, {
       currency: normalized,
@@ -1586,5 +2127,7 @@ function sourceMoney(value: number, currency: string | null | undefined): string
 }
 
 function percent(value: number | null | undefined): string {
-  return value === null || value === undefined ? "n/a" : `${Math.round(value * 100)}%`;
+  return value === null || value === undefined
+    ? "n/a"
+    : `${Math.round(value * 100)}%`;
 }

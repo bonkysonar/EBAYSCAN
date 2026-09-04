@@ -1,6 +1,10 @@
 import type { ArbitrageFind } from "./types";
 
 export type RecordOutcome =
+  | "worth_opening"
+  | "bad_identity"
+  | "wrong_format"
+  | "stale_offer"
   | "bought"
   | "false_positive"
   | "listed"
@@ -9,7 +13,11 @@ export type RecordOutcome =
   | "returned"
   | "sold"
   | "too_slow";
-export type SaleReviewOutcome = "confirmed" | "expired" | "false_positive" | "wrong_scope";
+export type SaleReviewOutcome =
+  | "confirmed"
+  | "expired"
+  | "false_positive"
+  | "wrong_scope";
 
 type FeedbackEntry<Status extends string> = {
   observationKey?: string;
@@ -26,7 +34,9 @@ const STORAGE_KEY = "record-scanner-arbitrage-review-feedback-v1";
 
 export function loadReviewFeedback(): ReviewFeedback {
   try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Partial<ReviewFeedback>;
+    const parsed = JSON.parse(
+      localStorage.getItem(STORAGE_KEY) ?? "{}",
+    ) as Partial<ReviewFeedback>;
     return {
       recordOutcomes: parsed.recordOutcomes ?? {},
       saleOutcomes: parsed.saleOutcomes ?? {},
@@ -56,8 +66,7 @@ export function setRecordOutcome(
     recordOutcomes[findId] = observationKey
       ? { observationKey, status, updatedAt }
       : { status, updatedAt };
-  }
-  else delete recordOutcomes[findId];
+  } else delete recordOutcomes[findId];
   return { ...feedback, recordOutcomes };
 }
 
@@ -73,8 +82,7 @@ export function setSaleOutcome(
     saleOutcomes[campaignId] = observationKey
       ? { observationKey, status, updatedAt }
       : { status, updatedAt };
-  }
-  else delete saleOutcomes[campaignId];
+  } else delete saleOutcomes[campaignId];
   return { ...feedback, saleOutcomes };
 }
 
@@ -83,7 +91,9 @@ export function recordOutcomeForFind(
   find: ArbitrageFind,
 ): RecordOutcome | undefined {
   const entry = feedback.recordOutcomes[find.id];
-  return entry?.observationKey === retailOfferFeedbackKey(find) ? entry.status : undefined;
+  return entry?.observationKey === retailOfferFeedbackKey(find)
+    ? entry.status
+    : undefined;
 }
 
 export function saleOutcomeForCampaign(
@@ -91,7 +101,9 @@ export function saleOutcomeForCampaign(
   sale: ArbitrageFind,
 ): SaleReviewOutcome | undefined {
   const entry = feedback.saleOutcomes[saleFeedbackKey(sale)];
-  return entry?.observationKey === saleCampaignObservationKey(sale) ? entry.status : undefined;
+  return entry?.observationKey === saleCampaignObservationKey(sale)
+    ? entry.status
+    : undefined;
 }
 
 export function pruneStaleRecordFeedback(
@@ -119,7 +131,10 @@ export function pruneStaleSaleFeedback(
   for (const campaign of campaigns) {
     const key = saleFeedbackKey(campaign);
     const entry = saleOutcomes[key];
-    if (entry && entry.observationKey !== saleCampaignObservationKey(campaign)) {
+    if (
+      entry &&
+      entry.observationKey !== saleCampaignObservationKey(campaign)
+    ) {
       delete saleOutcomes[key];
       changed = true;
     }
@@ -173,10 +188,15 @@ function finiteNumber(value: number | null | undefined): number | null {
 }
 
 function normalizedText(value: unknown): string {
-  return String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
-function saleLifecycleObservationBucket(sale: ArbitrageFind): "ended" | "observed" | "unknown" {
+function saleLifecycleObservationBucket(
+  sale: ArbitrageFind,
+): "ended" | "observed" | "unknown" {
   if (sale.saleStatus === "unknown") return "unknown";
   if (sale.saleStatus === "ended") return "ended";
   return "observed";

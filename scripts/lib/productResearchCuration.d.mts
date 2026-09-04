@@ -26,5 +26,13 @@ export function curateResearchForFind(
   now?: Date,
 ): Record<string, unknown>;
 export function parseProductResearchRow(row: unknown): Record<string, unknown>;
-export function productResearchRowMatchScore(find: Record<string, unknown>, rowTitle: string): number;
+export function productResearchRowMatchScore(
+  find: Record<string, unknown>,
+  rowTitle: string,
+): number;
 export function researchVariants(find: Record<string, unknown>): string[];
+
+export function researchCheckpointComplete(
+  planEntry: ResearchPlanEntry,
+  entry: any,
+): boolean;

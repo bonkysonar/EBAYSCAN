@@ -1,6 +1,12 @@
 import type { ArbitrageFind } from "./types";
 
-export type SaleLifecycleStatus = "changed" | "ended" | "evergreen" | "new" | "ongoing" | "unknown";
+export type SaleLifecycleStatus =
+  | "changed"
+  | "ended"
+  | "evergreen"
+  | "new"
+  | "ongoing"
+  | "unknown";
 
 export type SaleObservation = Omit<ArbitrageFind, "saleStatus"> & {
   endedAt?: string | null;
@@ -76,7 +82,12 @@ export type NormalizedSaleData = {
   uniqueOfferCount: number;
 };
 
-export type CoverageState = "blocked" | "degraded" | "empty" | "healthy" | "not_checked";
+export type CoverageState =
+  | "blocked"
+  | "degraded"
+  | "empty"
+  | "healthy"
+  | "not_checked";
 
 export type SourceCoverage = {
   report: SaleSourceReport;
@@ -88,9 +99,25 @@ export type CoverageSummary = Record<CoverageState, number> & {
   total: number;
 };
 
-const ACTIVE_STATUSES = new Set<SaleLifecycleStatus>(["changed", "evergreen", "new", "ongoing"]);
-const FAILED_HEALTH_STATES = new Set(["blocked", "error", "failed", "timeout", "unavailable", "unknown"]);
-const MEANINGFUL_USABLE_COVERAGE = new Set(["high_signal", "raw_candidates", "selected"]);
+const ACTIVE_STATUSES = new Set<SaleLifecycleStatus>([
+  "changed",
+  "evergreen",
+  "new",
+  "ongoing",
+]);
+const FAILED_HEALTH_STATES = new Set([
+  "blocked",
+  "error",
+  "failed",
+  "timeout",
+  "unavailable",
+  "unknown",
+]);
+const MEANINGFUL_USABLE_COVERAGE = new Set([
+  "high_signal",
+  "raw_candidates",
+  "selected",
+]);
 const STATUS_PRIORITY: Record<SaleLifecycleStatus, number> = {
   changed: 5,
   ended: 0,
@@ -100,13 +127,18 @@ const STATUS_PRIORITY: Record<SaleLifecycleStatus, number> = {
   unknown: 2,
 };
 
-export function normalizeSalePayload(payload: SalePayloadShape): NormalizedSaleData {
+export function normalizeSalePayload(
+  payload: SalePayloadShape,
+): NormalizedSaleData {
   const ledger = Array.isArray(payload.saleCampaignLedger)
     ? payload.saleCampaignLedger
-    : payload.saleCampaignLedger?.campaigns ?? [];
+    : (payload.saleCampaignLedger?.campaigns ?? []);
   const saleEvents = sitewideSales(payload.saleEvents);
   const legacyFinds = sitewideSales(payload.finds);
-  const campaigns = [...ledger, ...(saleEvents.length ? saleEvents : legacyFinds)];
+  const campaigns = [
+    ...ledger,
+    ...(saleEvents.length ? saleEvents : legacyFinds),
+  ];
   const rawObservations = sitewideSales(payload.saleObservations).length
     ? sitewideSales(payload.saleObservations)
     : saleEvents.length
@@ -119,16 +151,38 @@ export function normalizeSaleCampaigns(
   campaigns: SaleObservation[],
   rawObservations: SaleObservation[] = [],
 ): NormalizedSaleData {
-  const campaignGroups = groupByDisplayIdentity(
-    suppressConflictingDiscoveryLeads(sitewideSales(campaigns)),
+  const scopedSources = new Set(
+    campaigns
+      .filter((c) => c.campaignTerms?.version === 1)
+      .map((c) => c.sourceId),
   );
-  const observationGroups = groupByDisplayIdentity(sitewideSales(rawObservations));
+  const currentCampaigns = campaigns.filter(
+    (c) =>
+      c.campaignTerms?.version === 1 ||
+      !scopedSources.has(c.sourceId) ||
+      c.saleStatus === "ended",
+  );
+  const campaignGroups = groupByDisplayIdentity(
+    suppressConflictingDiscoveryLeads(sitewideSales(currentCampaigns)),
+  );
+  const observationGroups = groupByDisplayIdentity(
+    sitewideSales(rawObservations),
+  );
   const normalized = [...campaignGroups.entries()]
-    .map(([key, rows]) => buildCampaign(key, rows, observationGroups.get(key) ?? []))
+    .map(([key, rows]) =>
+      buildCampaign(key, rows, observationGroups.get(key) ?? []),
+    )
     .sort(compareCampaigns);
-  const active = normalized.filter((campaign) => ACTIVE_STATUSES.has(campaign.saleStatus));
-  const activePages = new Set(active.flatMap((campaign) => campaign.normalizedSalePages));
-  const fallbackObservationCount = normalized.reduce((total, campaign) => total + campaign.saleObservationCount, 0);
+  const active = normalized.filter((campaign) =>
+    ACTIVE_STATUSES.has(campaign.saleStatus),
+  );
+  const activePages = new Set(
+    active.flatMap((campaign) => campaign.normalizedSalePages),
+  );
+  const fallbackObservationCount = normalized.reduce(
+    (total, campaign) => total + campaign.saleObservationCount,
+    0,
+  );
 
   return {
     campaigns: normalized,
@@ -140,6 +194,18 @@ export function normalizeSaleCampaigns(
 }
 
 export function displaySaleCampaignKey(sale: SaleObservation): string {
+  if (sale.campaignTerms?.version === 1)
+    return [
+      retailerIdentity(sale),
+      sale.saleScope,
+      ["sitewide", "vinyl-wide"].includes(sale.saleScope ?? "")
+        ? ""
+        : normalizeSalePageUrl(sale.sourceUrl),
+      sale.campaignTerms.kind,
+      sale.saleCode,
+      sale.saleDiscountPercent,
+      sale.saleDiscountQualifier,
+    ].join("|");
   const retailer = retailerIdentity(sale);
   const page = normalizeSalePageUrl(sale.sourceUrl);
   const text = saleIdentityText(sale);
@@ -147,7 +213,9 @@ export function displaySaleCampaignKey(sale: SaleObservation): string {
   const discount = normalizedDiscount(sale.saleDiscountPercent);
   const discountQualifier = normalizedDiscountQualifier(sale, text, discount);
   const offer = offerIdentity(text, page, discount, promoCode);
-  const pageIdentity = portableEconomicOffer(offer, discount, promoCode) ? "any" : page;
+  const pageIdentity = portableEconomicOffer(offer, discount, promoCode)
+    ? "any"
+    : page;
   return `${retailer}|page:${pageIdentity}|offer:${offer}|code:${promoCode ?? "none"}|discount:${discount ?? "none"}|qualifier:${discountQualifier}`;
 }
 
@@ -155,7 +223,8 @@ export function normalizeSalePageUrl(value: string): string {
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
-    let path = decodeURIComponent(url.pathname).toLowerCase().replace(/\/+$/, "") || "/";
+    let path =
+      decodeURIComponent(url.pathname).toLowerCase().replace(/\/+$/, "") || "/";
     path = path.replace(/\/products\.json$/, "");
     path = path.replace(/\/(?:page|p)\/\d+$/, "");
     path = path.replace(/\/page[-_]\d+$/, "");
@@ -164,7 +233,12 @@ export function normalizeSalePageUrl(value: string): string {
 
     const retained = new URLSearchParams();
     for (const [key, entry] of url.searchParams) {
-      if (/^(?:constraint|fbclid|filter(?:\..+)?|gclid|mc_cid|mc_eid|page|p|ref|section_id|sort|sort_by|source|tags?|utm_.+|view)$/i.test(key)) continue;
+      if (
+        /^(?:constraint|fbclid|filter(?:\..+)?|gclid|mc_cid|mc_eid|page|p|ref|section_id|sort|sort_by|source|tags?|utm_.+|view)$/i.test(
+          key,
+        )
+      )
+        continue;
       retained.append(key.toLowerCase(), entry.toLowerCase());
     }
     retained.sort();
@@ -175,20 +249,29 @@ export function normalizeSalePageUrl(value: string): string {
 }
 
 export function normalizedSaleScope(sale: SaleObservation): string {
+  if (sale.campaignTerms?.version === 1) return sale.saleScope ?? "unknown";
   const scope = (sale.saleScope ?? "unknown").toLowerCase();
   if (scope !== "sitewide" && scope !== "vinyl-wide") return scope;
 
-  const evidence = sale.saleEvidence ?? sale.sourceListingTitle ?? sale.title ?? "";
-  const economicSignal = /\b(?:[1-9]\d?\s*%\s*off|bogo|buy\s+one\s+get\s+one|promo\s+code|coupon\s+code|use\s+code)\b/i;
-  const sitewideClaim = /\b(?:sitewide|site-wide|storewide|store-wide|entire\s+(?:site|store)|everything)\b/i;
+  const evidence =
+    sale.saleEvidence ?? sale.sourceListingTitle ?? sale.title ?? "";
+  const economicSignal =
+    /\b(?:[1-9]\d?\s*%\s*off|bogo|buy\s+one\s+get\s+one|promo\s+code|coupon\s+code|use\s+code)\b/i;
+  const sitewideClaim =
+    /\b(?:sitewide|site-wide|storewide|store-wide|entire\s+(?:site|store)|everything)\b/i;
   const vinylWideClaim = /\ball\s+(?:vinyl|records|lps|music)\b/i;
   const hasOfferEvidence = economicSignal.test(evidence);
 
-  if (scope === "sitewide" && sitewideClaim.test(evidence) && hasOfferEvidence) return "sitewide";
+  if (scope === "sitewide" && sitewideClaim.test(evidence) && hasOfferEvidence)
+    return "sitewide";
   if (vinylWideClaim.test(evidence) && hasOfferEvidence) return "vinyl-wide";
 
   const pageAndEvidence = `${normalizeSalePageUrl(sale.sourceUrl)} ${evidence}`;
-  if (/\b(?:clearance|closeout|garage[- ]sale|warehouse[- ](?:sale|overstock)|overstock[- ]sale)\b/i.test(pageAndEvidence)) {
+  if (
+    /\b(?:clearance|closeout|garage[- ]sale|warehouse[- ](?:sale|overstock)|overstock[- ]sale)\b/i.test(
+      pageAndEvidence,
+    )
+  ) {
     return "clearance";
   }
   return "unknown";
@@ -208,7 +291,9 @@ export function extractSalePromoCode(value: string): string | null {
   return null;
 }
 
-export function classifySourceCoverage(report: SaleSourceReport): CoverageState {
+export function classifySourceCoverage(
+  report: SaleSourceReport,
+): CoverageState {
   const catalogHealth = coverageHealthStatus(report.catalogHealth);
   const salePageHealth = coverageHealthStatus(report.salePageHealth);
   const meaningful =
@@ -218,14 +303,18 @@ export function classifySourceCoverage(report: SaleSourceReport): CoverageState 
     MEANINGFUL_USABLE_COVERAGE.has(report.usableCoverage ?? "");
   const salePageFailed = FAILED_HEALTH_STATES.has(salePageHealth);
   const catalogFailed = FAILED_HEALTH_STATES.has(catalogHealth);
-  const failed = report.status === "error" || catalogFailed || report.productParseHealth === "failed";
+  const failed =
+    report.status === "error" ||
+    catalogFailed ||
+    report.productParseHealth === "failed";
   const partial =
     report.status === "partial" ||
     catalogHealth === "partial" ||
     salePageHealth === "partial" ||
     (report.pageErrors?.length ?? 0) > 0;
   const catalogReached =
-    finiteCount(report.catalogPageAvailableCount) > 0 || ["healthy", "partial", "success"].includes(catalogHealth);
+    finiteCount(report.catalogPageAvailableCount) > 0 ||
+    ["healthy", "partial", "success"].includes(catalogHealth);
 
   if (meaningful && (failed || salePageFailed || partial)) return "degraded";
   if (meaningful) return "healthy";
@@ -237,7 +326,9 @@ export function classifySourceCoverage(report: SaleSourceReport): CoverageState 
     finiteCount(report.salePageAttemptCount) > 0 ||
     finiteCount(report.catalogPageAvailableCount) > 0 ||
     finiteCount(report.salePageAvailableCount) > 0 ||
-    ["candidates", "empty", "healthy", "partial", "sale_signals"].includes(report.status ?? "") ||
+    ["candidates", "empty", "healthy", "partial", "sale_signals"].includes(
+      report.status ?? "",
+    ) ||
     ["healthy", "partial", "success"].includes(catalogHealth) ||
     ["healthy", "partial", "success"].includes(salePageHealth) ||
     report.productParseHealth === "empty" ||
@@ -245,18 +336,25 @@ export function classifySourceCoverage(report: SaleSourceReport): CoverageState 
   return attempted ? "empty" : "not_checked";
 }
 
-export function coverageHealthStatus(value: SourceHealthValue | undefined): string {
+export function coverageHealthStatus(
+  value: SourceHealthValue | undefined,
+): string {
   const raw =
     typeof value === "string"
       ? value
       : value && typeof value === "object"
-        ? value.status ?? value.state ?? value.health ?? ""
+        ? (value.status ?? value.state ?? value.health ?? "")
         : "";
   return raw.trim().toLowerCase();
 }
 
-export function summarizeSourceCoverage(reports: SaleSourceReport[]): CoverageSummary {
-  const sources = reports.map((report) => ({ report, state: classifySourceCoverage(report) }));
+export function summarizeSourceCoverage(
+  reports: SaleSourceReport[],
+): CoverageSummary {
+  const sources = reports.map((report) => ({
+    report,
+    state: classifySourceCoverage(report),
+  }));
   return {
     blocked: sources.filter(({ state }) => state === "blocked").length,
     degraded: sources.filter(({ state }) => state === "degraded").length,
@@ -269,10 +367,19 @@ export function summarizeSourceCoverage(reports: SaleSourceReport[]): CoverageSu
 }
 
 function sitewideSales(rows: SaleObservation[] | undefined): SaleObservation[] {
-  return (rows ?? []).filter((sale) => sale.opportunityType === undefined || sale.opportunityType === "sitewide_sale");
+  return (rows ?? []).filter(
+    (sale) =>
+      (sale.opportunityType === undefined ||
+        sale.opportunityType === "sitewide_sale") &&
+      !/\b(?:funko|figurines?|vinyl\s+figures?)\b/i.test(
+        `${sale.title} ${sale.saleEvidence} ${sale.saleSignal}`,
+      ),
+  );
 }
 
-function groupByDisplayIdentity(rows: SaleObservation[]): Map<string, SaleObservation[]> {
+function groupByDisplayIdentity(
+  rows: SaleObservation[],
+): Map<string, SaleObservation[]> {
   const grouped = new Map<string, SaleObservation[]>();
   for (const sale of rows) {
     const key = displaySaleCampaignKey(sale);
@@ -281,7 +388,9 @@ function groupByDisplayIdentity(rows: SaleObservation[]): Map<string, SaleObserv
   return grouped;
 }
 
-function suppressConflictingDiscoveryLeads(rows: SaleObservation[]): SaleObservation[] {
+function suppressConflictingDiscoveryLeads(
+  rows: SaleObservation[],
+): SaleObservation[] {
   const byOfferBase = new Map<string, SaleObservation[]>();
   for (const sale of rows) {
     const retailer = retailerIdentity(sale);
@@ -290,16 +399,18 @@ function suppressConflictingDiscoveryLeads(rows: SaleObservation[]): SaleObserva
     const promoCode = explicitPromoCode(sale) ?? extractSalePromoCode(text);
     const discount = normalizedDiscount(sale.saleDiscountPercent);
     const offer = offerIdentity(text, page, discount, promoCode);
-    const pageIdentity = portableEconomicOffer(offer, discount, promoCode) ? "any" : page;
+    const pageIdentity = portableEconomicOffer(offer, discount, promoCode)
+      ? "any"
+      : page;
     const key = `${retailer}|page:${pageIdentity}|offer:${offer}|code:${promoCode ?? "none"}`;
     byOfferBase.set(key, [...(byOfferBase.get(key) ?? []), sale]);
   }
   return [...byOfferBase.values()].flatMap((group) => {
-    const confirmed = group.filter((sale) => sale.saleVerification === "retailer-page");
-    if (confirmed.length === 0) return group;
-    const confirmedDiscounts = new Set(
-      confirmed.map(economicDiscountIdentity),
+    const confirmed = group.filter(
+      (sale) => sale.saleVerification === "retailer-page",
     );
+    if (confirmed.length === 0) return group;
+    const confirmedDiscounts = new Set(confirmed.map(economicDiscountIdentity));
     return group.filter(
       (sale) =>
         sale.saleVerification === "retailer-page" ||
@@ -315,75 +426,140 @@ function buildCampaign(
 ): NormalizedSaleCampaign {
   const representative = [...campaignRows].sort(compareRepresentatives)[0];
   const observations = observationRows.length ? observationRows : campaignRows;
-  const explicitObservationCount = Math.max(0, ...campaignRows.map((sale) => finiteCount(sale.saleObservationCount)));
+  const explicitObservationCount = Math.max(
+    0,
+    ...campaignRows.map((sale) => finiteCount(sale.saleObservationCount)),
+  );
   const urls = [
-    ...observations.flatMap((sale) => sale.saleObservationUrls ?? [sale.sourceUrl]),
+    ...observations.flatMap(
+      (sale) => sale.saleObservationUrls ?? [sale.sourceUrl],
+    ),
     ...campaignRows.flatMap((sale) => sale.saleObservationUrls ?? []),
   ];
-  const normalizedPages = [...new Set(urls.map(normalizeSalePageUrl).filter(Boolean))];
+  const normalizedPages = [
+    ...new Set(urls.map(normalizeSalePageUrl).filter(Boolean)),
+  ];
   const mergedCampaignIds = [
-    ...new Set(campaignRows.map((sale) => sale.saleCampaignId).filter((value): value is string => Boolean(value))),
+    ...new Set(
+      campaignRows
+        .map((sale) => sale.saleCampaignId)
+        .filter((value): value is string => Boolean(value)),
+    ),
   ];
 
   return {
     ...representative,
     displayCampaignKey: key,
-    firstSeenAt: earliestDate(campaignRows.map((sale) => sale.firstSeenAt).filter((value): value is string => Boolean(value))),
-    lastSeenAt: latestDate(campaignRows.map((sale) => sale.lastSeenAt ?? sale.capturedAt)),
+    firstSeenAt: earliestDate(
+      campaignRows
+        .map((sale) => sale.firstSeenAt)
+        .filter((value): value is string => Boolean(value)),
+    ),
+    lastSeenAt: latestDate(
+      campaignRows.map((sale) => sale.lastSeenAt ?? sale.capturedAt),
+    ),
     mergedCampaignIds,
     normalizedSalePages: normalizedPages,
-    saleObservationCount: observationRows.length || explicitObservationCount || campaignRows.length,
+    saleObservationCount:
+      observationRows.length || explicitObservationCount || campaignRows.length,
     saleObservationPageCount: normalizedPages.length,
     saleScope: normalizedSaleScope(representative),
     saleStatus: highestStatus(campaignRows),
   };
 }
 
-function compareCampaigns(left: NormalizedSaleCampaign, right: NormalizedSaleCampaign): number {
+function compareCampaigns(
+  left: NormalizedSaleCampaign,
+  right: NormalizedSaleCampaign,
+): number {
   return (
     STATUS_PRIORITY[right.saleStatus] - STATUS_PRIORITY[left.saleStatus] ||
-    Date.parse(right.lastSeenAt ?? right.capturedAt) - Date.parse(left.lastSeenAt ?? left.capturedAt) ||
+    Date.parse(right.lastSeenAt ?? right.capturedAt) -
+      Date.parse(left.lastSeenAt ?? left.capturedAt) ||
     left.sourceName.localeCompare(right.sourceName)
   );
 }
 
-function compareRepresentatives(left: SaleObservation, right: SaleObservation): number {
-  return representativeScore(right) - representativeScore(left) || Date.parse(right.lastSeenAt ?? right.capturedAt) - Date.parse(left.lastSeenAt ?? left.capturedAt);
+function compareRepresentatives(
+  left: SaleObservation,
+  right: SaleObservation,
+): number {
+  return (
+    representativeScore(right) - representativeScore(left) ||
+    Date.parse(right.lastSeenAt ?? right.capturedAt) -
+      Date.parse(left.lastSeenAt ?? left.capturedAt)
+  );
 }
 
 function representativeScore(sale: SaleObservation): number {
   const status = sale.saleStatus ?? "ongoing";
-  const salePage = /\b(?:sale|clearance|deal|garage|overstock|promo)/i.test(normalizeSalePageUrl(sale.sourceUrl)) ? 30 : 0;
+  const salePage = /\b(?:sale|clearance|deal|garage|overstock|promo)/i.test(
+    normalizeSalePageUrl(sale.sourceUrl),
+  )
+    ? 30
+    : 0;
   const scope = normalizedSaleScope(sale);
-  const scopeScore = scope === "sitewide" ? 5 : scope === "vinyl-wide" ? 4 : scope === "clearance" ? 3 : 2;
-  return (sale.saleVerification === "retailer-page" ? 10_000 : 0) + STATUS_PRIORITY[status] * 100 + salePage + scopeScore + (sale.saleEvidence ? 1 : 0);
+  const scopeScore =
+    scope === "sitewide"
+      ? 5
+      : scope === "vinyl-wide"
+        ? 4
+        : scope === "clearance"
+          ? 3
+          : 2;
+  return (
+    (sale.saleVerification === "retailer-page" ? 10_000 : 0) +
+    STATUS_PRIORITY[status] * 100 +
+    salePage +
+    scopeScore +
+    (sale.saleEvidence ? 1 : 0)
+  );
 }
 
 function highestStatus(rows: SaleObservation[]): SaleLifecycleStatus {
-  return [...rows].sort(
-    (left, right) => STATUS_PRIORITY[right.saleStatus ?? "ongoing"] - STATUS_PRIORITY[left.saleStatus ?? "ongoing"],
-  )[0]?.saleStatus ?? "ongoing";
+  return (
+    [...rows].sort(
+      (left, right) =>
+        STATUS_PRIORITY[right.saleStatus ?? "ongoing"] -
+        STATUS_PRIORITY[left.saleStatus ?? "ongoing"],
+    )[0]?.saleStatus ?? "ongoing"
+  );
 }
 
 function retailerIdentity(sale: SaleObservation): string {
   const pageHost = normalizeSalePageUrl(sale.sourceUrl).split("/", 1)[0];
-  const source = pageHost || sale.sourceId || sale.sourceName || "unknown-source";
-  return source.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const source =
+    pageHost || sale.sourceId || sale.sourceName || "unknown-source";
+  return source
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function saleIdentityText(sale: SaleObservation): string {
-  return [sale.saleEvidence, sale.saleSignal, sale.sourceListingTitle, sale.title].filter(Boolean).join(" ");
+  return [
+    sale.saleEvidence,
+    sale.saleSignal,
+    sale.sourceListingTitle,
+    sale.title,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function explicitPromoCode(sale: SaleObservation): string | null {
   for (const value of [sale.salePromoCode, sale.saleCode, sale.promoCode]) {
-    if (typeof value === "string" && value.trim()) return value.trim().toUpperCase();
+    if (typeof value === "string" && value.trim())
+      return value.trim().toUpperCase();
   }
   return null;
 }
 
 function normalizedDiscount(value: number | null | undefined): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value * 100) / 100 : null;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.round(value * 100) / 100
+    : null;
 }
 
 function economicDiscountIdentity(sale: SaleObservation): string {
@@ -400,29 +576,59 @@ function normalizedDiscountQualifier(
   if (sale.saleDiscountQualifier === "exact") return "exact";
   if (discount === null) return "none";
   const escapedDiscount = String(discount).replace(".", "\\.");
-  return new RegExp(`\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`, "i").test(text)
+  return new RegExp(
+    `\\bup\\s+to\\s+(?:an?\\s+)?${escapedDiscount}\\s*(?:%|percent)\\s*off\\b`,
+    "i",
+  ).test(text)
     ? "up_to"
     : "exact";
 }
 
-function offerIdentity(text: string, page: string, discount: number | null, promoCode: string | null): string {
-  if (/\b(?:bogo|buy\s+one\s+get\s+one|buy\s+1\s+get\s+1|2\s+for\s+1|two\s+for\s+one)\b/i.test(text)) return "bogo";
-  if (/\b(?:buy\s+more|volume\s+discount|multi[- ]?buy)\b/i.test(text)) return "volume";
+function offerIdentity(
+  text: string,
+  page: string,
+  discount: number | null,
+  promoCode: string | null,
+): string {
+  if (
+    /\b(?:bogo|buy\s+one\s+get\s+one|buy\s+1\s+get\s+1|2\s+for\s+1|two\s+for\s+one)\b/i.test(
+      text,
+    )
+  )
+    return "bogo";
+  if (/\b(?:buy\s+more|volume\s+discount|multi[- ]?buy)\b/i.test(text))
+    return "volume";
   if (promoCode) return "promo-code";
   if (discount !== null) return "percent-sale";
   if (/\bgarage[- ]sale\b/i.test(`${page} ${text}`)) return "garage-sale";
-  if (/\bwarehouse[- ](?:overstock|sale)\b|\boverstock[- ]sale\b/i.test(`${page} ${text}`)) return "warehouse-overstock";
+  if (
+    /\bwarehouse[- ](?:overstock|sale)\b|\boverstock[- ]sale\b/i.test(
+      `${page} ${text}`,
+    )
+  )
+    return "warehouse-overstock";
   if (/\bclearance\b/i.test(`${page} ${text}`)) return "clearance";
   if (/\bfree\s+shipping\b/i.test(text)) return "free-shipping";
   return "sale";
 }
 
-function portableEconomicOffer(offer: string, discount: number | null, promoCode: string | null): boolean {
-  return discount !== null || Boolean(promoCode) || offer === "bogo" || offer === "volume";
+function portableEconomicOffer(
+  offer: string,
+  discount: number | null,
+  promoCode: string | null,
+): boolean {
+  return (
+    discount !== null ||
+    Boolean(promoCode) ||
+    offer === "bogo" ||
+    offer === "volume"
+  );
 }
 
 function finiteCount(value: number | undefined): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : 0;
 }
 
 function earliestDate(values: string[]): string | undefined {
