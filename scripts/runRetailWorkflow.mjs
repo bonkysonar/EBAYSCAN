@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { admittedSourceIds, researchProgress, WORKFLOW_RESEARCH_LIMIT } from "./lib/retailWorkflowState.mjs";
+import { admittedSourceIds, browserRecoveryScan, freshWorkflowDraftSummary, researchProgress, scannerOutputPath, WORKFLOW_RESEARCH_LIMIT } from "./lib/retailWorkflowState.mjs";
 const cwd = process.cwd(),
   dir = join(cwd, "exports", "arbitrage-finds");
 for (const line of (existsSync(".env.local")
@@ -29,12 +29,23 @@ const cadencePath = join(dir, "workflow-cadence.json");
 const cadence = existsSync(cadencePath)
   ? JSON.parse(readFileSync(cadencePath, "utf8"))
   : {};
+if (args.has("finish") && ["browserOnly", "browserObservations", "previousScan"].some((name) => args.has(name)))
+  throw new Error("Browser retailer recovery must start a new workflow; these scan options cannot change an existing draft.");
+if (args.has("previousScan") && !args.has("browserOnly")) throw new Error("--previousScan requires a new --browserOnly recovery workflow.");
 let context = args.has("finish")
   ? JSON.parse(readFileSync(resolve(String(args.get("finish"))), "utf8"))
   : null;
 if (context) context.contextPath = resolve(String(args.get("finish")));
 try {
   if (!context) {
+    const browserObservationsPath = args.has("browserObservations") ? argumentPath("browserObservations") : null;
+    const previousScanPath = args.has("previousScan") ? argumentPath("previousScan") : null;
+    const recovery = args.has("browserOnly") ? browserRecoveryScan({
+      observationsPath: browserObservationsPath,
+      observations: browserObservationsPath ? JSON.parse(readFileSync(browserObservationsPath, "utf8")) : null,
+      previousScanPath,
+      previousScan: previousScanPath ? JSON.parse(readFileSync(previousScanPath, "utf8")) : null,
+    }) : null;
     const today = new Intl.DateTimeFormat("en-CA", {
       timeZone: "America/Los_Angeles",
       year: "numeric",
@@ -81,29 +92,35 @@ try {
     ].slice(0, 12);
     context = {
       version: 1,
-      mode: full || !selected.length ? "full" : "refresh",
+      mode: recovery ? "refresh" : full || !selected.length ? "full" : "refresh",
       startedAt: new Date().toISOString(),
       runId: "workflow-" + Date.now(),
+      ...(recovery ? { browserOnly: true, previousScanPath, previousRunId: recovery.previousRunId, requestedSourceIds: recovery.sourceIds } : {}),
     };
     const contextPath = join(dir, `${context.runId}.json`);
     context.contextPath = contextPath;
     await status("running");
-    if (context.mode === "full") cadence.lastBroadDate = today;
-    cadence.rotation = offset + 4;
-    writeFileSync(cadencePath, JSON.stringify(cadence, null, 2));
-    const scanArgs = ["scripts/runRetailArbitrageScan.mjs", "--skipUpload"];
-    if (args.has("browserObservations")) {
-      context.browserObservationsPath = argumentPath("browserObservations");
+    if (!recovery) {
+      if (context.mode === "full") cadence.lastBroadDate = today;
+      cadence.rotation = offset + 4;
+      writeFileSync(cadencePath, JSON.stringify(cadence, null, 2));
+    }
+    const scanArgs = recovery?.scanArgs ?? ["scripts/runRetailArbitrageScan.mjs", "--skipUpload"];
+    if (browserObservationsPath) {
+      context.browserObservationsPath = browserObservationsPath;
+    }
+    if (browserObservationsPath && !recovery) {
       scanArgs.push("--browserObservations=" + context.browserObservationsPath);
     }
-    if (context.mode === "refresh")
+    if (context.mode === "refresh" && !recovery)
       scanArgs.push("--sources=" + selected.join(","), "--skipEbaySync");
-    run(scanArgs);
-    const draft = latestArtifact(true, Date.parse(context.startedAt));
-    if (!draft) throw new Error("The scan produced no new draft.");
-    context.runId = draft.runId;
-    context.draftPath = draft.path;
-    context.sourceCount = draft.sourceReports?.length ?? 0;
+    const scanResult = run(scanArgs, true);
+    process.stdout.write(scanResult.stdout);
+    const draftPath = resolve(scannerOutputPath(scanResult.stdout));
+    if (draftPath === previousScanPath) throw new Error("The scanner returned the previous artifact instead of a new draft.");
+    const draft = JSON.parse(readFileSync(draftPath, "utf8"));
+    Object.assign(context, freshWorkflowDraftSummary(draft, context));
+    context.draftPath = draftPath;
     context.checkpointPath = join(
       dir,
       `research-checkpoint-${draft.runId}.json`,
@@ -125,6 +142,7 @@ try {
           draftPath: context.draftPath,
           checkpointPath: context.checkpointPath,
           mode: context.mode,
+          sourceCount: context.sourceCount,
           researchProgress: context.researchProgress,
           planPath: context.planPath,
         },
@@ -136,7 +154,6 @@ try {
   if (args.has("finish")) {
     const draft = JSON.parse(readFileSync(context.draftPath, "utf8"));
     if (draft.runId !== context.runId || draft.phase !== "scan") throw new Error("Workflow context does not identify this unpublished scan draft.");
-    if (args.has("browserObservations")) throw new Error("Retail browser observations must be supplied when creating a new scan, before its draft is written.");
     importBrowserResearch();
     const checkpointPath = args.has("research") ? argumentPath("research") : context.checkpointPath;
     const checkpoint = checkpointPath && existsSync(checkpointPath) ? readCheckpoint(checkpointPath, draft.runId) : { runId: draft.runId, entries: [] };

@@ -8,7 +8,8 @@ import {
   renameSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
-import { get, put, list } from "@vercel/blob";
+import { put, list } from "@vercel/blob";
+import { readCurrentPublicBlobJson } from "./readCurrentPublicBlobJson.js";
 import {
   learningIdentity,
   REVIEW_OUTCOMES,
@@ -192,13 +193,8 @@ async function read(
   path: string,
 ): Promise<Record<string, unknown> | null> {
   if (process.env.BLOB_READ_WRITE_TOKEN) {
-    const result = await get(`retail-operations/${path}`, {
-      access: "public",
-      useCache: false,
-    });
-    return result?.statusCode === 200 && result.stream
-      ? JSON.parse(await new Response(result.stream).text())
-      : null;
+    const result=await readCurrentPublicBlobJson(`retail-operations/${path}`);
+    return result?.value as Record<string,unknown>|null ?? null;
   }
   const file = join(cwd, "exports", "retail-operations", path);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;

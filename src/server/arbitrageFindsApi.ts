@@ -1,6 +1,7 @@
 import { selectDecisionList } from "../lib/arbitrage/decisionList.mjs";
 import { feedbackReceipt } from "./retailOperationsApi.js";
 import { mergeVerifiedSourceUpdates } from "./retailSourceUpdates.js";
+import { readCurrentPublicBlobJson } from "./readCurrentPublicBlobJson.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -923,7 +924,8 @@ function atomicWriteFile(path: string, body: string) {
 async function readBlobJson(
   pathname: string,
 ): Promise<{ etag: string; url: string; value: unknown } | null> {
-  const result = await get(pathname, { access: "public", useCache: false });
+  if (pathname === BLOB_LATEST_POINTER_PATH) return readCurrentPublicBlobJson(pathname);
+  const result = await get(pathname, { access: "public" });
   if (!result) return null;
   if (result.statusCode !== 200 || !result.stream)
     throw new Error(`Unable to read blob ${pathname}.`);
