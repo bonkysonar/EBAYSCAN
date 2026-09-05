@@ -144,18 +144,20 @@ function albumRowMatches(candidate, title) {
     const ensembleAt = phraseAt(remainder, ensemble);
     if (ensembleAt >= 0) remainder = [...remainder.slice(0, ensembleAt), ...remainder.slice(ensembleAt + ensemble.length)];
   }
+  const candidateDiameter = /\b(7|10|12)\s*(?:[- ]?inch|["”])/i.exec(`${candidate.title ?? ""} ${candidate.sourceListingTitle ?? ""} ${candidate.shopifyVariantTitle ?? ""} ${candidate.recordFormat ?? ""}`)?.[1];
+  const rowDiameter = /\b(7|10|12)\s*(?:[- ]?inch|["”])/i.exec(title)?.[1];
+  if (rowDiameter && ((candidateDiameter && candidateDiameter !== rowDiameter) || (rowDiameter === "7" && candidateDiameter !== "7"))) return false;
+  const candidateSmallFormat = candidateDiameter === "7" || candidateDiameter === "10";
+  const comparableTenInch = !candidateDiameter && rowDiameter === "10";
   const albumAt = phraseAt(remainder, album);
   if (albumAt < 0) {
     if (artist.join(" ") !== album.join(" ")) return false;
     const selfTitled = /\bself[- ]?titled\b|\bs\s*\/\s*t\b/i.test(title);
     return selfTitled || remainder.every((token) => /^(?:new|sealed|vinyl|lp|record|records|original|remaster(?:ed)?|reissue|mono|stereo|gram|grams|g|factory|brand|gatefold|\d+(?:g|gm|lp)?)$/.test(token));
   }
-  const candidateSmallFormat = /\b(7|10)\s*(?:[- ]?inch|["”])/i.exec(`${candidate.title ?? ""} ${candidate.sourceListingTitle ?? ""} ${candidate.shopifyVariantTitle ?? ""}`)?.[1];
-  const rowSmallFormat = /\b(7|10)\s*(?:[- ]?inch|["”])/i.exec(title)?.[1];
-  if (rowSmallFormat && candidateSmallFormat !== rowSmallFormat) return false;
   const extra = [...remainder.slice(0, albumAt), ...remainder.slice(albumAt + album.length)]
-    .join(" ").replace(/\b(?:blue note|mobile fidelity|analogue productions|music matters|tone poet|classic records|verve vault|record store day|black friday|half speed|bonus tracks?|cash money records?|young money entertainment)\b/g, " ");
-  return extra.split(/\s+/).filter(Boolean).every((token) => METADATA.has(token) || (candidateSmallFormat && token === "single") || /^\d+(?:st|nd|rd|th|g|gm|gram|rpm|lp|x)?$/.test(token));
+    .join(" ").replace(/\b(?:blue note|mobile fidelity|analogue productions|music matters|tone poet|classic records|verve vault|record store day|black friday|half speed|bonus tracks?|cash money records?|young money entertainment|in hand)\b/g, " ");
+  return extra.split(/\s+/).filter(Boolean).every((token) => METADATA.has(token) || ((candidateSmallFormat || comparableTenInch) && token === "single") || /^\d+(?:st|nd|rd|th|g|gm|gram|rpm|lp|x)?$/.test(token));
 }
 
 function phraseAt(words, phrase) { return words.findIndex((_, index) => phrase.every((word, offset) => words[index + offset] === word)); }

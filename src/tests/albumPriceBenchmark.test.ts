@@ -103,4 +103,25 @@ describe("provisional album price benchmarks", () => {
     ] };
     expect(createAlbumPriceBenchmarkIndex({ ...captures, pages: [p] }, now).match({ artist: "Lil Wayne", title: 'Lollipop 7" (RepublicRecords.com Exclusive)' })).toMatchObject({ unitsSold1095Days: 11, listingCount: 2 });
   });
+
+  it("allows observed ten-inch releases for unspecified retailer diameters while retaining explicit size and seven-inch conflicts", () => {
+    const tenInch = { ...row, title: 'Artist Name Actual Album Limited Edition 10" IN HAND' };
+    const indexFor = (soldTitle: string) => createAlbumPriceBenchmarkIndex({ ...captures, pages: [{ ...page, rows: [{ ...tenInch, title: soldTitle }] }] }, now);
+    const index = indexFor(tenInch.title);
+    expect(index.match({ ...candidate, title: "Actual Album Limited Edition LP", recordFormat: "LP" })).toMatchObject({ lowPrice: 20, unitsSold1095Days: 8, scope: "provisional_album_across_pressings" });
+    expect(index.match({ ...candidate, title: 'Actual Album 12" LP' })).toBeUndefined();
+    expect(index.match({ ...candidate, recordFormat: "12 inch" })).toBeUndefined();
+    expect(index.match({ ...candidate, title: 'Actual Album 7"' })).toBeUndefined();
+    expect(indexFor('Artist Name Actual Album 7" Single').match(candidate)).toBeUndefined();
+    expect(indexFor('Artist Name Actual Album Single').match(candidate)).toBeUndefined();
+    expect(indexFor('Artist Name Actual Album 12" LP').match({ ...candidate, title: 'Actual Album 10"' })).toBeUndefined();
+    expect(indexFor('Artist Name Actual Album 10" Single').match(candidate)).toMatchObject({ unitsSold1095Days: 8 });
+    expect(indexFor('Artist Name Different Album 10" IN HAND').match(candidate)).toBeUndefined();
+  });
+
+  it("preserves In Hand when it belongs to the actual album title", () => {
+    const query = "Artist Name In Hand";
+    const p = { ...page, query, url: url.replace("Artist+Name+Actual+Album", encodeURIComponent(query)), rows: [{ ...row, title: "Artist Name In Hand Vinyl LP" }, { ...row, title: "Artist Name Other Album Vinyl LP IN HAND", totalSold: 100 }] };
+    expect(createAlbumPriceBenchmarkIndex({ ...captures, pages: [p] }, now).match({ artist: "Artist Name", title: "In Hand LP" })).toMatchObject({ unitsSold1095Days: 8, listingCount: 1 });
+  });
 });
