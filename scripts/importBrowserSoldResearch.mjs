@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { importBrowserSoldResearch } from "./lib/browserSoldResearch.mjs";
+import { createAlbumPriceBenchmarkIndex } from "./lib/albumPriceBenchmark.mjs";
 
 const [draftArgument, captureArgument] = process.argv.slice(2);
 if (!draftArgument) throw new Error("Usage: node scripts/importBrowserSoldResearch.mjs <scan-json> [browser-product-research.json]");
@@ -11,6 +12,14 @@ const captures=JSON.parse(readFileSync(resolve(captureArgument || "exports/arbit
 const checkpointPath=join(dirname(draftPath),`research-checkpoint-${payload.runId}.json`);
 const previous=existsSync(checkpointPath)?JSON.parse(readFileSync(checkpointPath,"utf8")):{};
 const checkpoint=importBrowserSoldResearch(payload,captures,previous);
+const benchmarks=createAlbumPriceBenchmarkIndex(captures);
+const attach=(find)=>{const benchmark=benchmarks.match(find);return benchmark ? {...find,albumPriceBenchmark:benchmark} : find;};
+payload.finds=(payload.finds??[]).map(attach);
+if(Array.isArray(payload.researchCandidates)) payload.researchCandidates=payload.researchCandidates.map(attach);
+const matched=(payload.researchCandidates??payload.finds).filter((find)=>find.albumPriceBenchmark);
+const benchmarkSummary={matchedFindCount:matched.length,volumeSupportedCount:matched.filter((find)=>find.albumPriceBenchmark.volumeSupported).length,partialSampleCount:matched.filter((find)=>find.albumPriceBenchmark.sampleComplete===false).length};
 writeFileSync(`${checkpointPath}.tmp`,JSON.stringify(checkpoint,null,2));
 renameSync(`${checkpointPath}.tmp`,checkpointPath);
-console.log(JSON.stringify({checkpointPath,...checkpoint.importSummary},null,2));
+writeFileSync(`${draftPath}.tmp`,JSON.stringify(payload,null,2));
+renameSync(`${draftPath}.tmp`,draftPath);
+console.log(JSON.stringify({checkpointPath,...checkpoint.importSummary,benchmarkSummary},null,2));

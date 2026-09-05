@@ -44,7 +44,9 @@ export function RetailScanStatus({
   return (
     <aside className="panel retail-scan-status" aria-label="Scanner freshness">
       <strong>
-        {payload?.publicationMode === "source_updates"
+        {payload?.publicationMode === "evidence_updates"
+          ? "Album price research updated · retail observations unchanged"
+          : payload?.publicationMode === "source_updates"
           ? "Verified retailer updates · partial coverage"
           : "Daily scanner"}
       </strong>
@@ -61,8 +63,9 @@ export function RetailScanStatus({
           Last successful broad scan:{" "}
           {date(payload.sourceUpdates.lastBroadScanAt)}. Last broad attempt:{" "}
           {date(payload.sourceUpdates.lastBroadAttemptAt)}.{" "}
-          {payload.sourceUpdates.updatedSourceIds.length} sources updated; other
-          observations retain their original dates.
+          {payload.publicationMode === "evidence_updates"
+            ? "No retail source rescan; offers retain their original observation dates."
+            : `${payload.sourceUpdates.updatedSourceIds.length} sources updated; other observations retain their original dates.`}
         </p>
       ) : null}
       {attempt?.message ? <p role="status">{attempt.message}</p> : null}

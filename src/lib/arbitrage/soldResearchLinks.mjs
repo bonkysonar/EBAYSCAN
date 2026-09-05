@@ -107,7 +107,8 @@ export function normalizeResearchTitle(rawTitle = "") {
     .replace(/[[(]([^\])]+)[\])]/g, (whole, inside) =>
       /\b(?:vinyl|lps?|remaster(?:ed)?|reissue|edition|version|grams?|swirl|splatter|exclusive|variant|walmart|target)\b/i.test(
         inside,
-      ) || /^(?:verve\s+vault|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series$/i.test(inside.trim())
+      ) || /^(?:verve\s+vault|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series$/i.test(inside.trim()) ||
+      /^(?:black|white|red|blue|green|yellow|orange|pink|purple|clear|silver|gold|tangerine|apple\s+red|ghostly\s+blue)$/i.test(inside.trim())
         ? " "
         : ` ${inside} `,
     )
@@ -129,6 +130,7 @@ export function normalizeResearchTitle(rawTitle = "") {
     isEditionDescription(chunks.at(-1)) &&
     (chunks.length > 2 ||
       isExplicitEditionTail(chunks.at(-1)) ||
+      /^(?:apple\s+red|ghostly\s+blue|black|white|red|blue|green|tan|tangerine|amber|ruby|coral|pink|purple|yellow|clear)\b.*\b(?:vinyl|lp|inch)\b/i.test(chunks.at(-1)) ||
       /^(?:r\s*&\s*b|rock|pop|country|jazz|rap|hip[-\s]?hop)\s*-*$/i.test(
         chunks.at(-1),
       ) ||
@@ -144,10 +146,14 @@ export function normalizeResearchTitle(rawTitle = "") {
   const tokens = title.trim().split(/\s+/);
   for (let index = 0; index < tokens.length; index += 1) {
     const tail = tokens.slice(index).join(" ");
+    const repeatedColor = /^(?:black|white|red|blue|purple|green|yellow|orange|pink)\b/i.test(tail) &&
+      tokens.slice(0, index).some((token) => token.toLowerCase() === tokens[index].toLowerCase());
+    const whiteFormatTail = /^white\s+(?:vinyl\s+)?lps?\b/i.test(tail) && index > 0 &&
+      !/^(?:and|or|in|of|to|it|the|on)$/i.test(tokens[index - 1]);
     if (
-      (isExplicitEditionTail(tail) ||
+      (isExplicitEditionTail(tail) || repeatedColor || whiteFormatTail ||
         (index > 0 &&
-          /^(?:apple\s+red|ghostly\s+blue|baby|royal|cloudy|milky|neon|hot|light|dark|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|tan|tangerine|amber|ruby|coral|brown|cream|clear|navy|teal|grey|gray|half)\b.*\b(?:vinyl|lp|inch)\b/i.test(
+          /^(?:apple\s+red|ghostly\s+blue|baby|royal|cloudy|milky|neon|hot|light|dark|half)\b.*\b(?:vinyl|lp|inch)\b/i.test(
             tail,
           ) &&
           !/\b(?:album|record|ep|single)\b/i.test(
@@ -194,6 +200,13 @@ function withoutLeadingArtist(title, artist) {
   if (!title || !artist) return title;
   const titleWords = title.split(/\s+/);
   const artistWords = artist.split(/\s+/);
+  if (/^the$/i.test(artistWords[0])) {
+    const shortArtist = artistWords.slice(1);
+    if (normalizeKey(titleWords.slice(0, shortArtist.length).join(" ")) === normalizeKey(shortArtist.join(" ")) &&
+        /^[-:|]$/.test(titleWords[shortArtist.length] ?? "")) {
+      return titleWords.slice(shortArtist.length + 1).join(" ").trim();
+    }
+  }
   const prefix = titleWords.slice(0, artistWords.length).join(" ");
   return normalizeKey(prefix) === normalizeKey(artist)
     ? titleWords
