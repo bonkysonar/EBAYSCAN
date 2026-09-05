@@ -254,6 +254,8 @@ Signed-in Product Research observations are imported into the exact draft checkp
 
 Known pressing series, compound colors, translucency and multiple-disc formats require corresponding evidence in the returned sold rows. Generic album sales remain useful demand evidence but cannot establish a named edition's resale value. When one captured album search visibly contains multiple named pressing series, an unidentified candidate cannot claim those results as exact pricing. Preserve artist accents and remove retailer reissue-series labels from the artist-and-album search.
 
+When a generic catalog row and an explicit browser observation share the retailer, product path and SKU, retain the observed pressing instead of researching a second, less-specific copy. Different SKUs or conflicting explicit variants remain separate. Keep the browser observation's original time and provenance.
+
 A sale-only browser check must preserve the last observed catalog result and its original verification time. A newly attempted catalog failure still replaces the prior catalog health. Publish corrections through a genuinely new scan and immutable run; do not backdate observations or overwrite published run IDs.
 
 Production verification reproduced a stale regional public-Blob response despite a current control-plane ETag. Preserve each mutable status, feedback and latest-pointer write at an immutable sibling keyed by its ETag. Reads resolve the current ETag through the control plane and verify the immutable bytes; the original pointer still provides optimistic concurrency. Legacy fallback must reject a mismatched cached version rather than present stale state as current.

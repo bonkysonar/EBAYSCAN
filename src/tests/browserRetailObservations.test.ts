@@ -4,6 +4,7 @@ import {
   browserObservationPage,
   browserSourceDiagnostics,
   browserProductCandidates,
+  preferObservedSkuCandidates,
 } from "../../scripts/lib/browserRetailObservations.mjs";
 import { reconcileSaleCampaigns } from "../../scripts/lib/saleCampaignLifecycle.mjs";
 import { extractRetailCampaigns } from "../../scripts/lib/campaignOffers.mjs";
@@ -30,6 +31,28 @@ const document = (pages: unknown[]) => ({
   pages,
 });
 describe("visible browser retail observations", () => {
+  it("preserves observed Fall 2LP identity over the same-SKU generic parser copy", () => {
+    const source = { id: "mvd-shop", name: "MVD Shop" };
+    const observed = browserProductCandidates([{
+      ...page, outcome: "available", sourceId: source.id, url: "https://mvdshop.com/products/the-fall-futures-and-pasts-lp", capturedAt: now,
+      productEvidence: { artist: "The Fall", title: "Futures And Pasts", format: "2LP 180g", price: 5.98, currency: "USD", sku: "SECDLP284", barcode: "5036436141029", available: true },
+    }], source, () => "observed-fall")[0];
+    const parsed = { ...observed, id: "parsed-fall", identitySource: "retailer_vendor", retailObservationMethod: undefined, sourceListingTitle: "The Fall - Futures And Pasts (LP)", shopifyVariantTitle: "LP", shopifyVariantId: "43742064476409", barcode: null, sourceUrl: `${observed.sourceUrl}?variant=43742064476409`, capturedAt: "2026-09-05T02:06:00.000Z" };
+    for (const input of [[observed, parsed], [parsed, observed]]) {
+      const result = preferObservedSkuCandidates(input);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(observed);
+      expect(result[0]).toMatchObject({ id: "observed-fall", shopifyVariantTitle: "2LP 180g", barcode: "5036436141029", capturedAt: now, retailObservedAt: now });
+    }
+    for (const change of [
+      { sku: "SECDLP285" }, { sku: null }, { sourceId: "another-shop" },
+      { sourceUrl: "https://mvdshop.com/products/another-record?variant=43742064476409" },
+      { sourceUrl: "https://other.example/products/the-fall-futures-and-pasts-lp?variant=43742064476409" },
+      { barcode: "5036436141036" }, { purchasePrice: 7.98 }, { sourceCurrency: "GBP" },
+    ]) expect(preferObservedSkuCandidates([observed, { ...parsed, ...change }])).toHaveLength(2);
+    expect(preferObservedSkuCandidates([{ ...observed, shopifyVariantId: "111", sourceUrl: `${observed.sourceUrl}?variant=111` }, parsed])).toHaveLength(2);
+    expect(preferObservedSkuCandidates([observed, parsed, { ...parsed, id: "another-variant", shopifyVariantId: "222", sourceUrl: `${observed.sourceUrl}?variant=222` }])).toHaveLength(3);
+  });
   it("binds Rough Trade price and availability to the expanded numeric variant", () => {
     const selectedText="LP - Ghostly Blue $9.99 In Stock Add to cart";
     const purchaseText=`Thrice Identity Crisis LP - Sea Blue $16.99 Out of Stock ${selectedText}`;
