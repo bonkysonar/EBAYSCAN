@@ -8,7 +8,7 @@ import {
   campaignBasketScenario,
 } from "./lib/campaignOffers.mjs";
 import { shopifyIdentity, retailEligibility } from "./lib/retailIdentity.mjs";
-import { validateBrowserRetailObservations, browserObservationUrl, browserObservationPage, browserSourceDiagnostics, browserProductCandidates } from "./lib/browserRetailObservations.mjs";
+import { validateBrowserRetailObservations, browserObservationUrl, browserObservationPage, browserSourceDiagnostics, browserProductCandidates, preferObservedSkuCandidates } from "./lib/browserRetailObservations.mjs";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -784,7 +784,7 @@ async function scanSource(source) {
   } else result = await adapter.scan(source);
   return {
     ...result,
-    candidates: dedupeCandidates([...browserProductCandidates(browserObservations, source, stableId), ...(result.candidates ?? [])]),
+    candidates: dedupeCandidates(preferObservedSkuCandidates([...browserProductCandidates(browserObservations, source, stableId), ...(result.candidates ?? [])])),
     adapterStats: {
       adapterFamily: adapter.id,
       ...(result.adapterStats ?? {}),

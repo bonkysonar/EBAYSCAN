@@ -31,3 +31,6 @@ export function browserProductCandidates(
   source: Record<string, any>,
   stableId: (...args: string[]) => string,
 ): Array<Record<string, any>>;
+export function preferObservedSkuCandidates(
+  candidates: Array<Record<string, any>>,
+): Array<Record<string, any>>;

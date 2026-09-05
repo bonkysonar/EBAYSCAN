@@ -327,6 +327,55 @@ export function browserProductCandidates(pages, source, stableId) {
   return [...products, ...cards];
 }
 
+/** Keep an observed SKU's pressing metadata ahead of a generic parser duplicate. */
+export function preferObservedSkuCandidates(candidates) {
+  const groups = new Map();
+  for (const candidate of candidates) {
+    const identity = observedSkuIdentity(candidate);
+    if (!identity) continue;
+    const group = groups.get(identity.key) ?? [];
+    group.push({ candidate, identity });
+    groups.set(identity.key, group);
+  }
+  const superseded = new Set();
+  for (const group of groups.values()) {
+    const observed = group.filter(({ candidate }) =>
+      candidate.identitySource === "visible_product_page" &&
+      candidate.retailObservationMethod === "visible_browser" &&
+      candidate.physicalFormatConfirmed === true,
+    );
+    if (observed.length !== 1) continue;
+    const variants = new Set(group.flatMap(({ identity }) => identity.variants));
+    const barcodes = new Set(group.map(({ candidate }) => String(candidate.barcode ?? "").trim()).filter(Boolean));
+    const currencies = new Set(group.map(({ candidate }) => String(candidate.sourceCurrency ?? "").trim()).filter(Boolean));
+    const prices = new Set(group.map(({ candidate }) => Number(candidate.purchasePrice)));
+    // A SKU reused across actual variants is not enough to identify one offer.
+    // A changed price is also a separate observation requiring revalidation.
+    if (variants.size > 1 || barcodes.size > 1 || currencies.size > 1 ||
+        prices.size !== 1 || ![...prices].every((price) => Number.isFinite(price) && price > 0)) continue;
+    for (const { candidate } of group) {
+      if (candidate !== observed[0].candidate) superseded.add(candidate);
+    }
+  }
+  return candidates.filter((candidate) => !superseded.has(candidate));
+}
+
+function observedSkuIdentity(candidate) {
+  const sku = String(candidate.sku ?? "").trim();
+  if (!sku || !candidate.sourceId) return null;
+  try {
+    const url = new URL(candidate.sourceUrl);
+    if (url.protocol !== "https:" || url.username || url.password ||
+        !/^\/(?:products\/[^/]+|[a-z]{2}-[a-z]{2}\/product\/[^/]+\/[^/]+)\/?$/.test(url.pathname)) return null;
+    const variants = [candidate.shopifyVariantId, url.searchParams.get("variant"),
+      url.searchParams.get("algolia_object_id"),
+      host(url) === "roughtrade.com" && /^#\d+$/.test(url.hash) ? url.hash.slice(1) : null]
+      .filter((value) => value !== null && value !== undefined && value !== "")
+      .map(String);
+    return { key: JSON.stringify([candidate.sourceId, sku, url.origin, url.pathname.replace(/\/$/, "")]), variants };
+  } catch { return null; }
+}
+
 export function browserObservationPage(page) {
   const html = `<html><head><title>${escape(page.title)}</title></head><body>${page.visibleText
     .split(/\n+/)
