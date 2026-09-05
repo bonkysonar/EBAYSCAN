@@ -408,15 +408,12 @@ export function SiteWideSales() {
             </div>
           </div>
           <div className="site-sale-grid">
-            {[...grouped.new, ...grouped.changed].map((campaign) => (
-              <SaleCard
-                campaign={campaign}
-                feedback={feedback}
-                history={historyByCampaign.get(campaignKey(campaign)) ?? []}
-                key={campaignKey(campaign)}
-                onReview={(outcome) => reviewCampaign(campaign, outcome)}
-              />
-            ))}
+            <RetailerCampaignCards
+              campaigns={[...grouped.new, ...grouped.changed]}
+              feedback={feedback}
+              historyByCampaign={historyByCampaign}
+              onReview={reviewCampaign}
+            />
           </div>
         </section>
       ) : (
@@ -503,6 +500,53 @@ export function SiteWideSales() {
   );
 }
 
+function RetailerCampaignCards({
+  campaigns,
+  feedback,
+  historyByCampaign,
+  onReview,
+}: {
+  campaigns: DisplaySaleCampaign[];
+  feedback: ReviewFeedback;
+  historyByCampaign: Map<string, SaleHistoryEvent[]>;
+  onReview: (
+    campaign: DisplaySaleCampaign,
+    outcome: SaleReviewOutcome | null,
+  ) => void;
+}) {
+  const retailers = [
+    ...new Set(campaigns.map((c) => c.sourceId ?? c.sourceName)),
+  ];
+  const card = (campaign: DisplaySaleCampaign) => (
+    <SaleCard
+      campaign={campaign}
+      feedback={feedback}
+      history={historyByCampaign.get(campaignKey(campaign)) ?? []}
+      key={campaignKey(campaign)}
+      onReview={(outcome) => onReview(campaign, outcome)}
+    />
+  );
+  return (
+    <>
+      {retailers.map((retailer) => {
+        const offers = campaigns.filter(
+          (c) => (c.sourceId ?? c.sourceName) === retailer,
+        );
+        return offers.length === 1 ? (
+          card(offers[0])
+        ) : (
+          <details className="panel" key={retailer}>
+            <summary>
+              {offers[0].sourceName} · {offers.length} offer observations
+            </summary>
+            <div className="site-sale-grid">{offers.map(card)}</div>
+          </details>
+        );
+      })}
+    </>
+  );
+}
+
 function CampaignShelf({
   campaigns,
   feedback,
@@ -534,15 +578,12 @@ function CampaignShelf({
         <span>{campaigns.length}</span>
       </summary>
       <div className="site-sale-grid">
-        {campaigns.map((campaign) => (
-          <SaleCard
-            campaign={campaign}
-            feedback={feedback}
-            history={historyByCampaign.get(campaignKey(campaign)) ?? []}
-            key={campaignKey(campaign)}
-            onReview={(outcome) => onReview(campaign, outcome)}
-          />
-        ))}
+        <RetailerCampaignCards
+          campaigns={campaigns}
+          feedback={feedback}
+          historyByCampaign={historyByCampaign}
+          onReview={onReview}
+        />
       </div>
     </details>
   );

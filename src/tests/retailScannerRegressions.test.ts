@@ -356,3 +356,61 @@ it("uses a structured artist when a colon suffix contains only the vinyl format"
   expect(identity.title).toContain("LA Divine");
   expect(identity.identityStatus).toBe("resolved");
 });
+
+it("keeps discount ranges uncertain and collection-page offers scoped", () => {
+  const range = campaign("Crate Of Deals! 10% - 90% OFF on Vinyl & Digital");
+  expect(range.discountQualifier).toBe("up_to");
+  expect(priceCampaignBasket([item], range, at).reasons).toContain(
+    "up_to_unconfirmed",
+  );
+  const collectionOffer = campaign(
+    "Bank Holiday Sale - 50% Off Music CDs & Vinyl - Label Store",
+  );
+  expect(collectionOffer.scope).toBe("collection");
+  expect(
+    priceCampaignBasket(
+      [{ ...item, collectionContexts: [] }],
+      collectionOffer,
+      at,
+    ).eligible,
+  ).toBe(false);
+  const displayed = normalizeSaleCampaigns([
+    {
+      ...item,
+      opportunityType: "sitewide_sale",
+      saleScope: "vinyl-wide",
+      saleDiscountPercent: 50,
+      campaignTerms: collectionOffer.campaignTerms,
+      sourceUrl: collection,
+      saleEvidence: collectionOffer.evidence,
+    } as any,
+  ]);
+  expect(displayed.campaigns[0].saleScope).toBe("collection");
+});
+it("does not interpret a quoted book title as a sitewide promotion", () => {
+  expect(
+    extractRetailCampaigns(
+      source,
+      '<p>50% Off "Veg Everything"</p>',
+      collection,
+      at,
+    ),
+  ).toHaveLength(0);
+});
+it("requires volume thresholds and keeps ambiguous multiple-code offers pending", () => {
+  const volume = campaign(
+    "10% Off 4orMore Vinyl Every Day no coupon necessary",
+  );
+  expect(priceCampaignBasket([item], volume, at).reasons).toContain(
+    "minimum_quantity",
+  );
+  expect(
+    priceCampaignBasket([{ ...item, quantity: 4 }], volume, at).eligible,
+  ).toBe(true);
+  const codes = campaign(
+    "10% OFF ON MUSIC SALE CODE: ARTEMIS10 15% OFF ON ORDERS $99+ CODE: ARTEMIS15",
+  );
+  expect(priceCampaignBasket([item], codes, at).reasons).toContain(
+    "campaign_terms_unresolved",
+  );
+});

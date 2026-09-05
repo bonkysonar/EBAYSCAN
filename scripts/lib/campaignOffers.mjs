@@ -1,3 +1,4 @@
+import { reviewCampaignClaim } from "./campaignClaims.mjs";
 import { createHash } from "node:crypto";
 import { retailEligibility } from "./retailIdentity.mjs";
 import { decodeHtmlEntities } from "./retailListingParsing.mjs";
@@ -46,7 +47,7 @@ export function extractRetailCampaigns(
     parseCampaignBlock(source, block, pageUrl, capturedAt),
   );
   const unique = new Map();
-  for (const event of events) {
+  for (const event of events.map(reviewCampaignClaim).filter(Boolean)) {
     const key = `${event.scope}:${event.discountPercent}:${event.discountQualifier}:${event.promoCode}:${event.campaignTerms.kind}:${event.campaignTerms.minimumSpend}:${event.campaignTerms.fixedAmount}`;
     if (!unique.has(key)) unique.set(key, event);
   }
@@ -242,6 +243,8 @@ export function priceCampaignBasket(
   campaign,
   now = new Date().toISOString(),
 ) {
+  campaign = reviewCampaignClaim(campaign);
+  if (!campaign) return { eligible: false, reasons: ["not_a_record_campaign"] };
   const terms = campaign.campaignTerms ?? {};
   const reasons = [];
   const lines = items.map((item) => ({
@@ -261,6 +264,7 @@ export function priceCampaignBasket(
     reasons.push("campaign_expired");
   if (terms.startsAt && Date.parse(terms.startsAt) > Date.parse(now))
     reasons.push("campaign_not_started");
+  if (terms.termsUnresolved) reasons.push("campaign_terms_unresolved");
   if (terms.membershipRequired) reasons.push("membership_required");
   const scope = campaign.scope ?? campaign.saleScope;
   const collection = collectionId(campaign.sourceUrl);
@@ -305,6 +309,13 @@ export function priceCampaignBasket(
     (campaign.discountQualifier ?? campaign.saleDiscountQualifier) === "up_to"
   )
     reasons.push("up_to_unconfirmed");
+  if (terms.maximumSpend && subtotal >= terms.maximumSpend)
+    reasons.push("maximum_spend");
+  if (
+    terms.minimumQuantity &&
+    lines.reduce((sum, line) => sum + line.quantity, 0) < terms.minimumQuantity
+  )
+    reasons.push("minimum_quantity");
   let discount = 0;
   if (terms.priceMode !== "marked") {
     if (terms.kind === "bogo") {
@@ -439,6 +450,8 @@ export function campaignBasketScenario(
   campaign,
   now = new Date().toISOString(),
 ) {
+  campaign = reviewCampaignClaim(campaign);
+  if (!campaign) return { eligible: false, reasons: ["not_a_record_campaign"] };
   const terms = campaign.campaignTerms ?? {};
   if (
     !terms.minimumSpend &&
