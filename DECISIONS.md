@@ -249,3 +249,11 @@ Prioritize albums with observed purchases from sanitized own sales or fresh, exp
 Use official feeds first and bounded visible-browser observations when normal retailer pages are accessible. Preserve actual observation times and selected-variant evidence. A few observed catalog cards do not establish full-catalog coverage. Repair moved domains, catalog paths and current forum pagination; never count a disabled source or a relabeled failure as recovered. A retailer-branded, visibly confirmed removed campaign page can end that exact campaign; access failures cannot.
 
 Signed-in Product Research observations are imported into the exact draft checkpoint. A complete, visibly confirmed 90-day result window supports that window's matched quantities only. The paid-shipping average excludes free-shipping sales, so weight it by the displayed paid-shipping share before calculating proceeds. Source publication and research completion remain separate, measurable states. Keep private research captures in ignored local exports.
+
+## 2026-09-04: production verification corrections
+
+Known pressing series, compound colors, translucency and multiple-disc formats require corresponding evidence in the returned sold rows. Generic album sales remain useful demand evidence but cannot establish a named edition's resale value. When one captured album search visibly contains multiple named pressing series, an unidentified candidate cannot claim those results as exact pricing. Preserve artist accents and remove retailer reissue-series labels from the artist-and-album search.
+
+A sale-only browser check must preserve the last observed catalog result and its original verification time. A newly attempted catalog failure still replaces the prior catalog health. Publish corrections through a genuinely new scan and immutable run; do not backdate observations or overwrite published run IDs.
+
+Production verification reproduced a stale regional public-Blob response despite a current control-plane ETag. Preserve each mutable status, feedback and latest-pointer write at an immutable sibling keyed by its ETag. Reads resolve the current ETag through the control plane and verify the immutable bytes; the original pointer still provides optimistic concurrency. Legacy fallback must reject a mismatched cached version rather than present stale state as current.

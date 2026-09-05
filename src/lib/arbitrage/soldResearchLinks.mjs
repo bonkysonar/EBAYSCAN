@@ -107,7 +107,7 @@ export function normalizeResearchTitle(rawTitle = "") {
     .replace(/[[(]([^\])]+)[\])]/g, (whole, inside) =>
       /\b(?:vinyl|lps?|remaster(?:ed)?|reissue|edition|version|grams?|swirl|splatter|exclusive|variant|walmart|target)\b/i.test(
         inside,
-      )
+      ) || /^(?:verve\s+vault|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series$/i.test(inside.trim())
         ? " "
         : ` ${inside} `,
     )
@@ -147,7 +147,7 @@ export function normalizeResearchTitle(rawTitle = "") {
     if (
       (isExplicitEditionTail(tail) ||
         (index > 0 &&
-          /^(?:baby|royal|cloudy|milky|neon|hot|light|dark|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|tan|tangerine|amber|ruby|coral|brown|cream|clear|navy|teal|grey|gray|half)\b.*\b(?:vinyl|lp|inch)\b/i.test(
+          /^(?:apple\s+red|ghostly\s+blue|baby|royal|cloudy|milky|neon|hot|light|dark|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|tan|tangerine|amber|ruby|coral|brown|cream|clear|navy|teal|grey|gray|half)\b.*\b(?:vinyl|lp|inch)\b/i.test(
             tail,
           ) &&
           !/\b(?:album|record|ep|single)\b/i.test(
@@ -161,6 +161,7 @@ export function normalizeResearchTitle(rawTitle = "") {
   }
   return cleanResearchText(
     title
+      .replace(/\s+(?:verve\s+vault|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series\s*$/i, " ")
       .replace(
         /\s+(?:[-–—|:]\s*)?(?:rsd|record\s+store\s+day)(?:\s+black\s+friday)?(?:\s+(?:19|20)\d{2})?\s*$/i,
         " ",
@@ -171,7 +172,7 @@ export function normalizeResearchTitle(rawTitle = "") {
 }
 
 const EDITION_WORDS =
-  /^(?:(?:baby|royal|cloudy|ghostly|opaque|transparent|translucent|milky|neon|hot|light|dark|limited|exclusive|standard|version|deluxe|anniversary|collector'?s?|import|indie|edition|pressing|reissue|remaster(?:ed)?|heavyweight|half|speed|master(?:ed)?|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|tan|tangerine|amber|ruby|coral|brown|cream|clear|navy|teal|grey|gray|beer|marble|marbled|galaxy|splatter|swirl|smoke|platinum|colour|color|colored|coloured|vinyl|lps?|ep|single|inch|in|gram(?:s)?|g|record|album|box|set|picture|disc|gatefold|soundtrack|ost|mono|stereo|new|sealed|brand|sale|clearance|preorder|pre|order|staff|pick|walmart|target|urban|outfitters|uo|r|b|rock|pop|country|jazz|rap|hip|hop|in|with|w|and|\d+(?:st|nd|rd|th|g|lp)?)|[\s/&()+.\-"”])+$/i;
+  /^(?:(?:baby|apple|royal|cloudy|ghostly|opaque|transparent|translucent|milky|neon|hot|light|dark|limited|exclusive|standard|version|deluxe|anniversary|collector'?s?|import|indie|edition|pressing|reissue|remaster(?:ed)?|heavyweight|half|speed|master(?:ed)?|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|tan|tangerine|amber|ruby|coral|brown|cream|clear|navy|teal|grey|gray|beer|marble|marbled|galaxy|splatter|swirl|smoke|platinum|colour|color|colored|coloured|vinyl|lps?|ep|single|inch|in|gram(?:s)?|g|record|album|box|set|picture|disc|gatefold|soundtrack|ost|mono|stereo|new|sealed|brand|sale|clearance|preorder|pre|order|staff|pick|walmart|target|urban|outfitters|uo|r|b|rock|pop|country|jazz|rap|hip|hop|in|with|w|and|\d+(?:st|nd|rd|th|g|lp)?)|[\s/&()+.\-"”])+$/i;
 function isEditionDescription(value) {
   const text = String(value ?? "").trim();
   return !text || EDITION_WORDS.test(text);

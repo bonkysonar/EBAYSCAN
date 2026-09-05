@@ -47,6 +47,8 @@ describe("active eBay enrichment", () => {
     expect(buildQueue([completed])).toHaveLength(0);
     expect(buildQueue([{ ...completed, ebayActiveMatchingVersion: undefined }])).toHaveLength(1);
     expect(buildQueue([{ ...completed, ebayActiveMatchingVersion: 2 }])).toHaveLength(1);
+    expect(buildQueue([{ ...completed, ebayActiveMatchingVersion: 3 }])).toHaveLength(1);
+    expect(buildQueue([{ ...completed, ebayActiveMatchingVersion: 4 }])).toHaveLength(1);
     expect(buildQueue([{ ...completed, sourceListingTitle: "Artist - Great Escape (Tangerine LP)" }])).toHaveLength(1);
     expect(buildQueue([{ ...completed, ebayActiveSearchStatus: "failed" }])).toHaveLength(1);
   });
