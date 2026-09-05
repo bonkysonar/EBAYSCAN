@@ -5,8 +5,9 @@ import {
   writeFileSync,
   mkdirSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { admittedSourceIds, researchProgress, WORKFLOW_RESEARCH_LIMIT } from "./lib/retailWorkflowState.mjs";
 const cwd = process.cwd(),
   dir = join(cwd, "exports", "arbitrage-finds");
 for (const line of (existsSync(".env.local")
@@ -31,6 +32,7 @@ const cadence = existsSync(cadencePath)
 let context = args.has("finish")
   ? JSON.parse(readFileSync(resolve(String(args.get("finish"))), "utf8"))
   : null;
+if (context) context.contextPath = resolve(String(args.get("finish")));
 try {
   if (!context) {
     const today = new Intl.DateTimeFormat("en-CA", {
@@ -90,6 +92,10 @@ try {
     cadence.rotation = offset + 4;
     writeFileSync(cadencePath, JSON.stringify(cadence, null, 2));
     const scanArgs = ["scripts/runRetailArbitrageScan.mjs", "--skipUpload"];
+    if (args.has("browserObservations")) {
+      context.browserObservationsPath = argumentPath("browserObservations");
+      scanArgs.push("--browserObservations=" + context.browserObservationsPath);
+    }
     if (context.mode === "refresh")
       scanArgs.push("--sources=" + selected.join(","), "--skipEbaySync");
     run(scanArgs);
@@ -98,7 +104,6 @@ try {
     context.runId = draft.runId;
     context.draftPath = draft.path;
     context.sourceCount = draft.sourceReports?.length ?? 0;
-    run(["scripts/prepareArbitrageResearchPlan.mjs", draft.path]);
     context.checkpointPath = join(
       dir,
       `research-checkpoint-${draft.runId}.json`,
@@ -108,6 +113,9 @@ try {
         context.checkpointPath,
         JSON.stringify({ runId: draft.runId, entries: [] }, null, 2),
       );
+    importBrowserResearch();
+    prepareResearchPlan();
+    context.researchProgress = researchProgress(draft, readCheckpoint(context.checkpointPath, draft.runId));
     writeFileSync(contextPath, JSON.stringify(context, null, 2));
     await status("research");
     console.log(
@@ -117,6 +125,8 @@ try {
           draftPath: context.draftPath,
           checkpointPath: context.checkpointPath,
           mode: context.mode,
+          researchProgress: context.researchProgress,
+          planPath: context.planPath,
         },
         null,
         2,
@@ -125,9 +135,16 @@ try {
   }
   if (args.has("finish")) {
     const draft = JSON.parse(readFileSync(context.draftPath, "utf8"));
-    const research = args.get("research")
-      ? resolve(String(args.get("research")))
-      : "--pending";
+    if (draft.runId !== context.runId || draft.phase !== "scan") throw new Error("Workflow context does not identify this unpublished scan draft.");
+    if (args.has("browserObservations")) throw new Error("Retail browser observations must be supplied when creating a new scan, before its draft is written.");
+    importBrowserResearch();
+    const checkpointPath = args.has("research") ? argumentPath("research") : context.checkpointPath;
+    const checkpoint = checkpointPath && existsSync(checkpointPath) ? readCheckpoint(checkpointPath, draft.runId) : { runId: draft.runId, entries: [] };
+    const research = checkpointPath && existsSync(checkpointPath) ? checkpointPath : "--pending";
+    context.checkpointPath = checkpointPath;
+    context.researchProgress = researchProgress(draft, checkpoint);
+    if (research !== "--pending") prepareResearchPlan();
+    await status("research");
     const result = run(
       ["scripts/curateRetailArbitrageRun.mjs", context.draftPath, research],
       true,
@@ -140,6 +157,7 @@ try {
       context.mode === "refresh" || !final.runQuality?.publishable;
     final.publicationMode = partial ? "source_updates" : "full";
     if (partial) final.sourceUpdateVersion = 1;
+    final.researchProgress = context.researchProgress;
     writeFileSync(curated.finalPath, JSON.stringify(final, null, 2));
     run([
       "scripts/uploadLatestArbitrageFinds.mjs",
@@ -150,9 +168,11 @@ try {
       "scripts/uploadLatestArbitrageFinds.mjs",
       "--file=" + curated.finalPath,
     ]);
-    context.updatedSourceCount = (final.sourceReports ?? []).filter(
-      (r) => r.catalogPageAvailableCount > 0 || r.salePageAvailableCount > 0,
-    ).length;
+    context.updatedSourceIds = admittedSourceIds(final);
+    context.updatedSourceCount = context.updatedSourceIds.length;
+    context.finalPath = curated.finalPath;
+    context.publicationMode = final.publicationMode;
+    context.publishedAt = new Date().toISOString();
     await status(partial ? "partial" : "published", final.funnel);
     console.log(
       JSON.stringify(
@@ -161,6 +181,8 @@ try {
           finalPath: curated.finalPath,
           publicationMode: final.publicationMode,
           funnel: final.funnel,
+          updatedSourceCount: context.updatedSourceCount,
+          researchProgress: context.researchProgress,
         },
         null,
         2,
@@ -170,6 +192,33 @@ try {
 } catch (error) {
   if (context) await status("failed").catch(() => {});
   throw error;
+}
+function argumentPath(name) {
+  const value = args.get(name);
+  if (typeof value !== "string") throw new Error(`--${name} requires a file path.`);
+  const path = resolve(value);
+  if (!existsSync(path)) throw new Error(`--${name} file not found: ${path}`);
+  return path;
+}
+function readCheckpoint(path, runId) {
+  const checkpoint = JSON.parse(readFileSync(path, "utf8"));
+  if (checkpoint.runId !== runId || !Array.isArray(checkpoint.entries)) throw new Error("Research checkpoint must belong to the exact scan draft.");
+  return checkpoint;
+}
+function importBrowserResearch() {
+  if (!args.has("browserResearch")) return;
+  const standardCheckpoint = join(dirname(context.draftPath), `research-checkpoint-${context.runId}.json`);
+  if (args.has("research") && argumentPath("research") !== standardCheckpoint) throw new Error("Browser research imports into the draft's own checkpoint; omit --research or supply that same checkpoint path.");
+  const capturePath = argumentPath("browserResearch");
+  const result = run(["scripts/importBrowserSoldResearch.mjs", context.draftPath, capturePath], true);
+  const imported = JSON.parse(result.stdout);
+  context.checkpointPath = imported.checkpointPath;
+  context.browserResearchPath = capturePath;
+  context.browserResearchImport = { accepted: imported.accepted?.length ?? 0, rejected: imported.rejected?.length ?? 0 };
+}
+function prepareResearchPlan() {
+  const result = run(["scripts/prepareArbitrageResearchPlan.mjs", context.draftPath, "--max=" + WORKFLOW_RESEARCH_LIMIT, "--checkpoint=" + context.checkpointPath], true);
+  context.planPath = JSON.parse(result.stdout).outputPath;
 }
 function run(command, capture = false) {
   const result = spawnSync(process.execPath, command, {
@@ -203,6 +252,9 @@ function latestArtifact(draftOnly = false, after = 0) {
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
 }
 async function status(state, funnel) {
+  context.status = state;
+  context.updatedAt = new Date().toISOString();
+  writeFileSync(context.contextPath, JSON.stringify(context, null, 2));
   if (!process.env.ARBITRAGE_UPLOAD_URL || !process.env.ARBITRAGE_UPLOAD_TOKEN)
     return;
   const body = { ...context, status: state, funnel };

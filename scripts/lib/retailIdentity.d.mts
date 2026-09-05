@@ -22,3 +22,6 @@ export function retailerArtistConflict(
   artist: unknown,
   sourceName: unknown,
 ): boolean;
+export function retailRecordFormat(
+  find?: Record<string, any>,
+): "vinyl" | "non_vinyl" | "unknown";

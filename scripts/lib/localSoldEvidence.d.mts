@@ -14,6 +14,7 @@ export type LocalSoldMetrics = {
   unitsSold90Days: number;
   unitsSold365Days: number;
 };
+export function revalidateCandidateLocalSold<T extends Record<string, any>>(find: T, index: any, referenceAt?: string): T;
 
 export function conditionMatchedSoldMetrics(
   comp: any,
@@ -29,6 +30,8 @@ export function buildLocalSoldEvidence(
   metrics: LocalSoldMetrics | null;
   soldEvidence:
     | {
+        albumMatchConfirmed: boolean;
+        albumMismatchReasons: string[];
         artistMatchConfirmed: boolean;
         artistMismatchReasons: string[];
         capturedAt: string | null;

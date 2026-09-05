@@ -18,12 +18,12 @@ export function normalizeResearchArtist(rawArtist: string): string {
   return normalizeSharedResearchArtist(rawArtist);
 }
 
-/** Broad artist/title fallback retained for existing scanner callers. */
+/** Artist and album names only; pressing checks happen on returned sales. */
 export function buildResearchKeywords(artist: string, title: string): string {
   return buildBaseResearchQuery(artist, title);
 }
 
-/** Exact-edition variants first, then the broad release fallback. */
+/** Single release query retained in an array for saved-checkpoint compatibility. */
 export function buildResearchKeywordVariants(artist: string, title: string): string[] {
   return buildSoldResearchQueryVariants({ artist, sourceListingTitle: title, title }).map(
     (variant) => variant.query,

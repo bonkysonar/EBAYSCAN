@@ -1,5 +1,44 @@
 # Retail source coverage
 
+## September 4 repair audit
+
+The live baseline had 17 campaigns in **Needs source repair**, across nine retailers and 16 distinct URLs. This campaign backlog is separate from the 49 sources whose previous HTTP scan failed. The new scanner accepts fresh, exact-domain public-page observations captured through the ordinary browser; it does not extract session cookies or call private storefront APIs. Imported pages are limited to six hours and remain explicitly bounded page observations, not a complete catalog claim.
+
+Ordinary Chrome visits verified every one of those 16 campaign URLs:
+
+| Retailer | Baseline campaigns | Actual page result |
+| --- | ---: | --- |
+| Recordstore UK | 3 | The former 30%, 40%, and 50% sale collections each render the retailer's 404 page. |
+| Polyvinyl | 5 | All five former garage-sale collections explicitly say the page no longer exists. The current vinyl navigation points to the filtered `collections/everything` Shopify catalog. |
+| Verve | 3 | The old garage-sale landing page is removed (two campaigns); Collectors Finds loads with current regular product prices and no advertised collection discount. |
+| Sound of Vinyl | 1 | The former 50%-off collection is removed. Its replacement End of Summer collection advertises 30% off with exclusions and displays marked product prices. |
+| Craft | 1 | Volume-sale page loads. Actual tiers are $50 for 20% off, $75 for 25% off, and $150 for **$30** off. These are separate basket conditions. |
+| Century Media | 1 | Clearance page loads with 34 products and actual per-product markdowns. Mixed vinyl/CD bundles require format review. |
+| Equal Vision | 1 | Clearance page loads, largely with CDs/merch. A separate 25% **STORE WIDE** banner excludes pre-orders. |
+| MVD | 1 | Warehouse Overstock loads with 924 mixed-format products. Individual vinyl offers require exact product-page evidence. |
+| Sacred Bones | 1 | David Lynch Warehouse Sale loads with 17 predominantly non-record items; the word “vinyl” in an insert is not evidence of a record. |
+
+The scanner now records confirmed retailer page removals separately from HTTP blocks, allowing only the exact removed campaign to end with `source_page_removed`. HTTP 403/429 failures remain unknown. The fresh 127-source run (`2026-09-05T00:51:11.818Z`) read 28,632 candidates, completed 159 active-market queries without errors, and resolved the original campaign backlog to zero unknown campaigns. Active asking prices remain separate from sold evidence.
+
+Of the 49 originally failed sources, 31 now return ordinary catalog responses; 27 of those produced actual parsed products. Normal-browser captures recover priced LP products from 15 further blocked retailers plus Matador and Data Discs, and current discussion pages from both previously blocked forums. That is **46 of 49 (93.9%) with productive retail or current discovery evidence**. It is not 46 complete daily crawls: 27 are productive ordinary scans, 17 are bounded browser product samples, and two are current forum observations. Captured Tracks, Rhino, and Secretly remain outside this strict count; Secretly's observed pages retain preorder wording and were conservatively excluded from available candidates.
+
+The final bounded refresh (`2026-09-05T01:30:36.893Z`) consumes 57 observed pages across 33 sources, includes 209 available or stock-unresolved product candidates, selects 14 research candidates under the demand gate, and completes 13 active-market queries without failure. It preserves zero unknown campaign statuses from the broad run. Research rows now include the exact selected John Prine, John Coltrane, and Thrice offers without duplicate catalog cards for the same variant.
+
+Genuine storefront changes included Movies Unlimited and PopMarket moving to Shopify; Matador, Secretly, Season of Mist, and Napalm moving catalog paths or hosts; dead Beggars and Plastic Head shop hostnames; and stale Norman/Sounds of the Universe catalog paths. Updated source definitions come from actual official navigation and redirects. The remaining Captured Tracks collection is a retailer-branded 404; its homepage subsequently required a human verification challenge, so no successful product recovery is claimed.
+
+To capture and import a normal-browser fallback:
+
+```powershell
+node scripts/serveRetailObservationInbox.mjs
+node scripts/runRetailArbitrageScan.mjs --browserObservations=exports/arbitrage-finds/browser-source-observations.json --skipUpload
+```
+
+The loopback inbox accepts observed public text and links through its visible form and writes an ignored local evidence file. Exact product observations must show artist/album, LP/vinyl format, current price, and available stock or an enabled purchase control; no purchase is submitted. Curation independently verifies currency and pressing identity. The `/research` inbox saves eBay research captures separately.
+
+`catalogProducts` imports bounded card text, artist when shown, album, LP/vinyl format, displayed price, public product URL, and explicit stock/currency evidence. Missing artist, currency, and stock remain unresolved. CDs, unavailable items, and preorder cards do not become available LP candidates. `--browserOnly --sources=<captured source IDs>` makes an explicitly bounded refresh with `scanComplete:false`; `--previousScan=<draft path>` binds lifecycle continuation to the selected prior run. Unvisited campaigns retain their previous status and check timestamp. Expired captures are ignored after six hours, so a stale evidence file does not abort tomorrow's ordinary scan or make blocked sources healthy.
+
+Forum scans follow the newest actual pagination link and then the previous linked page. They do not infer new page URLs or use page two of an old thread as current deal evidence. Forum coupon text is a retailer-recheck lead and cannot create a verified retail campaign without confirmation on that retailer's own site.
+
 Last broad bounded live audit: 2026-07-22 from the local scanner host, with a targeted candidate-path recheck on 2026-08-05. A successful request below means the retailer exposed a public, read-only catalog response at that moment; it is not a promise that the retailer will keep the endpoint available or permit resale acquisition.
 
 ## Structured direct-retailer coverage

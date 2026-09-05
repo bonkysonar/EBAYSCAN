@@ -25,11 +25,6 @@ describe("generic Product Research curation", () => {
       findId: "find-mother-love-bone",
       variants: [
         {
-          identitySignals: ["180g"],
-          kind: "exact",
-          query: "Mother Love Bone Shine 180g",
-        },
-        {
           identitySignals: [],
           kind: "base",
           query: "Mother Love Bone Shine",
@@ -246,7 +241,8 @@ describe("generic Product Research curation", () => {
         {
           periodDays: 1095,
           query: "Sam & Dave Hold On I'm Comin'",
-          url: "https://www.ebay.com/sh/research?limit=50",
+          capturedAt: "2026-07-16T14:00:00Z", complete: true, condition: "New", category: "Vinyl Records",
+          url: "https://www.ebay.com/sh/research?limit=50&categoryId=176985&conditionId=1000&tabName=SOLD",
           rows: [
             {
               href: "https://www.ebay.com/itm/111111111111",
@@ -361,7 +357,7 @@ describe("generic Product Research curation", () => {
     });
   });
 
-  it("uses a self-titled fallback when the source only exposes an artist plus format descriptors", () => {
+  it("does not invent self-titled terms when the source exposes only an artist and format descriptors", () => {
     expect(
       researchVariants({
         artist: "Lionel Richie",
@@ -369,7 +365,7 @@ describe("generic Product Research curation", () => {
           "Lionel Richie: Limited Edition (180 Grams Vinyl LP Album)",
         title: "(180 Grams)",
       }),
-    ).toContain("Lionel Richie self titled");
+    ).toEqual(["Lionel Richie"]);
   });
 
   it("matches legacy research generically when the source parser could not identify the artist", () => {
@@ -416,8 +412,15 @@ describe("generic Product Research curation", () => {
 });
 
 describe("research checkpoint and edition safeguards", () => {
-  it("does not finish a multi-query search after only one empty query", () => {
-    const [plan] = buildProductResearchPlan([find]);
+  it("still validates every query in legacy checkpoints and rejects failures", () => {
+    const [currentPlan] = buildProductResearchPlan([find]);
+    const plan = {
+      ...currentPlan,
+      variants: [
+        { ...currentPlan.variants[0], query: "Mother Love Bone Shine 180g" },
+        currentPlan.variants[0],
+      ],
+    };
     const runs = plan.variants.map((variant) => ({
       query: variant.query,
       rows: [],
@@ -478,7 +481,8 @@ describe("research checkpoint and edition safeguards", () => {
 it("does not infer the observed period from the dayRange label alone", () => {
   const run = {
     query: "Mother Love Bone Shine",
-    url: "https://www.ebay.com/sh/research?dayRange=1095",
+    capturedAt: "2026-07-16T00:00:00Z", complete: true, condition: "New", category: "Vinyl Records",
+    url: "https://www.ebay.com/sh/research?dayRange=1095&categoryId=176985&conditionId=1000&tabName=SOLD",
     rows: [
       {
         title: "Mother Love Bone Shine New Vinyl LP",

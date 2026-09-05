@@ -18,6 +18,7 @@ const DEFAULT_MAX_SEARCH_PAGES = 2;
 const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_MAX_QUERIES = 100;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+export const ACTIVE_MATCHING_VERSION = 2;
 
 const args = new Map(
   process.argv
@@ -136,7 +137,7 @@ function readLocalEnv() {
   };
 }
 
-function buildQueue(finds) {
+export function buildQueue(finds) {
   const byKey = new Map();
   for (const find of finds) {
     const profile = buildActiveSearchProfile(find);
@@ -154,6 +155,8 @@ function buildQueue(finds) {
     const entry = byKey.get(key);
     if (
       includeCompleted ||
+      find.ebayActiveMatchingVersion !== ACTIVE_MATCHING_VERSION ||
+      find.ebayActiveProfileKey !== profile.key ||
       !["available", "no_results"].includes(find.ebayActiveSearchStatus) ||
       find.ebayActiveSearchComplete !== true
     ) {
@@ -413,6 +416,8 @@ function applyResult(finds, key, result) {
     if (!profile) continue;
 
     find.ebayActiveSearchStatus = result.status;
+    find.ebayActiveMatchingVersion = ACTIVE_MATCHING_VERSION;
+    find.ebayActiveProfileKey = profile.key;
     find.ebayActiveSearchUpdatedAt = now;
     find.ebayActiveSearchKeyword = result.keyword ?? result.searchedVariants?.[0] ?? profile.primary;
     find.ebayActiveSearchUrl = result.searchUrl ?? publicSearchUrl(result.keyword ?? profile.primary);

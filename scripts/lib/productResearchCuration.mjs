@@ -1,8 +1,11 @@
+import { verifiedWindowSales } from "./soldResearchWindow.mjs";
 import { retailEligibility } from "./retailIdentity.mjs";
+import { extractEditionIdentity } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
 import {
   buildEbayProductResearchUrl,
   buildEbayPublicSoldUrl,
   buildSoldResearchQueryVariants,
+  normalizeResearchTitle as normalizeCanonicalResearchTitle,
 } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 
 const NON_RECORD_PATTERN =
@@ -128,8 +131,9 @@ export function curateResearchForFind(find, rawResearch, now = new Date()) {
     });
     if (
       !best ||
-      evidence.totalSoldCount > best.totalSoldCount ||
-      (evidence.totalSoldCount === best.totalSoldCount &&
+      recentEvidenceRank(evidence) > recentEvidenceRank(best) ||
+      (recentEvidenceRank(evidence) === recentEvidenceRank(best) && evidence.totalSoldCount > best.totalSoldCount) ||
+      (recentEvidenceRank(evidence) === recentEvidenceRank(best) && evidence.totalSoldCount === best.totalSoldCount &&
         (evidence.matchScore > best.matchScore ||
           (evidence.status === "failed" && best.status === "no_rows")))
     ) {
@@ -168,7 +172,8 @@ export function bestEvidenceForEntry(
       }))
       .filter((row) => row.matchScore >= 0.68);
 
-    const datedSales = exactEntry ? datedSingleUnitSales(rows, run, now) : null;
+    const windowSales = exactEntry ? verifiedWindowSales(rows, run, now) : null;
+    const datedSales = windowSales ?? (exactEntry ? datedSingleUnitSales(rows, run, now) : null);
     const aggregatePeriodDays =
       exactEntry && rows.length ? productResearchPeriodDays(run) : null;
     const totalSoldCount = rows.reduce((sum, row) => sum + row.totalSold, 0);
@@ -188,6 +193,8 @@ export function bestEvidenceForEntry(
       ? (weightedAverage(rows, "matchScore") ?? 0)
       : 0;
     const evidence = {
+      capturedAt: run.capturedAt ?? null,
+      observedWindow: windowSales?.observedWindow ?? null,
       aggregatePeriodDays,
       aggregateUnitsSold: exactEntry && rows.length ? totalSoldCount : null,
       averageSoldPrice,
@@ -211,15 +218,18 @@ export function bestEvidenceForEntry(
       totalSoldCount,
       url: run.url ?? "",
       variants,
-      velocityStatus: datedSales
+      velocityStatus: windowSales
+        ? "verified_window_totals"
+        : datedSales
         ? "dated_single_unit_rows"
         : "unknown_from_aggregate_rows",
     };
 
     if (
       !best ||
-      evidence.totalSoldCount > best.totalSoldCount ||
-      (evidence.totalSoldCount === best.totalSoldCount &&
+      recentEvidenceRank(evidence) > recentEvidenceRank(best) ||
+      (recentEvidenceRank(evidence) === recentEvidenceRank(best) && evidence.totalSoldCount > best.totalSoldCount) ||
+      (recentEvidenceRank(evidence) === recentEvidenceRank(best) && evidence.totalSoldCount === best.totalSoldCount &&
         evidence.matchScore > best.matchScore)
     ) {
       best = evidence;
@@ -252,8 +262,18 @@ export function bestEvidenceForEntry(
 
 export function parseProductResearchRow(row) {
   const cells = row?.cells ?? [];
+  const avgPaidShipping = money(row?.avgPaidShipping ?? row?.avgShipping ?? cells[3]);
+  const freeMatch = String(cells[3] ?? "").match(/(\d+(?:\.\d+)?)%\s*Free shipping/i);
+  const freeShippingPercent = row?.freeShippingPercent ?? (freeMatch ? Number(freeMatch[1]) : null);
+  // eBay's tooltip explicitly excludes free-shipping sales from Avg shipping.
+  // Apply the displayed free-shipping share before adding shipping to proceeds.
+  const avgShipping = avgPaidShipping !== null && freeShippingPercent !== null
+    ? roundMoney(avgPaidShipping * (1 - Math.min(100, Math.max(0, freeShippingPercent)) / 100))
+    : avgPaidShipping;
   return {
-    avgShipping: money(row?.avgShipping ?? cells[3]),
+    avgPaidShipping,
+    freeShippingPercent,
+    avgShipping,
     avgSoldPrice: money(row?.avgSoldPrice ?? cells[2]),
     dateLastSold: isoDate(row?.dateLastSold ?? cells[7]),
     itemUrl: cleanText(row?.itemUrl ?? row?.href ?? row?.url),
@@ -276,13 +296,27 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
     `${find.artist ?? ""} ${find.title ?? ""} ${find.sourceListingTitle ?? ""}`,
   );
   if (hasIncompatibleRecordFormat(originalCandidateText, rowTitle)) return 0;
+  if (hasUnconfirmedPressing(originalCandidateText, rowTitle)) return 0;
+  const releaseName = `${find.artist ?? ""} ${normalizeCanonicalResearchTitle(find.title ?? "")}`;
+  const candidateEdition = extractEditionIdentity(
+    `${find.sourceListingTitle || releaseName} ${find.variantTitle || ""}`, releaseName,
+  );
+  const rowEdition = extractEditionIdentity(rowTitle, releaseName);
+  const candidateColors = candidateEdition.colors.filter((color) => color !== "black");
+  const rowColors = rowEdition.colors.filter((color) => color !== "black");
+  if (!rowColors.length && /\bcolou?red\s+vinyl\b/i.test(rowTitle)) return 0;
+  if (candidateColors.some((color) => !rowColors.includes(color)) ||
+    rowColors.some((color) => !candidateColors.includes(color))) return 0;
+  const pressingSignals = new Set(["signed", "splatter", "swirl", "marbled", "etched", "glow-in-the-dark", "picture-disc", "box-set", "deluxe"]);
+  if (candidateEdition.signals.some((signal) => pressingSignals.has(signal) && !rowEdition.signals.includes(signal)) ||
+    rowEdition.signals.some((signal) => pressingSignals.has(signal) && !candidateEdition.signals.includes(signal))) return 0;
 
   const candidateText = cleanText(
     `${originalCandidateText} ${find.researchQuery ?? ""} ${find.researchRunQuery ?? ""}`,
   );
   const artistTokens = usefulTokens(meaningfulArtist(find.artist));
   const originalTitleTokens = usefulTokens(
-    normalizeResearchTitle(preferredResearchTitle(find)),
+    normalizeCanonicalResearchTitle(find.title || preferredResearchTitle(find)),
   );
   const titleTokens =
     originalTitleTokens.length > 0
@@ -307,8 +341,8 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
   if (artistTokens.length && artistCoverage === 0 && titleTokens.length < 5)
     return 0;
 
-  const candidateIdentity = identityTerms(candidateText);
-  const rowIdentity = new Set(identityTerms(rowTitle));
+  const candidateIdentity = identityTerms(candidateText, find);
+  const rowIdentity = new Set(identityTerms(rowTitle, find));
   // A generic edition cannot inherit the resale price of an unconfirmed premium pressing.
   const unconfirmedEdition = [...rowIdentity].some(
     (term) =>
@@ -400,32 +434,12 @@ function researchEntries(rawResearch) {
 
 function researchEntryScore(find, entry) {
   if (isExactResearchEntry(find, entry)) return 1;
-
-  const targetTokens = uniqueTokens(
-    `${meaningfulArtist(find.artist)} ${find.title ?? ""} ${find.sourceListingTitle ?? ""}`,
-  );
-  const titleTokens = uniqueTokens(
-    `${meaningfulArtist(find.artist)} ${normalizeResearchTitle(preferredResearchTitle(find))}`,
-  );
-  if (!targetTokens.length || !titleTokens.length) return 0;
-  const entryText = [
-    entry.key,
-    entry.title,
-    ...entry.runs.map((run) => run.query),
-  ].join(" ");
-  const entryTokenList = uniqueTokens(entryText);
-  const entryTokens = new Set(entryTokenList);
-  const targetTokenSet = new Set(targetTokens);
-  const titleCoverage = overlapRatio(titleTokens, entryTokens);
-  const entryCoverage = overlapRatio(entryTokenList, targetTokenSet);
-  const harmonicCoverage =
-    titleCoverage + entryCoverage > 0
-      ? (2 * titleCoverage * entryCoverage) / (titleCoverage + entryCoverage)
-      : 0;
-
-  if (entryTokenList.length >= 2 && entryCoverage === 1)
-    return Math.max(0.92, titleCoverage);
-  return Math.max(titleCoverage, entryCoverage * 0.9, harmonicCoverage);
+  // Saved research can be reused across retail variants of the same album,
+  // never merely because another album shares the artist's name.
+  const key = (value) => cleanText(value).normalize("NFKD").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const targetQueries = new Set(researchVariants(find).map(key));
+  return [entry.key, ...entry.runs.map((run) => run.query)]
+    .some((query) => targetQueries.has(key(query))) ? 1 : 0;
 }
 
 function isExactResearchEntry(find, entry) {
@@ -472,12 +486,7 @@ function normalizeResearchTitle(value) {
 
 function preferredResearchTitle(find) {
   const title = cleanText(find?.title);
-  const listing = cleanText(find?.sourceListingTitle);
-  if (!listing) return title;
-  if (!title) return listing;
-  return usefulTokens(listing).length > usefulTokens(title).length
-    ? listing
-    : title;
+  return normalizeCanonicalResearchTitle(title) ? title : cleanText(find?.sourceListingTitle);
 }
 
 function meaningfulArtist(value) {
@@ -531,8 +540,12 @@ function withoutLeadingArtist(value, artist) {
   return title.slice(artist.length).replace(/^[\s:–—-]+/, "");
 }
 
-function identityTerms(value) {
-  const text = cleanText(value).toLowerCase();
+function identityTerms(value, find = {}) {
+  let text = cleanText(value).toLowerCase().replace(/\bblue\s+note\b/g, " ");
+  for (const releasePart of [find.artist, normalizeCanonicalResearchTitle(find.title || "")]) {
+    const tokens = String(releasePart || "").toLowerCase().match(/[a-z0-9]+/g) || [];
+    if (tokens.length) text = text.replace(new RegExp(`\\b${tokens.join("[^a-z0-9]+") }\\b`, "gi"), " ");
+  }
   return IDENTITY_TERMS.filter((term) =>
     new RegExp(`\\b${term}\\b`, "i").test(text),
   );
@@ -568,8 +581,42 @@ function explicitLpCount(value) {
   return null;
 }
 
+function recentEvidenceRank(evidence) {
+  return evidence?.sales90Days !== null && evidence?.sales90Days !== undefined &&
+    ["dated_single_unit_rows", "verified_window_totals"].includes(evidence?.velocityStatus) ? 1 : 0;
+}
+
+function hasUnconfirmedPressing(candidate, row) {
+  const markers = [
+    /\bmusic\s+matters\b/i, /\banalogue\s+productions\b/i,
+    /\b(?:mofi|mobile\s+fidelity)\b/i, /\b(?:promo|promotional)\b/i,
+    /\b(?:japan|japanese|obi|hmv)\b/i, /\blenticular\b/i,
+    /\b(?:orig(?:inal)?|first|1st)\s+press(?:ing)?\b/i, /\btest\s+press(?:ing)?\b/i,
+    /\bpicture\s+(?:disc|vinyl)\b/i, /\bclub\s+press(?:ing)?\b/i,
+    /\b(?:tone\s+poet)\b/i,
+    /\bclassic\s+records\b/i, /\bhalf[-\s]?speed\b/i,
+    /\b(?:anniversary|anniv|anni)\b/i,
+  ];
+  if (markers.some((marker) => marker.test(row) && !marker.test(candidate))) return true;
+  const oldPressYear = row.match(/\b(?:19[5-9]\d)\b/g) ?? [];
+  if (oldPressYear.some((year) => !candidate.includes(year)) && !/\b(?:reissue|repress|remaster(?:ed)?)\b/i.test(row)) return true;
+  const series = (text) => /blue\s+note\s+essentials?/i.test(text) ? "essential" :
+    /blue\s+note\s+classic/i.test(text) ? "classic" : null;
+  return Boolean(series(candidate) && series(row) && series(candidate) !== series(row));
+}
+
 function datedSingleUnitSales(rows, run, now) {
   if (!rows.length || !validDate(now)) return null;
+  const captured = Date.parse(run.capturedAt);
+  if (run.observedWindow || run.complete !== true || run.condition !== "New" ||
+    run.category !== "Vinyl Records" || !Number.isFinite(captured) ||
+    captured > Number(now) + 300000 || Number(now) - captured > 7 * 86400000) return null;
+  try {
+    const url = new URL(run.url);
+    if (url.protocol !== "https:" || url.hostname !== "www.ebay.com" || url.pathname !== "/sh/research" ||
+      url.searchParams.get("categoryId") !== "176985" || url.searchParams.get("conditionId") !== "1000" ||
+      url.searchParams.get("tabName") !== "SOLD") return null;
+  } catch { return null; }
   const periodDays = productResearchPeriodDays(run);
   if (!periodDays) return null;
   const runRows = Array.isArray(run?.rows) ? run.rows : [];
@@ -580,6 +627,7 @@ function datedSingleUnitSales(rows, run, now) {
       (row) =>
         row.totalSold !== 1 ||
         !row.dateLastSold ||
+        !Number.isFinite(Date.parse(row.dateLastSold)) || Date.parse(row.dateLastSold) > captured ||
         !productResearchListingIdentity(row.itemUrl),
     )
   ) {
@@ -637,10 +685,11 @@ function productResearchPeriodDays(run) {
 }
 
 function productResearchListingIdentity(value) {
-  const text = cleanText(value);
-  if (!text) return "";
-  const itemId = text.match(/\/itm\/(?:[^/?#]+\/)?(\d{9,15})(?:[/?#]|$)/i)?.[1];
-  return itemId || text;
+  try {
+    const url = new URL(cleanText(value));
+    if (url.protocol !== "https:" || !["ebay.com", "www.ebay.com"].includes(url.hostname)) return "";
+    return url.pathname.match(/^\/itm\/(?:[^/]+\/)?(\d{9,15})\/?$/)?.[1] ?? "";
+  } catch { return ""; }
 }
 
 function validDate(value) {

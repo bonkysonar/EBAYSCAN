@@ -60,6 +60,21 @@ afterEach(() => {
   else process.env.BLOB_READ_WRITE_TOKEN = previousBlob;
 });
 describe("retailer update and review contracts", () => {
+  it("persists bounded research progress and cannot label an all-pending run complete", async () => {
+    process.env.ARBITRAGE_UPLOAD_TOKEN = "test-secret";
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    const cwd = mkdtempSync(join(tmpdir(), "retail-progress-"));
+    directories.push(cwd);
+    await retailOperations(cwd, "POST", {
+      runId: "test-research", startedAt: at, status: "partial", updatedSourceCount: 55,
+      researchProgress: { planned: 240, completed: 0, validated: 0, noRows: 0, pending: 240, complete: true, status: "complete", title: "private listing", rows: ["raw content"] },
+    }, "test-secret");
+    const result = await retailOperations(cwd, "GET", null);
+    expect(result).toMatchObject({ updatedSourceCount: 55, researchProgress: { planned: 240, completed: 0, validated: 0, pending: 240, complete: false, status: "incomplete" } });
+    expect(JSON.stringify(result)).not.toContain("private listing");
+    expect(JSON.stringify(result)).not.toContain("raw content");
+  });
+
   it("updates one retailer while retaining the other offer timestamp and broad-scan date", () => {
     const old = "2026-08-01T12:00:00Z";
     const result = mergeVerifiedSourceUpdates(
@@ -96,6 +111,29 @@ describe("retailer update and review contracts", () => {
         ["a", "b"],
       ).finds.map((f) => f.id),
     ).toEqual(["old-a"]);
+  });
+  it("admits browser offers captured before the scan only with fresh source-bound provenance", () => {
+    const observed = new Date(Date.parse(at) - 45 * 60000).toISOString();
+    const browserItem: ArbitrageFind = { ...item, capturedAt: observed, retailObservedAt: observed,
+      retailObservationMethod: "visible_browser_catalog", retailObservationUrl: "https://store.example/collections/vinyl" };
+    const browserReport = { ...incoming.sourceReports![0], browserObservationCount: 1,
+      browserObservedAt: observed, browserObservedUrls: [browserItem.retailObservationUrl], browserCatalogCoverage: "bounded_visible_pages" };
+    const payload = { ...incoming, finds: [browserItem], sourceReports: [browserReport] };
+    const result = mergeVerifiedSourceUpdates(payload, null, ["a", "b"], Date.parse(at));
+    expect(result.finds).toHaveLength(1);
+    expect(result.finds[0].capturedAt).toBe(observed);
+    expect(result.finds[0].retailObservedAt).toBe(observed);
+    for (const changes of [
+      { retailObservationMethod: undefined },
+      { retailObservedAt: undefined },
+      { retailObservationUrl: undefined },
+      { sourceId: "b" },
+      { sourceUrl: "https://another-store.example/album" },
+      { retailObservationUrl: "https://store.example/not-observed" },
+      { capturedAt: at },
+      { capturedAt: new Date(Date.parse(at) - 7 * 3600000).toISOString(), retailObservedAt: new Date(Date.parse(at) - 7 * 3600000).toISOString() },
+    ]) expect(mergeVerifiedSourceUpdates({ ...payload, finds: [{ ...browserItem, ...changes }] }, null, ["a", "b"], Date.parse(at)).finds).toHaveLength(0);
+    expect(mergeVerifiedSourceUpdates({ ...payload, sourceReports: incoming.sourceReports }, null, ["a", "b"], Date.parse(at)).finds).toHaveLength(0);
   });
   it("rejects unversioned, unknown, duplicate, stale and completely failed updates", () => {
     expect(() =>

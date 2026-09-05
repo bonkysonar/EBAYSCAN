@@ -67,6 +67,14 @@ export function parseCampaignBlock(
     )
   )
     return [];
+  const musicStore = /(?:label|record|audiophile)/i.test(source.retailSourceType ?? source.sourceType ?? "") || /(?:labels|Major label|Audiophile)/i.test(source.group ?? "");
+  const musicCollectionClaim = musicStore && /\/collections\/[^/?]*(?:sale|clearance|offers?)/i.test(pageUrl) && /\b(?:sale|clearance|offers?)\b/i.test(block);
+  // Read each advertised basket tier independently. Do not apply the highest
+  // percentage to every order or turn a dollar discount into a percentage.
+  const basketTiers = musicStore && /\bspend\s*:/i.test(block)
+    ? [...block.matchAll(/\$(\d+(?:\.\d{2})?)\s+for\s+(?:(\d{1,2})\s*%|\$(\d+(?:\.\d{2})?))\s+off/gi)]
+    : [];
+  if (basketTiers.length) return basketTiers.map((tier) => campaign(source, tier[0], block, pageUrl, capturedAt, {scope:"collection",kind:tier[2] ? "percent" : "fixed",discountPercent:tier[2] ? Number(tier[2]) : null,discountQualifier:"exact",minimumSpend:Number(tier[1]),fixedAmount:tier[3] ? Number(tier[3]) : null}));
   const matches = [...block.matchAll(percent)];
   const offers = matches
     .map((match, i) => {
@@ -88,14 +96,15 @@ export function parseCampaignBlock(
       if (!music.test(scopeText) && nonMusic.test(scopeText)) return null;
       if (
         !music.test(scopeText) &&
-        !/\b(?:sitewide|storewide|site-wide|store-wide|everything|entire\s+(?:site|store))\b/i.test(
+        !(musicCollectionClaim || (musicStore && /\b(?:select(?:ed)?\s+titles?|albums?)\b/i.test(scopeText))) &&
+        !/\b(?:site[ -]?wide|store[ -]?wide|everything|entire\s+(?:site|store))\b/i.test(
           scopeText,
         )
       )
         return null;
       let scope = /\b(?:select|selected)\b/i.test(claim)
         ? "collection"
-        : /\b(?:sitewide|storewide|site-wide|store-wide|everything|entire\s+(?:site|store))\b/i.test(
+        : /\b(?:site[ -]?wide|store[ -]?wide|everything|entire\s+(?:site|store))\b/i.test(
               scopeText,
             )
           ? "sitewide"
@@ -115,7 +124,7 @@ export function parseCampaignBlock(
   if (offers.length) return offers;
   if (
     !music.test(block) &&
-    !/\b(?:sitewide|storewide|everything)\b/i.test(block)
+    !/\b(?:site[ -]?wide|store[ -]?wide|everything)\b/i.test(block)
   )
     return [];
   const fixed = block.match(/(?:\$|USD\s*)(\d+(?:\.\d{2})?)\s+off\b/i);
@@ -125,7 +134,7 @@ export function parseCampaignBlock(
   if (fixed || bogo || /\bBOGO\b/i.test(block))
     return [
       campaign(source, block, block, pageUrl, capturedAt, {
-        scope: /\b(?:sitewide|storewide|everything)\b/i.test(block)
+        scope: /\b(?:site[ -]?wide|store[ -]?wide|everything)\b/i.test(block)
           ? "sitewide"
           : "collection",
         kind: fixed ? "fixed" : "bogo",
@@ -171,7 +180,7 @@ function campaign(source, claim, block, sourceUrl, capturedAt, offer) {
     buyQuantity: offer.buyQuantity ?? null,
     freeQuantity: offer.freeQuantity ?? null,
     freeDiscountPercent: offer.freeDiscountPercent ?? null,
-    minimumSpend: minimumSpend ? Number(minimumSpend) : null,
+    minimumSpend: offer.minimumSpend ?? (minimumSpend ? Number(minimumSpend) : null),
     freeShippingMinimum: freeShippingMinimum
       ? Number(freeShippingMinimum)
       : null,

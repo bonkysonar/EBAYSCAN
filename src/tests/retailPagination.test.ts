@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { discoverRetailPaginationLinks } from "../../scripts/lib/retailPagination.mjs";
+import { discoverRetailPaginationLinks, discoverNewestForumPages } from "../../scripts/lib/retailPagination.mjs";
 
 describe("retailer-neutral pagination discovery", () => {
+  it("finds the newest linked forum pages without inventing routes or crossing threads", () => {
+    const html = '<a href="/threads/vinyl.34/page-2">Next</a><a href="/threads/vinyl.34/page-1316">1316</a><a href="/threads/vinyl.34/page-1317">1317</a><a href="/threads/other.99/page-9999">Other</a><a href="https://external.example/threads/vinyl.34/page-9998">External</a>';
+    expect(discoverNewestForumPages(html,"https://forum.example/threads/vinyl.34/")).toEqual(["https://forum.example/threads/vinyl.34/page-1317","https://forum.example/threads/vinyl.34/page-1316"]);
+    expect(discoverNewestForumPages('<a href="/threads/vinyl.34/page-1316">Prev</a>',"https://forum.example/threads/vinyl.34/page-1317")).toEqual(["https://forum.example/threads/vinyl.34/page-1316"]);
+  });
   it("finds forward same-category page links and decodes query strings", () => {
     const html = `
       <a href="/b/vinyl-special-offer/_/N-308r?Nrpp=40&amp;page=2">2</a>

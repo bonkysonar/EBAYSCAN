@@ -67,7 +67,7 @@ Shopify sources use paginated JSON catalogs rather than silently stopping after 
 - Price, compare-at price, currency, SKU, barcode, variant identity, inventory quantity, and collection context are retained when present.
 - All observed collection memberships are retained. A fixed percentage from a verified retailer page can change the candidate price only when it is truly sitewide/vinyl-wide or the product was observed in that exact sale collection. `Up to`, BOGO, and already-marked-down offers are never uniformly discounted.
 
-Candidates from all sources are scored together before the daily limit is applied. Ranking considers record confidence, source quality, discount, sold evidence, identifiers, and deal context. The research pool and final post-evaluation queue both use source-diverse selection. Strong global candidates are protected, each eligible source receives representation when capacity permits, and source/family caps prevent one high-volume feed from consuming the queue. The payload retains exclusion reasons, largest-source share, represented-source count, and concentration HHI.
+Research prioritizes actual purchases of the same artist and album. An album-level own-sales prior may span conditions and editions, but supplies no comp price or pressing velocity. Exact New/Sealed comps still require artist, full album title, edition, condition, and dated retained transactions. Artist popularity, retailer badges, and a discount alone cannot establish demand. Unproven exploration is capped at 10% of the actual selected queue, with at most one bootstrap lead when no observed-demand candidate exists; unused capacity stays empty. Diagnostics expose observed-demand selections, deferred unproven records, and unused capacity.
 
 The default sale-radar run caps the final candidate queue; `--mode=comprehensive` intentionally retains the broader set.
 
@@ -173,7 +173,7 @@ npm run sold-history:sync -- --lookback-days=730 --refresh-overlap-days=14
 
 Outputs include `sold-records-ebay-api.json`, `sold-comps-index.json`, `ebay-economics-summary.json`, and `sync-state.json`. Buyer identities, addresses, credentials, and raw API payloads are never persisted. Selling fees, promoted-listing charges, refunds, and directly attributable shipping labels are joined to orders; unmatched label charges remain account-level calibration percentiles instead of being guessed onto a record.
 
-The index includes quantity-aware 30/90/365-day record metrics and artist aggregates used as a weak evergreen prior. A CSV remains an optional fallback/import path:
+The index includes quantity-aware 30/90/365-day record metrics. Actual album purchases inform research priority; artist aggregates do not rank a different album or establish value. A CSV remains an optional fallback/import path:
 
 ```powershell
 node scripts/buildSoldHistoryFromEbayCsv.mjs path\to\orders.csv exports\sold-history my-export --as-of=2026-07-16
@@ -183,9 +183,9 @@ The builder allocates order-level shipping, preserves transaction and unit count
 
 ## eBay Product Research
 
-Seller Hub Product Research remains useful for sold-price and repeat-row validation. Research links target Vinyl Records (`categoryId=176985`), New (`conditionId=1000`), the Sold tab, a three-year window, and normalized exact-edition, barcode, then base-release query variants. Every selected record also receives a public eBay Sold/Completed link as a recent-view fallback; both are manual browser handoffs and neither public page content nor URL is persisted as evidence.
+Seller Hub Product Research uses one search string: artist plus album name. Colors, formats, barcodes, edition labels, and retailer copy stay out of keywords. Vinyl Records (`categoryId=176985`), New (`conditionId=1000`), and Sold are filters. Returned rows are checked separately for pressing and condition compatibility. Public Sold/Completed links remain available as a browser fallback.
 
-Product Research rows are aggregate rows. Even when they show a total sold quantity and a latest-sale date, they do not reveal how those units were distributed across the last 30, 90, and 365 days. Aggregate Product Research alone therefore cannot prove velocity or create a `BUY`.
+Start with a visibly verified 90-day results window. A completed New/Vinyl search with observed start/end dates, fresh capture time, distinct listing identities, and complete pagination can support units for that exact window. It cannot supply shorter or longer windows. Three-year totals plus the latest sale date remain aggregate evidence and cannot establish 90-day velocity. A URL or dropdown alone is insufficient: verify the displayed results header and filters. Every BUY still requires exact matching, supply, offer verification, freshness, and full-ledger economics.
 
 Research is generic and keyed by stable find ID:
 
@@ -194,9 +194,9 @@ node scripts/prepareArbitrageResearchPlan.mjs
 node scripts/prepareArbitrageResearchPlan.mjs exports\arbitrage-finds\<scan-file>.json --max=40
 ```
 
-Without `--max`, the generated plan covers every researchable candidate; a cap is now an explicit operator choice rather than a silent first-40 default. The plan includes the find ID, normalized query variants, Seller Hub and public sold URLs, source identity, and edition terms. The curation step matches returned rows to the record, rejects bundles, merch, damaged copies, used copies, and conflicting editions, then stores the usable evidence by find ID. There is no title-by-title allowlist in the curator.
+The workflow plans at most 240 retained candidates and reports any researchable rows outside that bound. The standalone planner can use an explicit smaller `--max`. Each entry contains the exact draft find ID, one artist/album query, source identity, and Seller Hub/public sold links. Curation rejects bundles, merch, damaged copies, used copies, and conflicting editions, then stores usable evidence by find ID. There is no title-by-title allowlist.
 
-For soundtracks, the plan can try the core title, `Soundtrack`, and `OST` variants. A pending, failed, or no-row search remains explicitly labeled.
+Use the same normalized artist/album query for every record, including soundtracks. Pending, failed, blocked, successful-empty, and validated searches remain distinct states.
 
 ## Scan, Enrichment, Curation, and Publication
 
@@ -268,7 +268,7 @@ Local feedback changes the browser's working queues; it does not alter retailer 
 
 ## Daily Automation
 
-The `daily-vinyl-retail-arbitrage-scan` automation is scheduled for 5:30 a.m. local time. Its deterministic workflow is:
+The `daily-vinyl-retail-arbitrage-scan` automation offers runs every two hours. The first eligible run after 5 a.m. Los Angeles time performs the daily broad scan; other runs refresh bounded active sources. Its workflow is:
 
 1. Refresh sanitized eBay Fulfillment/Finances history with the incremental overlap.
 2. Run the broad source scan and retain honest page-level coverage.
@@ -279,7 +279,7 @@ The `daily-vinyl-retail-arbitrage-scan` automation is scheduled for 5:30 a.m. lo
 7. Validate the final artifact and publish it once.
 8. Report coverage, evidence status, adaptive priority, and decisions.
 
-The automation must not edit the curator to accommodate the day's titles, publish a draft, buy anything, submit forms, change listings, or dismiss user feedback.
+The automation must not edit the curator for individual titles, publish a draft, buy anything, submit retailer or marketplace transaction forms, change listings, or dismiss user feedback. Saving observed evidence to the local inbox is allowed.
 
 ## Verification
 
@@ -305,9 +305,9 @@ Run `npm run arbitrage:daily` to prepare a daily broad scan or a bounded campaig
 
 The daily automation runs at 5:30 local, with refresh opportunities every two hours. Refreshes check up to twelve sources, pinning up to six priority active-campaign sources and rotating the others. Retailer blocks remain unknown coverage. Requests to a host stop after a final 403/429, and offer verification has a three-minute pass budget. No browser fingerprint or access-control workaround is used.
 
-Research uses the retained pool (up to 240 products), not the preliminary visible 80. Save each completed Product Research query to the checkpoint immediately, with its find ID, query, status, and rows. Use `npm run arbitrage:research-plan -- <draft> --checkpoint=<checkpoint>` to resume. Keep failed/blocked/pending queries separate from successful empty searches. Broad release fallback cannot prove an exact pressing. Aggregate results cannot establish dated velocity.
+Research uses the retained pool (up to 240 products), not the preliminary visible 80. Use the normal signed-in browser and save each completed artist/album search immediately. Start the local inbox with `node scripts/serveRetailObservationInbox.mjs`; `http://127.0.0.1:4319/` stores visible retailer observations, and `/research` stores visible Seller Hub rows in `exports/arbitrage-finds/browser-product-research.json`. Capture the actual query, URL, timestamp, displayed date window, New/Vinyl filters, rows, and whether pagination is complete. No cookies, credentials, hidden page state, or raw account data belong in either file.
 
-Finish with `node scripts/runRetailWorkflow.mjs --finish=<context> --research=<checkpoint>`. Omitting research leaves it explicitly pending. The command curates, validates, publishes the same final artifact, and records the attempt result. Full publication requires the original coverage gate; otherwise the separate source-update contract applies. Final artifacts and sidecars use the run ID so multiple daily refreshes do not overwrite each other.
+Start a new scan with `npm run arbitrage:daily -- --browserObservations=exports/arbitrage-finds/browser-source-observations.json` when fresh retailer captures are available. Retail observations cannot be retroactively attached to an existing draft. Finish with `node scripts/runRetailWorkflow.mjs --finish=<context> --browserResearch=exports/arbitrage-finds/browser-product-research.json`. The importer matches the exact draft artist/album plan and merges accepted pages into that draft's checkpoint before curation. `node scripts/importBrowserSoldResearch.mjs <draft> <captures>` also imports independently. `--research=<checkpoint>` remains available; without it, finish automatically resumes the saved checkpoint. Only a missing checkpoint uses pending-only curation. The same run-ID-specific final artifact is validated and published. Full publication still requires the coverage gate; otherwise verified source updates are labeled partial.
 
 The default Worth considering list contains at most fifteen release groups, with no fill quota. Offers must be at most 24 hours old. A verified BUY may appear; a B candidate needs at least $7 expected net, 30% ROI, credible matched demand, fresh active evidence, and at most one remaining timing or checkout-price check. Tier C research is optional. Equivalent releases are grouped for display only; edition-specific prices and evidence remain separate.
 
@@ -321,9 +321,9 @@ Status and feedback API: `/api/arbitrage/operations` (GET status; authenticated 
 
 
 
-Research links now include explicit start/end timestamps because Seller Hub can display a three-year dropdown while loading only 30 days when the URL has only `dayRange`. Scheduled research must verify the results header and save `periodDays`; absent a known window, curation leaves velocity unknown. An empty checkpoint is pending, failed requests cannot validate partial rows, and only a successfully exhausted query ladder is eligible for seven-day empty-search deferral.
+Research links include explicit start/end timestamps because Seller Hub can display a three-year dropdown while loading only 30 days when the URL has only `dayRange`. Verify the displayed results header and save `observedWindow`, `periodDays`, and capture metadata. An empty checkpoint is pending; failed requests cannot validate partial rows. A successful complete artist/album search with no compatible rows may be deferred for seven days. Source publication and research completion are independent: context, final artifact, and operations status report planned, completed, validated, successful-empty, failed, pending, and matched-row counts. Publishing an all-pending scan never labels research complete.
 
-The final retailer verification runs after sold-research curation, with host pacing, a three-minute budget, and no additional requests to a host after a 403/429. These limits preserve explicit verification gaps when a retailer refuses access. The scanner retains separate own-sales, campaign, and exploration allocations through research; display ranking runs after evidence is applied.
+The final retailer verification runs after sold-research curation, with host pacing, a three-minute budget, and no additional requests to a host after a 403/429. Fresh explicit visible-browser product observations can verify the same exact offer. Otherwise the verification gap remains visible. Research starts with observed album purchases, and display ranking runs after sold and retail evidence are applied. Updated-source counts use the same admission criteria as publication: productive healthy/partial catalogs or healthy/partial sale checks, not every page that responded.
 
 
 Campaign interpretation is shared by ingestion, basket pricing, and display. Percentage ranges stay `up_to`, category-page headlines require collection membership unless they explicitly state broad coverage, volume offers require the advertised quantity, and unresolved multiple-code terms cannot produce a priced recommendation. The sales page groups a retailer's multiple observations behind one expandable section. Quoted product names containing “Everything” do not count as sitewide coverage.

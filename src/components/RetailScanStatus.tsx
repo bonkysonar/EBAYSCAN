@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import type { ArbitrageImportPayload } from "../lib/arbitrage/types";
+import type { ArbitrageImportPayload, ArbitrageResearchProgress } from "../lib/arbitrage/types";
 type Attempt = {
   status: string;
   updatedAt?: string;
   startedAt?: string;
   sourceCount?: number;
   message?: string;
+  researchProgress?: ArbitrageResearchProgress | null;
 };
 const date = (value?: string | null) =>
   value ? new Date(value).toLocaleString() : "Not yet available";
@@ -39,6 +40,7 @@ export function RetailScanStatus({
     attempt &&
     ["running", "research"].includes(attempt.status) &&
     Date.now() - Date.parse(attempt.updatedAt ?? "") > 3 * 3600000;
+  const research = attempt?.researchProgress ?? payload?.researchProgress;
   return (
     <aside className="panel retail-scan-status" aria-label="Scanner freshness">
       <strong>
@@ -64,6 +66,11 @@ export function RetailScanStatus({
         </p>
       ) : null}
       {attempt?.message ? <p role="status">{attempt.message}</p> : null}
+      {research ? (
+        <p>
+          {attempt?.researchProgress ? "Latest attempt" : "Published scan"} sold research: {research.completed}/{research.planned} searches completed; {research.validated} with matching sales; {research.noRows} without matching sales; {research.pending} pending; {research.failed} failed; {research.outsidePlan} deferred beyond this run’s research limit.
+        </p>
+      ) : null}
     </aside>
   );
 }

@@ -2,6 +2,27 @@ const PAGE_PARAM_NAMES = new Set(["page", "p", "pg", "pagenumber", "offset", "st
 const NEXT_TEXT = /^(?:next|next page|older|more results|[>\u203a\u00bb\u2192]+)$/i;
 const PREVIOUS_TEXT = /^(?:back|newer|prev(?:ious)?|previous page|[<\u2039\u00ab\u2190]+)$/i;
 
+/** Thread navigation runs newest-first. Only actual same-thread page links qualify. */
+export function discoverNewestForumPages(html, pageUrl, limit = 2) {
+  let current;
+  try { current = new URL(pageUrl); } catch { return []; }
+  if (!/^\/threads\/[^/]+\/(?:page-\d+\/?)?$/.test(current.pathname)) return [];
+  const threadPath = current.pathname.replace(/page-\d+\/?$/, "");
+  const pages = new Map();
+  for (const anchor of String(html ?? "").matchAll(/<a\b([^>]*)>[\s\S]*?<\/a>/gi)) {
+    try {
+      const href = readAttribute(anchor[1], "href");
+      if (!href) continue;
+      const url = new URL(decodeHtml(href),current);
+      const match = url.pathname.match(/\/page-(\d+)\/?$/);
+      if (url.origin !== current.origin || url.pathname.replace(/page-\d+\/?$/, "") !== threadPath || !match) continue;
+      url.hash = "";
+      pages.set(url.href,Number(match[1]));
+    } catch { /* Ignore malformed links; never synthesize unseen page URLs. */ }
+  }
+  return [...pages].sort((left,right)=>right[1]-left[1]).slice(0,Math.max(0,limit)).map(([url])=>url);
+}
+
 export function discoverRetailPaginationLinks(html, pageUrl, limit = 5) {
   let currentUrl;
   try {
