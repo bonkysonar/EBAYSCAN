@@ -5,6 +5,7 @@ import {
   buildEbayProductResearchUrl,
   buildEbayPublicSoldUrl,
   buildSoldResearchQueryVariants,
+  normalizeResearchArtist as normalizeCanonicalResearchArtist,
   normalizeResearchTitle as normalizeCanonicalResearchTitle,
 } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 
@@ -163,7 +164,7 @@ export function bestEvidenceForEntry(
     const queryFailed =
       Boolean(run.error) ||
       ["failed", "unavailable", "blocked"].includes(run.status);
-    const rows = (queryFailed ? [] : (run.rows ?? []))
+    const rows = (queryFailed || hasUnresolvedSeriesIdentity(find, run.rows ?? []) ? [] : (run.rows ?? []))
       .map(parseProductResearchRow)
       .filter((row) => row.totalSold > 0 && row.avgSoldPrice !== null)
       .map((row) => ({
@@ -307,7 +308,7 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
   if (!rowColors.length && /\bcolou?red\s+vinyl\b/i.test(rowTitle)) return 0;
   if (candidateColors.some((color) => !rowColors.includes(color)) ||
     rowColors.some((color) => !candidateColors.includes(color))) return 0;
-  const pressingSignals = new Set(["signed", "splatter", "swirl", "marbled", "etched", "glow-in-the-dark", "picture-disc", "box-set", "deluxe"]);
+  const pressingSignals = new Set(["signed", "splatter", "swirl", "marbled", "etched", "glow-in-the-dark", "picture-disc", "box-set", "deluxe", "translucent"]);
   if (candidateEdition.signals.some((signal) => pressingSignals.has(signal) && !rowEdition.signals.includes(signal)) ||
     rowEdition.signals.some((signal) => pressingSignals.has(signal) && !candidateEdition.signals.includes(signal))) return 0;
 
@@ -490,7 +491,7 @@ function preferredResearchTitle(find) {
 }
 
 function meaningfulArtist(value) {
-  const artist = cleanQuery(value);
+  const artist = normalizeCanonicalResearchArtist(value);
   if (/^(?:unknown\s+artist|various\s+artists?)$/i.test(artist)) return "";
   if (uniqueTokens(artist).length > 6) return "";
   if (/\b(?:album|motion\s+picture|soundtrack|vinyl|lp)\b/i.test(artist))
@@ -565,6 +566,7 @@ function hasIncompatibleRecordFormat(candidateText, rowTitle) {
 
   if (candidateLooksLikeOrdinaryLp && rowLpCount !== null && rowLpCount > 1)
     return true;
+  if (candidateLpCount > 1 && rowLpCount === null) return true;
   return (
     candidateLpCount !== null &&
     rowLpCount !== null &&
@@ -574,8 +576,8 @@ function hasIncompatibleRecordFormat(candidateText, rowTitle) {
 
 function explicitLpCount(value) {
   const text = cleanText(value);
-  const numeric = text.match(/\b([1-9])\s*(?:x|-)?\s*lp\b|\b([1-9])lp\b/i);
-  if (numeric) return Number(numeric[1] ?? numeric[2]);
+  const numeric = text.match(/\b([1-9])\s*(?:x|-)?\s*lp\b|\b([1-9])lp\b|\b([1-9])\s*[x×]\s*(?:vinyl\s+)?(?:records?|lps?)\b/i);
+  if (numeric) return Number(numeric[1] ?? numeric[2] ?? numeric[3]);
   if (/\bdouble\s+lp\b/i.test(text)) return 2;
   if (/\btriple\s+lp\b/i.test(text)) return 3;
   return null;
@@ -595,14 +597,46 @@ function hasUnconfirmedPressing(candidate, row) {
     /\bpicture\s+(?:disc|vinyl)\b/i, /\bclub\s+press(?:ing)?\b/i,
     /\b(?:tone\s+poet)\b/i,
     /\bclassic\s+records\b/i, /\bhalf[-\s]?speed\b/i,
+    /\bbonus\s+tracks?\b/i,
     /\b(?:anniversary|anniv|anni)\b/i,
   ];
   if (markers.some((marker) => marker.test(row) && !marker.test(candidate))) return true;
   const oldPressYear = row.match(/\b(?:19[5-9]\d)\b/g) ?? [];
   if (oldPressYear.some((year) => !candidate.includes(year)) && !/\b(?:reissue|repress|remaster(?:ed)?)\b/i.test(row)) return true;
-  const series = (text) => /blue\s+note\s+essentials?/i.test(text) ? "essential" :
-    /blue\s+note\s+classic/i.test(text) ? "classic" : null;
-  return Boolean(series(candidate) && series(row) && series(candidate) !== series(row));
+  const candidateSeries = pressingSeries(candidate);
+  const rowSeries = pressingSeries(row);
+  return Boolean((candidateSeries || rowSeries) && candidateSeries !== rowSeries);
+}
+
+function pressingSeries(text) {
+  const series = [
+    ["blue-note-essential", /\bblue\s+note\s+essentials?\b/i],
+    ["blue-note-classic", /\bblue\s+note\s+classic\b/i],
+    ["tone-poet", /\btone\s+poet\b/i],
+    ["classic-records", /\bclassic\s+records\b/i],
+    ["music-matters", /\bmusic\s+matters\b/i],
+    ["analogue-productions", /\banalogue\s+productions\b/i],
+    ["mobile-fidelity", /\b(?:mofi|mobile\s+fidelity)\b/i],
+    ["verve-vault", /\bverve\s+vault\b/i],
+  ];
+  return series.find(([, pattern]) => pattern.test(text))?.[0] ?? null;
+}
+
+function hasUnresolvedSeriesIdentity(find, rawRows) {
+  const candidate = `${find.artist ?? ""} ${find.title ?? ""} ${find.sourceListingTitle ?? ""} ${find.shopifyVariantTitle || find.variantTitle || ""}`;
+  const release = `${find.artist ?? ""} ${normalizeCanonicalResearchTitle(find.title ?? "")}`;
+  const editionText = `${find.sourceListingTitle || release} ${find.shopifyVariantTitle || find.variantTitle || ""}`;
+  if (pressingSeries(candidate) || extractEditionIdentity(editionText, release).colors.some((color) => color !== "black")) return false;
+  const albumTokens = usefulTokens(normalizeCanonicalResearchTitle(find.title ?? ""));
+  const artistTokens = usefulTokens(find.artist ?? "");
+  if (!albumTokens.length || !artistTokens.length) return false;
+  const series = new Set(rawRows.map(parseProductResearchRow).filter((row) => {
+    const tokens = new Set(usefulTokens(row.title));
+    return overlapRatio(albumTokens, tokens) === 1 && overlapRatio(artistTokens, tokens) >= .5;
+  }).map((row) => pressingSeries(row.title)).filter(Boolean));
+  // Different named series in the observed album results leave a generic
+  // retail offer unresolved; these purchases remain album-level demand.
+  return series.size > 1;
 }
 
 function datedSingleUnitSales(rows, run, now) {

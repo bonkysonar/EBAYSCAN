@@ -37,10 +37,15 @@ export function createAlbumDemandIndex(index = {}, { now = Date.now() } = {}) {
       if (seen.has(fingerprint)) continue;
       seen.add(fingerprint);
       const normalized = recordIdentity(title);
-      const firstWord = normalized.split(" ")[0];
-      const entries = byFirstWord.get(firstWord) ?? [];
-      entries.push({ normalized, saleMs, saleDate: record.saleDate, units, comp });
-      byFirstWord.set(firstWord, entries);
+      const words = normalized.split(" ");
+      // Index the optional merchandising prefix as well as the real artist.
+      // Retaining the original identity also supports an artist named LP.
+      const firstWords = new Set([words[0], ...(/^(?:vinyl|lp) /.test(normalized) ? [words[1]] : [])]);
+      for (const firstWord of firstWords) {
+        const entries = byFirstWord.get(firstWord) ?? [];
+        entries.push({ normalized, saleMs, saleDate: record.saleDate, units, comp });
+        byFirstWord.set(firstWord, entries);
+      }
     }
   }
 
@@ -106,6 +111,8 @@ export function ownSaleMatchesAlbum(candidate = {}, record = {}) {
 }
 
 function matchesIdentity(normalized, prefix) {
+  if (normalized !== prefix && !normalized.startsWith(`${prefix} `))
+    normalized = normalized.replace(/^(?:vinyl|lp) /, "");
   if (normalized === prefix) return true;
   if (!normalized.startsWith(`${prefix} `)) return false;
   return normalized

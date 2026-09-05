@@ -107,12 +107,25 @@ export function mergeVerifiedSourceUpdates(
   const mergedReports = authoritativeIds.map((id) => {
     const current = reports.find((r) => r.id === id);
     const prior = oldReports.get(id);
+    // A bounded sale-page check has no new evidence about the catalog. Keep the
+    // previous catalog result and its verification time, while reporting the
+    // new sale-page result (including failures) and the latest attempt time.
+    const retainedCatalog = prior && current?.catalogHealth === "not_attempted"
+      ? Object.fromEntries(Object.entries(prior).filter(([key]) =>
+          key.startsWith("catalog") || ["candidateCount", "productParseHealth", "adapterStats"].includes(key),
+        ))
+      : {};
     return current
       ? {
           ...current,
+          ...retainedCatalog,
+          status: current.status === "error" && retainedCatalog.productParseHealth === "productive"
+            ? "partial" : current.status,
           lastAttemptAt: incoming.createdAt,
           verifiedAt: products.has(id)
-            ? incoming.createdAt
+            ? (current.browserCatalogCoverage === "bounded_visible_pages" &&
+                Number.isFinite(Date.parse(String(current.browserObservedAt)))
+                ? current.browserObservedAt : incoming.createdAt)
             : (prior?.verifiedAt ?? previous?.createdAt ?? null),
         }
       : {

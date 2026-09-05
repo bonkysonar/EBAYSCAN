@@ -282,4 +282,15 @@ describe("vinyl-only research and release queries", () => {
     expect(buildSoldResearchQueryVariants({ artist: "Artist", title: "Artist - A Real Album (Custom Exclusive Variant)" })[0].query).toBe("Artist A Real Album");
     expect(normalizeResearchTitle("Ghostly")).toBe("Ghostly");
   });
+
+  it("keeps Gábor Szabó intact and removes the named Verve Vault merchandising series", () => {
+    const candidate = { id: "gabor-spellbinder", artist: "Gábor Szabó", title: "Spellbinder (Verve Vault Series) LP", sourceListingTitle: "Spellbinder (Verve Vault Series) LP", purchasePrice: 15 };
+    expect(buildSoldResearchQueryVariants(candidate)[0].query).toBe("Gábor Szabó Spellbinder");
+    expect(buildProductResearchPlan([candidate])[0].variants[0].query).toBe("Gábor Szabó Spellbinder");
+    expect(normalizeResearchTitle("Spellbinder Verve Vault Series LP")).toBe("Spellbinder");
+    expect(normalizeResearchTitle("Maiden Voyage (Blue Note Essentials Series) LP")).toBe("Maiden Voyage");
+    expect(normalizeResearchTitle("The Series")).toBe("The Series");
+    expect(normalizeResearchTitle("A Story (The Original Series)")).toBe("A Story The Original Series");
+    expect(buildSoldResearchQueryVariants({ artist: "Artist", title: "Artist - A Real Album - Apple Red Vinyl LP" })[0].query).toBe("Artist A Real Album");
+  });
 });

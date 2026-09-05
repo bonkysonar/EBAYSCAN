@@ -26,6 +26,7 @@ const STOP_TOKENS = new Set([
 
 const COLORS = [
   "amber",
+  "apple red",
   "aquamarine",
   "beige",
   "black",
@@ -79,6 +80,14 @@ const RETAILERS = [
 ];
 
 const EDITION_SIGNAL_PATTERNS = [
+  ["series-blue-note-essential", /\bblue\s+note\s+essentials?\b/i],
+  ["series-blue-note-classic", /\bblue\s+note\s+classic\b/i],
+  ["series-verve-vault", /\bverve\s+vault\b/i],
+  ["series-tone-poet", /\btone\s+poet\b/i],
+  ["series-classic-records", /\bclassic\s+records\b/i],
+  ["series-music-matters", /\bmusic\s+matters\b/i],
+  ["series-analogue-productions", /\banalogue\s+productions\b/i],
+  ["series-mobile-fidelity", /\b(?:mofi|mobile\s+fidelity)\b/i],
   ["anniversary", /\banniversary\b/i],
   ["box-set", /\bbox\s*set\b/i],
   ["deluxe", /\bdeluxe\b/i],
@@ -226,7 +235,8 @@ export function matchActiveListing(title, profile) {
 }
 
 export function extractEditionIdentity(value, releaseTitle = "") {
-  const text = cleanActiveSearchText(value).toLowerCase()
+  const originalText = cleanActiveSearchText(value).toLowerCase();
+  const text = originalText
     .replace(/\bblue\s+note(?=\s+(?:essential|classic|tone\s+poet|vinyl|series))/g, "label");
   const normalizedReleaseTitle = cleanActiveSearchText(releaseTitle).toLowerCase();
   const colors = extractColors(text).filter(
@@ -235,7 +245,9 @@ export function extractEditionIdentity(value, releaseTitle = "") {
   );
   const format = extractFormat(text);
   const retailerExclusive = extractRetailerExclusive(text);
-  const signals = EDITION_SIGNAL_PATTERNS.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
+  // Blue Note is suppressed only for color parsing; its named pressing series
+  // must remain present when comparing exact supply.
+  const signals = EDITION_SIGNAL_PATTERNS.filter(([, pattern]) => pattern.test(originalText)).map(([name]) => name);
   const hardColors = colors.filter((color) => color !== "black");
   const keyParts = [
     format ? `format=${format}` : "",

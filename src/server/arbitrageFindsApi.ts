@@ -1,7 +1,7 @@
 import { selectDecisionList } from "../lib/arbitrage/decisionList.mjs";
 import { feedbackReceipt } from "./retailOperationsApi.js";
 import { mergeVerifiedSourceUpdates } from "./retailSourceUpdates.js";
-import { readCurrentPublicBlobJson } from "./readCurrentPublicBlobJson.js";
+import { readCurrentPublicBlobJson, preservePublicBlobVersion } from "./readCurrentPublicBlobJson.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -855,7 +855,8 @@ async function writeBlobLatestPointer(
   expectedEtag?: string,
 ) {
   try {
-    await put(BLOB_LATEST_POINTER_PATH, JSON.stringify(pointer, null, 2), {
+    const body = JSON.stringify(pointer, null, 2);
+    const stored = await put(BLOB_LATEST_POINTER_PATH, body, {
       access: "public",
       addRandomSuffix: false,
       allowOverwrite: Boolean(expectedEtag),
@@ -863,6 +864,7 @@ async function writeBlobLatestPointer(
       contentType: "application/json",
       ...(expectedEtag ? { ifMatch: expectedEtag } : {}),
     });
+    await preservePublicBlobVersion(BLOB_LATEST_POINTER_PATH, stored.etag, body);
   } catch (error) {
     throw httpError(
       409,

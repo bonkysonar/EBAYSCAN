@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { put, list } from "@vercel/blob";
-import { readCurrentPublicBlobJson } from "./readCurrentPublicBlobJson.js";
+import { readCurrentPublicBlobJson, preservePublicBlobVersion } from "./readCurrentPublicBlobJson.js";
 import {
   learningIdentity,
   REVIEW_OUTCOMES,
@@ -201,13 +201,16 @@ async function read(
 }
 async function write(cwd: string, path: string, value: unknown) {
   if (process.env.BLOB_READ_WRITE_TOKEN) {
-    await put(`retail-operations/${path}`, JSON.stringify(value), {
+    const pathname = `retail-operations/${path}`;
+    const body = JSON.stringify(value);
+    const stored = await put(pathname, body, {
       access: "public",
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: "application/json",
       cacheControlMaxAge: 60,
     });
+    await preservePublicBlobVersion(pathname, stored.etag, body);
     return;
   }
   const file = join(cwd, "exports", "retail-operations", path);

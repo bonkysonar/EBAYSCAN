@@ -112,6 +112,30 @@ describe("retailer update and review contracts", () => {
       ).finds.map((f) => f.id),
     ).toEqual(["old-a"]);
   });
+  it("retains catalog evidence and dates when a browser refresh checked only a sale page", () => {
+    const old = new Date(Date.parse(at) - 3600000).toISOString();
+    const previous = {
+      createdAt: old, finds: [{ ...item, id: "old-a", capturedAt: old }],
+      sourceReports: [{ id: "a", status: "partial", candidateCount: 132,
+        catalogHealth: "healthy", catalogPageAvailableCount: 3, catalogPageAttemptCount: 3,
+        productParseHealth: "productive", verifiedAt: old }],
+    };
+    const current = { ...incoming, sourceReports: [{ id: "a", status: "partial",
+      candidateCount: 0, catalogHealth: "not_attempted", catalogPageAvailableCount: 0,
+      catalogPageAttemptCount: 0, productParseHealth: "empty", salePageHealth: "healthy",
+      salePageAvailableCount: 1 }] };
+    const result = mergeVerifiedSourceUpdates(current, previous, ["a", "b"]);
+    expect(result.sourceReports?.[0]).toMatchObject({ candidateCount: 132,
+      catalogHealth: "healthy", catalogPageAvailableCount: 3, productParseHealth: "productive",
+      salePageHealth: "healthy", verifiedAt: old, lastAttemptAt: at });
+    expect(result.finds[0].capturedAt).toBe(old);
+    // An actual failed catalog attempt must still replace its old healthy result.
+    const failed = mergeVerifiedSourceUpdates({ ...current, sourceReports: [{
+      ...current.sourceReports[0], catalogHealth: "failed", catalogPageAttemptCount: 1,
+      productParseHealth: "failed",
+    }] }, previous, ["a", "b"]);
+    expect(failed.sourceReports?.[0]).toMatchObject({ catalogHealth: "failed", productParseHealth: "failed" });
+  });
   it("admits browser offers captured before the scan only with fresh source-bound provenance", () => {
     const observed = new Date(Date.parse(at) - 45 * 60000).toISOString();
     const browserItem: ArbitrageFind = { ...item, capturedAt: observed, retailObservedAt: observed,
@@ -123,6 +147,7 @@ describe("retailer update and review contracts", () => {
     expect(result.finds).toHaveLength(1);
     expect(result.finds[0].capturedAt).toBe(observed);
     expect(result.finds[0].retailObservedAt).toBe(observed);
+    expect(result.sourceReports?.[0].verifiedAt).toBe(observed);
     for (const changes of [
       { retailObservationMethod: undefined },
       { retailObservedAt: undefined },

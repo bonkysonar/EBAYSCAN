@@ -89,6 +89,8 @@ describe("active eBay edition matching", () => {
     const genericBlue = buildActiveSearchProfile({ ...find, shopifyVariantTitle: "Blue LP" })!;
     expect(matchActiveListing("Thrice Identity Crisis Anniversary Ghostly Blue Vinyl LP", genericBlue).matched).toBe(false);
     expect(buildActiveSearchProfile(findFor("Ghostly Blue - A Real Album Vinyl LP"))?.edition.colors).toEqual([]);
+    const red = buildActiveSearchProfile({ ...find, shopifyVariantTitle: "Red LP" })!;
+    expect(matchActiveListing("Thrice Identity Crisis Anniversary Apple Red Vinyl LP", red).matched).toBe(false);
   });
 
   it("carries the purchase item identity so its own listing can be excluded", () => {
@@ -112,6 +114,22 @@ describe("active eBay edition matching", () => {
     expect(ebayItemIdentityTokens("https://www.ebay.com/itm/123456789012")).toContain(
       "legacy:123456789012",
     );
+  });
+
+  it("requires the same named pressing series for exact active supply", () => {
+    const base = { ...findFor("Herbie Hancock - Maiden Voyage Vinyl LP"), artist: "Herbie Hancock", title: "Maiden Voyage", identityStatus: "resolved" as const };
+    const generic = buildActiveSearchProfile(base)!;
+    for (const series of ["Blue Note Essentials Series", "Blue Note Classic Vinyl Series", "Verve Vault Series", "Tone Poet", "Classic Records", "Music Matters", "Analogue Productions", "Mobile Fidelity"]) {
+      const profile = buildActiveSearchProfile({ ...base, sourceListingTitle: `Herbie Hancock - Maiden Voyage (${series}) LP` })!;
+      expect(profile.primary).toBe("Herbie Hancock Maiden Voyage");
+      expect(profile.edition.colors).toEqual([]);
+      expect(matchActiveListing(`Herbie Hancock Maiden Voyage ${series} Vinyl LP`, profile).matched).toBe(true);
+      expect(matchActiveListing("Herbie Hancock Maiden Voyage Vinyl LP", profile).matched).toBe(false);
+      expect(matchActiveListing(`Herbie Hancock Maiden Voyage ${series} Vinyl LP`, generic).matched).toBe(false);
+      const otherSeries = series === "Blue Note Essentials Series" ? "Blue Note Classic Vinyl Series" : "Blue Note Essentials Series";
+      expect(matchActiveListing(`Herbie Hancock Maiden Voyage ${otherSeries} Vinyl LP`, profile).matched).toBe(false);
+    }
+    expect(extractEditionIdentity("Herbie Hancock Maiden Voyage Blue Note Classic Vinyl Series LP", "Herbie Hancock Maiden Voyage").signals).toContain("series-blue-note-classic");
   });
 
   it("keeps same-title eBay purchases candidate-specific and excludes only self", () => {

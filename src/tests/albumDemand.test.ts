@@ -137,6 +137,17 @@ describe("observed album demand", () => {
     expect(index.matchingComps({ artist: "Queen", title: "Unknown Album" })).toEqual([]);
   });
 
+  it("accepts a leading VINYL or LP label only before the full artist-and-album identity", () => {
+    const release = { artist: "Herbie Hancock", title: "Maiden Voyage" };
+    const comp = { records: [sale("VINYL Herbie Hancock - Maiden Voyage", { retainedQuantity: 9, quantity: 9 }), sale("LP Herbie Hancock - Maiden Voyage", { saleDate: "2026-08-26" })] };
+    const index = createAlbumDemandIndex({ comps: [comp] }, { now });
+    expect(index.match(release)).toMatchObject({ unitsSold: 10, transactionCount: 2 });
+    expect(index.matchingComps(release)).toEqual([comp]);
+    expect(ownSaleMatchesAlbum({ artist: "LP", title: "Lost On You" }, sale("LP - Lost On You Vinyl"))).toBe(true);
+    for (const title of ["VINYL Different Artist - Maiden Voyage", "VINYL Herbie Hancock - Maiden Voyage II", "VINYL Herbie Hancock - Maiden Voyage CD", "NEW VINYL Herbie Hancock - Maiden Voyage", "VINYL LP Herbie Hancock - Maiden Voyage"])
+      expect(ownSaleMatchesAlbum(release, sale(title))).toBe(false);
+  });
+
   it("accepts bounded edition wording from real sold listings without dropping album extensions", () => {
     const release = { artist: "Thrice", title: "Identity Crisis" };
     const rows = [

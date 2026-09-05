@@ -75,12 +75,42 @@ describe("observed sold research windows", () => {
     expect(productResearchRowMatchScore(colored,"Creedence Clearwater Revival Bayou Country Tangerine LP")).toBeGreaterThan(.85);
     expect(productResearchRowMatchScore({...colored,title:"Bayou Country (Tangerine LP)"},"Creedence Clearwater Revival Bayou Country LP")).toBe(0);
     const blue = {artist:"John Coltrane",title:"Blue Train",sourceListingTitle:"John Coltrane Blue Train Blue Note Essential LP"};
-    expect(productResearchRowMatchScore(blue,"John Coltrane Blue Train New Vinyl LP")).toBeGreaterThan(.85);
+    expect(productResearchRowMatchScore(blue,"John Coltrane Blue Train New Vinyl LP")).toBe(0);
+    expect(productResearchRowMatchScore(blue,"John Coltrane Blue Train Blue Note Essential New Vinyl LP")).toBeGreaterThan(.85);
     expect(productResearchRowMatchScore(blue,"John Coltrane Blue Train Classic Records Audiophile 180g LP")).toBe(0);
     expect(productResearchRowMatchScore(blue,'John Coltrane Blue Train (Vinyl) 12" Album Coloured Vinyl (Limited Edition)')).toBe(0);
     expect(productResearchRowMatchScore(find,"Example Artist An Actual Album [New Vinyl LP] Anni")).toBe(0);
     const splatter = {artist:"Cavetown",title:"Running With Scissors",sourceListingTitle:"Cavetown Running With Scissors LP Blue w/ Black Splatter"};
     expect(productResearchRowMatchScore(splatter,"Cavetown Running With Scissors LP Sky Blue")).toBe(0);
     expect(productResearchRowMatchScore(splatter,"Cavetown Running With Scissors LP Blue Black Splatter")).toBeGreaterThan(.85);
+  });
+  it("requires an explicit matching multi-disc count and translucent pressing", () => {
+    const candidate = { ...find, artist: "Public Enemy", title: "It Takes A Nation of Millions To Hold Us Back (Limited Edition Translucent Red) 2LP", sourceListingTitle: "Public Enemy It Takes A Nation of Millions To Hold Us Back (Limited Edition Translucent Red) 2LP" };
+    for (const variant of ["Red Vinyl LP", "Apple Red Vinyl LP", "Red Vinyl 2LP", "Translucent Red Vinyl LP", "Translucent Red 1LP"]) {
+      expect(productResearchRowMatchScore(candidate, `Public Enemy It Takes A Nation of Millions To Hold Us Back ${variant}`)).toBe(0);
+    }
+    expect(productResearchRowMatchScore(candidate, "Public Enemy It Takes A Nation of Millions To Hold Us Back Translucent Red Vinyl 2LP")).toBeGreaterThan(.85);
+    const double = { ...find, sourceListingTitle: "Example Artist An Actual Album 2LP" };
+    expect(productResearchRowMatchScore(double, "Example Artist An Actual Album Vinyl LP")).toBe(0);
+    expect(productResearchRowMatchScore(double, "Example Artist An Actual Album (2x Record, 2023) New")).toBeGreaterThan(.85);
+    expect(productResearchRowMatchScore(double, "Example Artist An Actual Album 2x Vinyl LP New")).toBeGreaterThan(.85);
+    expect(productResearchRowMatchScore({ ...double, sourceListingTitle: "Example Artist An Actual Album Red LP" }, "Example Artist An Actual Album Apple Red LP")).toBe(0);
+  });
+
+  it("keeps known Blue Note series separate and withholds generic-offer prices when the capture shows multiple series", () => {
+    const generic = { ...find, artist: "Herbie Hancock", title: "Maiden Voyage", sourceListingTitle: "Herbie Hancock Maiden Voyage Vinyl LP" };
+    const essential = { ...generic, title: "Maiden Voyage (Blue Note Essential Vinyl Series) LP", sourceListingTitle: "Herbie Hancock Maiden Voyage (Blue Note Essential Vinyl Series) LP" };
+    const classic = { ...generic, title: "Maiden Voyage (Blue Note Classic Vinyl Series) LP", sourceListingTitle: "Herbie Hancock Maiden Voyage (Blue Note Classic Vinyl Series) LP" };
+    const capturedRun = { ...run, query: "Herbie Hancock Maiden Voyage", url: `${run.url}&keywords=Herbie+Hancock+Maiden+Voyage`, rows: [
+      { ...row, title: "VINYL Herbie Hancock - Maiden Voyage", totalSold: 9 },
+      { ...row, title: "Herbie Hancock - Maiden Voyage (Blue Note Essentials Series) [New Vinyl LP]", totalSold: 3, avgSoldPrice: 22.89, itemUrl: "https://www.ebay.com/itm/123456789013" },
+      { ...row, title: "Herbie Hancock Maiden Voyage SEALED Blue Note Classic Series 180g Reissue LP", totalSold: 1, avgSoldPrice: 22.99, itemUrl: "https://www.ebay.com/itm/123456789014" },
+    ] };
+    const curate = (candidate: typeof generic) => curateResearchForFind(candidate, { entries: [{ findId: candidate.id, runs: [capturedRun] }] }, now);
+    expect(curate(essential)).toMatchObject({ totalSoldCount: 3, averageSoldPrice: 22.89 });
+    expect(curate(classic)).toMatchObject({ totalSoldCount: 1, averageSoldPrice: 22.99 });
+    expect(curate(generic)).toMatchObject({ status: "no_rows", totalSoldCount: 0, averageSoldPrice: null });
+    expect(createMarketplaceAlbumDemandIndex({ captureMethod: "visible_browser", pages: [capturedRun] }, now).match(generic)).toMatchObject({ unitsSold: 13 });
+    expect(productResearchRowMatchScore({ ...find, artist: "John Coltrane", title: "Blue Train", sourceListingTitle: "John Coltrane Blue Train 180g LP" }, "John Coltrane Blue Train Vinyl LP with Bonus Track")).toBe(0);
   });
 });
