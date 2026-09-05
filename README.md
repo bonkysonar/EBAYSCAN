@@ -48,6 +48,10 @@ The scanner writes a timestamped draft in `exports/arbitrage-finds/`; drafts are
 
 Retail Arbitrage is candidate-first. Its default queue shows source-linked Tier A/B/C records even when no row clears every automatic `BUY` gate: A is fully verified, B is promising product-level evidence with at least one proof gap, and C is a research lead rather than a value claim. Each selected record has both a three-year Seller Hub Product Research link and a public eBay Sold/Completed fallback.
 
+The **Sold value** column also shows provisional album benchmarks from observed Seller Hub sales of New vinyl over three years. These ranges allow different pressings and colors of the same artist and album, exclude unrelated formats and album bundles, and use matching listings' average item prices before shipping. More than 10 observed copies meets the owner's comparison threshold; smaller samples still show a range labeled thin. Partial page captures show counts as “at least.” An album benchmark does not establish an exact pressing match or automatically qualify an offer for `BUY`.
+
+Saved browser research is reused by the normal import and curation workflow. To add newly captured ranges to the existing live offers without rescanning retailers, save the current `/api/arbitrage/latest` response locally, then run `node scripts/prepareAlbumBenchmarkUpdate.mjs <saved-latest-response.json>`. Upload the exact generated final file with the command below. This evidence update requires the current publication's run ID, creates a new immutable publication, and preserves acquisition prices, observation timestamps, source reports, and exact sold evidence. If another scan publishes first, fetch the new latest response and prepare a new update.
+
 Useful commands:
 
 ```powershell

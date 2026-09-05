@@ -1,6 +1,7 @@
 import { selectDecisionList } from "../lib/arbitrage/decisionList.mjs";
 import { feedbackReceipt } from "./retailOperationsApi.js";
 import { mergeVerifiedSourceUpdates } from "./retailSourceUpdates.js";
+import { mergeAlbumBenchmarkUpdates } from "./retailEvidenceUpdates.js";
 import { readCurrentPublicBlobJson, preservePublicBlobVersion } from "./readCurrentPublicBlobJson.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -191,15 +192,6 @@ export async function uploadArbitrageFinds(
   );
   const inputHash = hashJson(finalPayload);
   const current = await readCurrentStoredPublication(cwd);
-  const checkedPayload =
-    finalPayload.publicationMode === "source_updates"
-      ? (mergeVerifiedSourceUpdates(
-          finalPayload,
-          current?.payload ?? null,
-          getActiveRetailSources().map((s) => s.id),
-        ) as FinalArbitragePayload)
-      : withAssessedRunQuality(finalPayload);
-
   if (current?.pointer.runId === finalPayload.runId) {
     if (current.pointer.inputHash !== inputHash) {
       throw httpError(
@@ -219,6 +211,17 @@ export async function uploadArbitrageFinds(
     };
   }
 
+  const evidenceOnly = finalPayload.publicationMode === "evidence_updates";
+  const checkedPayload = evidenceOnly
+    ? mergeAlbumBenchmarkUpdates(finalPayload, current?.payload ?? null) as FinalArbitragePayload
+    : finalPayload.publicationMode === "source_updates"
+      ? (mergeVerifiedSourceUpdates(
+          finalPayload,
+          current?.payload ?? null,
+          getActiveRetailSources().map((s) => s.id),
+        ) as FinalArbitragePayload)
+      : withAssessedRunQuality(finalPayload);
+
   const bootstrapFromSameLegacyArtifact =
     Boolean(current && !current.pointerBacked) &&
     finalPayload.createdAt === current?.pointer.createdAt;
@@ -237,7 +240,9 @@ export async function uploadArbitrageFinds(
   const publishedAt = new Date().toISOString();
   const incomingReports = finalPayload.sourceReports ?? [];
   const lifecycle =
-    bootstrapFromSameLegacyArtifact && finalPayload.saleCampaignLedger
+    evidenceOnly && current
+      ? lifecycleFromIncomingLedger(current.payload)
+      : bootstrapFromSameLegacyArtifact && finalPayload.saleCampaignLedger
       ? lifecycleFromIncomingLedger(finalPayload)
       : reconcileSaleCampaigns({
           observedAt: lifecycleObservedAt(finalPayload),
@@ -1402,6 +1407,9 @@ function campaignStatusSummary(
 }
 
 function lifecycleObservedAt(payload: FinalArbitragePayload): string {
+  // An evidence publication advances the immutable pointer, but it does not
+  // create a new retailer/sale observation or modify the preserved sale ledger.
+  if (payload.publicationMode === "evidence_updates") return payload.createdAt;
   const ledgerTimestamp = payload.saleCampaignLedger?.updatedAt;
   if (
     validIsoTimestamp(ledgerTimestamp) &&

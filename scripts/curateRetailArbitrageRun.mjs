@@ -1,4 +1,5 @@
 import { createMarketplaceAlbumDemandIndex } from "./lib/marketplaceAlbumDemand.mjs";
+import { createAlbumPriceBenchmarkIndex } from "./lib/albumPriceBenchmark.mjs";
 import { revalidateCandidateLocalSold } from "./lib/localSoldEvidence.mjs";
 import { browserVerifiedRetailOffer } from "./lib/browserRetailVerification.mjs";
 import { mergeResearchSoldEvidence } from "./lib/soldResearchWindow.mjs";
@@ -66,14 +67,16 @@ const browserCaptures = existsSync(browserPath) ? JSON.parse(readFileSync(browse
 const localIndexPath = resolve(workspace, "exports/sold-history/sold-comps-index.json");
 const localIndex = existsSync(localIndexPath) ? JSON.parse(readFileSync(localIndexPath, "utf8")) : null;
 const marketplaceCapturesPath = resolve(workspace, "exports/arbitrage-finds/browser-product-research.json");
-const marketplaceDemand = createMarketplaceAlbumDemandIndex(existsSync(marketplaceCapturesPath) ? JSON.parse(readFileSync(marketplaceCapturesPath, "utf8")) : {}, curatedAt);
+const marketplaceCaptures = existsSync(marketplaceCapturesPath) ? JSON.parse(readFileSync(marketplaceCapturesPath, "utf8")) : {};
+const marketplaceDemand = createMarketplaceAlbumDemandIndex(marketplaceCaptures, curatedAt);
+const albumBenchmarks = createAlbumPriceBenchmarkIndex(marketplaceCaptures, curatedAt);
 const evidenceByFindId = {};
 const retained =
   payload.researchCandidates ??
   (payload.finds ?? []).filter(
     (find) => find.opportunityType !== "sitewide_sale",
   );
-let curatedProducts = retained.map((find) => localIndex ? revalidateCandidateLocalSold(find, localIndex, curatedAt) : find).map((find) => ({...find, albumDemand: find.albumDemand ?? marketplaceDemand.match(find)})).map((find) =>
+let curatedProducts = retained.map((find) => localIndex ? revalidateCandidateLocalSold(find, localIndex, curatedAt) : find).map((find) => ({...find, albumDemand: find.albumDemand ?? marketplaceDemand.match(find), albumPriceBenchmark: albumBenchmarks.match(find) ?? find.albumPriceBenchmark})).map((find) =>
   curateFind(
     find.identitySource === "retailer_vendor" &&
       retailerArtistConflict(find.artist, find.sourceName)

@@ -1,5 +1,6 @@
 import type { VinylShopSource } from "./vinylShopSources";
 import type { AlbumDemand } from "../../../scripts/lib/albumDemand.mjs";
+import type { AlbumPriceBenchmark } from "../../../scripts/lib/albumPriceBenchmark.mjs";
 
 export type ArbitrageDecision = "BUY" | "WATCH" | "REVIEW" | "REJECT";
 export type ArbitrageCandidateTier = "A" | "B" | "C" | "WATCH" | "REJECT";
@@ -170,6 +171,7 @@ export type ArbitrageSettings = {
 
 export type ArbitrageFind = {
   albumDemand?: AlbumDemand;
+  albumPriceBenchmark?: AlbumPriceBenchmark;
   basketScenario?: {
     quantity: number;
     currency: string;
@@ -480,7 +482,14 @@ export type ArbitrageResearchProgress = {
 
 export type ArbitrageImportPayload = {
   researchProgress?: ArbitrageResearchProgress;
-  publicationMode?: "full" | "source_updates";
+  publicationMode?: "full" | "source_updates" | "evidence_updates";
+  evidenceUpdateVersion?: number;
+  evidenceUpdates?: {
+    scope: "album_price_benchmarks";
+    baseRunId: string;
+    updatedFindIds?: string[];
+    preparedAt?: string;
+  };
   sourceUpdateVersion?: number;
   sourceUpdates?: {
     version: 1;

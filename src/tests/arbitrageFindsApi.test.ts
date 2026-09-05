@@ -134,6 +134,61 @@ describe("arbitrage finds publication", () => {
     } });
   });
 
+  it("publishes immutable benchmark updates without refreshing retail or campaign observations and retries safely", async () => {
+    const now = Date.now();
+    const oldTime = new Date(now - 8 * 60 * 60 * 1000).toISOString();
+    await uploadArbitrageFinds(workspace, finalPayload({
+      runId: "benchmark-base", createdAt: oldTime,
+      finds: [productFind({ capturedAt: oldTime, averageSoldPrice: 22,
+        soldEvidence: { source: "ebay-product-research", status: "candidate", unitsSold90Days: 3 } }),
+        productFind({ id: "retained", capturedAt: oldTime })],
+      saleEvents: [saleEvent({ capturedAt: oldTime })],
+      sourceReports: [{ ...sourceReport("healthy"), verifiedAt: oldTime }],
+    }), "test-upload-token");
+    const read = await readLatestArbitrageFinds(workspace);
+    if (read.status !== "available") throw new Error("Baseline missing");
+    const baseline = read.payload;
+    const offer = baseline.finds.find((find) => find.id === "product")!;
+    const benchmark = albumBenchmark(new Date(now).toISOString());
+    const patch = finalPayload({
+      runId: "benchmark-patch", createdAt: new Date(now).toISOString(),
+      publicationMode: "evidence_updates", evidenceUpdateVersion: 1,
+      evidenceUpdates: { scope: "album_price_benchmarks", baseRunId: baseline.runId },
+      finds: [{ ...offer, albumPriceBenchmark: benchmark, averageSoldPrice: 999 }],
+      sourceReports: [], saleEvents: [], saleObservations: [],
+    });
+    const result = await uploadArbitrageFinds(workspace, patch, "test-upload-token");
+    expect(result).toMatchObject({ status: "published", runId: "benchmark-patch" });
+    const after = await readLatestArbitrageFinds(workspace);
+    if (after.status !== "available") throw new Error("Updated publication missing");
+    expect(after.payload.finds.map((find) => find.id)).toEqual(baseline.finds.map((find) => find.id));
+    expect(after.payload.finds.find((find) => find.id === "product")).toMatchObject({
+      capturedAt: oldTime, purchasePrice: offer.purchasePrice,
+      averageSoldPrice: offer.averageSoldPrice, soldEvidence: offer.soldEvidence,
+      albumPriceBenchmark: benchmark,
+    });
+    expect(after.payload.sourceReports).toEqual(baseline.sourceReports);
+    expect(after.payload.saleCampaignLedger).toEqual(baseline.saleCampaignLedger);
+    expect(after.payload.saleEvents).toEqual(baseline.saleEvents);
+    expect(after.payload.sourceUpdates).toMatchObject({ updatedSourceIds: [], lastBroadScanAt: oldTime });
+    expect(existsSync(join(workspace, "exports/arbitrage-finds/runs/benchmark-base/final.json"))).toBe(true);
+    await expect(uploadArbitrageFinds(workspace, patch, "test-upload-token")).resolves.toMatchObject({ status: "already-published" });
+    await expect(uploadArbitrageFinds(workspace, { ...patch, runId: "stale-patch", createdAt: new Date(now + 1000).toISOString() }, "test-upload-token")).rejects.toMatchObject({ statusCode: 409 });
+    expect((await readLatestArbitrageFinds(workspace))).toMatchObject({ payload: { runId: "benchmark-patch" } });
+  });
+
+  it("rejects a benchmark patch that changes acquisition evidence and leaves latest untouched", async () => {
+    const now = Date.now();
+    await uploadArbitrageFinds(workspace, finalPayload({ runId: "unchanged-base", createdAt: new Date(now - 10000).toISOString(), finds: [productFind()] }), "test-upload-token");
+    await expect(uploadArbitrageFinds(workspace, finalPayload({
+      runId: "spoofed-patch", createdAt: new Date(now).toISOString(), publicationMode: "evidence_updates", evidenceUpdateVersion: 1,
+      evidenceUpdates: { scope: "album_price_benchmarks", baseRunId: "unchanged-base" },
+      finds: [productFind({ capturedAt: new Date(now).toISOString(), albumPriceBenchmark: albumBenchmark(new Date(now).toISOString()) })],
+    }), "test-upload-token")).rejects.toMatchObject({ statusCode: 422 });
+    expect(await readLatestArbitrageFinds(workspace)).toMatchObject({ payload: { runId: "unchanged-base" } });
+    expect(existsSync(join(workspace, "exports/arbitrage-finds/runs/spoofed-patch/final.json"))).toBe(false);
+  });
+
   it("rejects draft, legacy, and unsafe run payloads", async () => {
     await expect(
       uploadArbitrageFinds(
@@ -854,6 +909,20 @@ function productFind(overrides: Record<string, unknown> = {}) {
     sourceUrl: "https://store.example/products/album",
     title: "Album",
     ...overrides,
+  };
+}
+
+function albumBenchmark(capturedAt: string) {
+  const end = Date.parse(capturedAt.slice(0, 10));
+  return {
+    version: 1, status: "observed", source: "ebay-product-research",
+    scope: "provisional_album_across_pressings", currency: "USD",
+    lowPrice: 10, highPrice: 30, weightedMeanPrice: 20, weightedMedianPrice: 20,
+    unitsSold1095Days: 12, listingCount: 2, capturedAt, query: "Artist Album",
+    url: "https://www.ebay.com/sh/research?keywords=Artist+Album&dayRange=1095&categoryId=176985&conditionId=1000&tabName=SOLD&marketplace=EBAY-US",
+    observedWindow: { startDate: new Date(end - 1095 * 86400000).toISOString().slice(0, 10), endDate: capturedAt.slice(0, 10) },
+    sampleComplete: false, unitCountBasis: "matched_captured_rows", priceBasis: "observed_listing_averages", shippingIncluded: false,
+    volumeSupported: true, sampleStatus: "volume_supported",
   };
 }
 

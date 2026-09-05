@@ -207,6 +207,10 @@ export function matchActiveListing(title, profile) {
   const reasons = [];
 
   if (matchedTitleTokens < requiredTitleMatches || !hasRequiredNumbers) reasons.push("release-title-mismatch");
+  // A one-word album named Blue/Red cannot borrow a color suffix from another
+  // release whose actual title precedes it ("Some Other Release Blue Vinyl").
+  if (expectedTitleTokens.length === 1 && COLORS.includes(expectedTitleTokens[0]) &&
+      searchTokens(normalizeResearchTitle(listingReleaseTitle), { preserveTitleWords: true })[0] !== expectedTitleTokens[0]) reasons.push("release-title-mismatch");
   if (expectedArtistTokens.length > 0 && artistCoverage < 0.5) reasons.push("artist-mismatch");
 
   const listingEdition = extractEditionIdentity(listingTitle, `${profile.artist} ${profile.title}`);

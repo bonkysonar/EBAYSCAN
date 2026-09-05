@@ -451,6 +451,77 @@ describe("arbitrage pages", () => {
     expect(container?.textContent).not.toContain("Evidence: BUY");
   });
 
+  it("fills the research queue with a provisional album range without creating a buy recommendation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-05T02:00:00.000Z"));
+    const find = { ...validatedBuyFind(), soldEvidence: {status:"pending"}, conservativeResalePrice:null, albumPriceBenchmark: albumBenchmark() };
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({status:"available",fileName:"album-benchmark.json",payload:{createdAt:now(),phase:"final",runId:"album-benchmark",sourceReports:[],finds:[find]}})));
+    await render(<RetailArbitrage />);
+    await selectResearchQueue();
+    const cell=container?.querySelector(".arbitrage-find-row .arbitrage-sold-value");
+    expect(cell?.textContent).toContain("$18.00–$32.00");
+    expect(cell?.textContent).toContain("Album benchmark · review pressing");
+    expect(cell?.textContent).toContain("24 observed copies · 3y");
+    expect(container?.textContent).toContain("shipping excluded");
+    expect(container?.textContent).toContain("Runtime Test Artist Runtime Test Album");
+    expect(container?.textContent).toContain("Window: 9/6/2023–9/5/2026");
+    expect(container?.querySelector<HTMLAnchorElement>(".arbitrage-album-benchmark a")?.href).toContain("conditionId=1000");
+    expect(container?.textContent).not.toContain("Evidence: BUY");
+  });
+
+  it("labels partial album captures and ten-copy samples without claiming total market volume", async () => {
+    const find = { ...validatedBuyFind(), soldEvidence: {status:"pending"}, conservativeResalePrice:null, albumPriceBenchmark: {...albumBenchmark(),unitsSold1095Days:10,sampleStatus:"thin_sample",volumeSupported:false,sampleComplete:false} };
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({status:"available",fileName:"album-benchmark.json",payload:{createdAt:now(),phase:"final",runId:"album-benchmark",sourceReports:[],finds:[find]}})));
+    await render(<RetailArbitrage />);
+    await selectResearchQueue();
+    expect(container?.textContent).toContain("At least 10 observed copies");
+    expect(container?.textContent).toContain("At least 10 new copies observed in eBay research");
+    expect(container?.textContent).not.toContain("No recorded album demand yet");
+    expect(container?.textContent).toContain("Exact sold evidence needed");
+    expect(container?.textContent).toContain("Thin sample · 10 or fewer copies");
+    expect(container?.textContent).toContain("Partial capture: counts and prices describe the captured matching rows");
+    expect(container?.textContent).not.toContain("Evidence: BUY");
+  });
+
+  it("acknowledges three observed album purchases when exact sold and supply checks are still missing", async () => {
+    const find = {
+      ...validatedBuyFind(), activeEvidence:undefined, soldEvidence:{status:"pending"}, conservativeResalePrice:null,
+      albumPriceBenchmark:{...albumBenchmark(),unitsSold1095Days:3,listingCount:2,sampleStatus:"thin_sample",volumeSupported:false},
+    };
+    vi.stubGlobal("fetch",vi.fn(async()=>jsonResponse({status:"available",fileName:"observed-album.json",payload:{createdAt:now(),phase:"final",runId:"observed-album",sourceReports:[],finds:[find]}})));
+    await render(<RetailArbitrage />);
+    await selectResearchQueue();
+    expect(container?.querySelector(".arbitrage-title")?.textContent).toContain("3 new copies observed in eBay research");
+    expect(container?.textContent).toContain("Observed album sales provide a price benchmark");
+    expect(container?.textContent).toContain("Exact sold + supply needed");
+    expect(container?.textContent).not.toContain("No recorded album demand yet");
+    expect(container?.textContent).not.toContain("lower research priority until purchases are verified");
+    expect(container?.textContent).not.toContain("sold-market research is still required");
+    expect(container?.textContent).not.toContain("Treat this as a research lead, not a value claim");
+    expect(container?.textContent).not.toContain("Evidence: BUY");
+  });
+
+  it("does not display an expired album range from a retained publication", async () => {
+    const find = { ...validatedBuyFind(), soldEvidence: {status:"pending"}, conservativeResalePrice:null, albumPriceBenchmark: {...albumBenchmark(),capturedAt:new Date(Date.now()-8*86400000).toISOString()} };
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({status:"available",fileName:"album-benchmark.json",payload:{createdAt:now(),phase:"final",runId:"album-benchmark",sourceReports:[],finds:[find]}})));
+    await render(<RetailArbitrage />);
+    await selectResearchQueue();
+    expect(container?.querySelector(".arbitrage-sold-value")?.textContent).toContain("Not researched");
+    expect(container?.textContent).not.toContain("$18.00–$32.00");
+  });
+
+  it("keeps the original broad-scan date when only album evidence was published", async () => {
+    const broadScan=new Date(Date.now()-2*86400000).toISOString();
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({status:"available",fileName:"album-evidence.json",payload:{
+      createdAt:now(),publishedAt:now(),phase:"final",runId:"album-evidence",sourceReports:[],finds:[validatedBuyFind()],publicationMode:"evidence_updates",
+      sourceUpdates:{version:1,updatedSourceIds:["runtime-store"],retainedSourceIds:[],lastBroadScanAt:broadScan,lastBroadAttemptAt:broadScan},
+    }})));
+    await render(<RetailArbitrage />);
+    expect(container?.querySelector(".arbitrage-run-strip")?.textContent).toContain("Broad scan 2d ago · Album evidence added 0m ago");
+    expect(container?.querySelector(".retail-scan-status")?.textContent).toContain("No retail source rescan");
+    expect(container?.querySelector(".retail-scan-status")?.textContent).not.toContain("1 sources updated");
+  });
+
   it("releases dismissal and outcome feedback when the retail offer price changes", async () => {
     let latestCalls = 0;
     vi.stubGlobal(
@@ -1200,6 +1271,26 @@ async function clickButton(label: string) {
     button?.click();
     await flushAsyncWork();
   });
+}
+
+async function selectResearchQueue() {
+  const queue=Array.from(container?.querySelectorAll("select")??[]).find(select=>Array.from(select.options).some(option=>option.value==="CANDIDATES"));
+  await act(async()=>{
+    if(queue){queue.value="CANDIDATES";queue.dispatchEvent(new Event("change",{bubbles:true}));await flushAsyncWork();}
+  });
+}
+
+function albumBenchmark() {
+  const capturedAt=now();
+  const endDate=capturedAt.slice(0,10);
+  const startDate=new Date(Date.parse(capturedAt)-1095*86400000).toISOString().slice(0,10);
+  return {
+    version:1,status:"observed",source:"ebay-product-research",scope:"provisional_album_across_pressings",currency:"USD",lowPrice:18,highPrice:32,weightedMeanPrice:24,weightedMedianPrice:22,
+    unitsSold1095Days:24,listingCount:4,capturedAt,query:"Runtime Test Artist Runtime Test Album",
+    url:"https://www.ebay.com/sh/research?keywords=Runtime+Test+Artist+Runtime+Test+Album&dayRange=1095&conditionId=1000&categoryId=176985&tabName=SOLD",
+    volumeSupported:true,sampleStatus:"volume_supported",sampleComplete:true,unitCountBasis:"matched_captured_rows",priceBasis:"observed_listing_averages",shippingIncluded:false,
+    observedWindow:{startDate,endDate},
+  };
 }
 
 async function flushAsyncWork() {

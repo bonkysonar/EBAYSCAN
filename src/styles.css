@@ -1648,7 +1648,7 @@ input[type="radio"] {
 
 .arbitrage-find-header {
   display: grid;
-  grid-template-columns: 112px minmax(250px, 1fr) 78px 94px 86px 92px 105px minmax(150px, 0.7fr);
+  grid-template-columns: 112px minmax(220px, 1fr) 78px 154px 86px 92px 105px minmax(150px, 0.7fr);
   gap: 0.45rem;
   align-items: center;
   padding: 0 0.45rem;
@@ -1672,7 +1672,7 @@ input[type="radio"] {
 
 .arbitrage-find-row {
   display: grid;
-  grid-template-columns: 112px minmax(250px, 1fr) 78px 94px 86px 92px 105px minmax(150px, 0.7fr);
+  grid-template-columns: 112px minmax(220px, 1fr) 78px 154px 86px 92px 105px minmax(150px, 0.7fr);
   gap: 0.45rem;
   align-items: center;
   width: 100%;
@@ -1741,6 +1741,27 @@ input[type="radio"] {
 .arbitrage-evidence-cell {
   display: grid;
   gap: 0.08rem;
+}
+
+.arbitrage-sold-value small {
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.arbitrage-album-benchmark {
+  border-left: 3px solid #b38a37;
+  padding-left: 0.8rem;
+}
+
+.arbitrage-benchmark-range {
+  margin: 0.35rem 0;
+  font-size: 1.5rem;
+  font-weight: 850;
+}
+
+.arbitrage-benchmark-range small {
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 
 .arbitrage-priority-cell {
@@ -3420,7 +3441,7 @@ input[type="radio"] {
 
   .arbitrage-find-header,
   .arbitrage-find-row {
-    grid-template-columns: 82px minmax(180px, 1fr) 76px 76px;
+    grid-template-columns: 82px minmax(180px, 1fr) 76px 150px;
   }
 
   .arbitrage-find-header .arbitrage-sort:nth-child(5),

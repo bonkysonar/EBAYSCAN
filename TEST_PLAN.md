@@ -232,3 +232,10 @@ Release verification, September 4, 2026: the fresh broad run attempted 127 sourc
 - Verify `Gábor Szabó Spellbinder` remains accented and omits Verve Vault Series in both freshly generated and previously stored searches.
 - Reproduce sale-only source updates against a productive prior catalog. Its catalog evidence and dates must survive; a real new catalog failure must remain visible.
 - Mock a stale regional mutable Blob response. Status and latest-pointer reads must return the immutable sibling selected by the current control-plane ETag, reject a mismatched sibling, preserve pointer concurrency, and allow only exact-byte immutable-write retries. Confirm operations GET/POST and latest GET in the deployed region after publication, not only locally.
+
+## Provisional album price and evidence publication regression
+
+- Run `npx vitest run src/tests/albumPriceBenchmark.test.ts src/tests/retailEvidenceUpdates.test.ts src/tests/arbitrageFindsApi.test.ts src/tests/arbitragePages.test.tsx`.
+- Confirm three-year New/Vinyl rows match the full artist and album across pressings, exclude other albums/CDs/lots, deduplicate observed rows, and expose a partial sample as a captured-count lower bound. Eleven units supports comparison; ten stays thin. These fields must not supply exact sold-evidence gates, resale economics, or BUY.
+- Prepare from the exact currently published final snapshot. Publish under a new immutable ID; confirm all product IDs, original retail capture dates, source reports, strict sold evidence, sale campaign ledger, and pending research counts survive. Only matching benchmark values may change. Repeating the identical publication succeeds idempotently; a stale baseline, changed acquisition identity, invalid range, or attempted new product must fail without changing latest.
+- In the browser, inspect the price column and expanded provisional details, including currency, shipping exclusion, actual three-year window, partial/full sample label, and captured unit count. Confirm exact pressing evidence remains separately labeled and the status describes an evidence update without implying a retailer rescan.

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
 import { retailEligibility } from "../../scripts/lib/retailIdentity.mjs";
 import { researchDemand } from "../../scripts/lib/albumDemand.mjs";
+import { normalizeAlbumPriceBenchmark } from "../../scripts/lib/albumPriceBenchmark.mjs";
 import {
   buildSoldResearchLinks,
   type SoldResearchLink,
@@ -56,6 +57,7 @@ type SortKey =
   | "price"
   | "priority"
   | "profit_rate"
+  | "sold_value"
   | "source"
   | "title"
   | "turn"
@@ -145,7 +147,7 @@ const sortableColumns: Array<{ key: SortKey; label: string }> = [
   { key: "priority", label: "Candidate" },
   { key: "title", label: "Record" },
   { key: "price", label: "Buy cost" },
-  { key: "profit_rate", label: "Profit / 30d" },
+  { key: "sold_value", label: "Sold value" },
   { key: "turn", label: "Est. turn" },
   { key: "velocity", label: "Sales pace" },
   { key: "long_term_supply", label: "Supply" },
@@ -191,7 +193,16 @@ export function RetailArbitrage() {
       hasAuthoritativeLatest
         ? finds
             .filter(isIndividualRecordFind)
-            .map((find) => evaluateOpportunity(find, settings, evaluationNow))
+            .map((find) => evaluateOpportunity(
+              {
+                ...find,
+                albumPriceBenchmark: normalizeAlbumPriceBenchmark(
+                  find.albumPriceBenchmark, evaluationNow,
+                ),
+              },
+              settings,
+              evaluationNow,
+            ))
         : [],
     [evaluationNow, finds, hasAuthoritativeLatest, settings],
   );
@@ -497,7 +508,7 @@ export function RetailArbitrage() {
             <strong>{latestPayload?.runId ?? "No run loaded"}</strong>
             <span>
               {latestPayload
-                ? `Scanned ${formatAge(latestPayload.createdAt)}`
+                ? scanTimingLabel(latestPayload)
                 : "Waiting for scan data"}
             </span>
           </div>
@@ -673,14 +684,7 @@ export function RetailArbitrage() {
                     <strong>
                       {sourceMoney(find.purchasePrice, find.sourceCurrency)}
                     </strong>
-                    <span
-                      className={`arbitrage-metric-cell ${profitClass(find.profitPer30Days)}`}
-                    >
-                      <strong>{nullableMoney(find.profitPer30Days)}</strong>
-                      <small>
-                        {nullableMoney(find.expectedNetProfit)} total
-                      </small>
-                    </span>
+                    <SoldValueCell find={find} />
                     <span className="arbitrage-metric-cell">
                       <strong>{turnLabel(find.estimatedDaysToSell)}</strong>
                       <small>
@@ -880,6 +884,83 @@ export function RetailArbitrage() {
   );
 }
 
+function SoldValueCell({ find }: { find: ArbitrageScoredFind }) {
+  const benchmark = find.albumPriceBenchmark;
+  if (!benchmark) {
+    return (
+      <span className="arbitrage-metric-cell arbitrage-sold-value">
+        <strong>
+          {find.gates.soldEvidence
+            ? nullableMoney(find.averageSoldPrice ?? find.costLedger.expectedResalePrice)
+            : "Not researched"}
+        </strong>
+        <small>
+          {find.gates.soldEvidence ? "Matched sold evidence" : "Album sold value needed"}
+        </small>
+      </span>
+    );
+  }
+  return (
+    <span className="arbitrage-metric-cell arbitrage-sold-value">
+      <strong>{money(benchmark.lowPrice)}–{money(benchmark.highPrice)}</strong>
+      <small>Album benchmark · review pressing</small>
+      <small>
+        {benchmark.sampleComplete ? "" : "At least "}
+        {count(benchmark.unitsSold1095Days)} observed copies · 3y
+      </small>
+      <small>
+        {benchmark.sampleStatus === "thin_sample"
+          ? "Thin sample · 10 or fewer copies"
+          : "Volume supported"}
+      </small>
+    </span>
+  );
+}
+
+function AlbumBenchmarkDetail({ find }: { find: ArbitrageScoredFind }) {
+  const benchmark = find.albumPriceBenchmark;
+  if (!benchmark) return null;
+  return (
+    <section className="arbitrage-detail-section arbitrage-album-benchmark">
+      <h3>Album benchmark · review pressing</h3>
+      <p className="arbitrage-benchmark-range">
+        {money(benchmark.lowPrice)}–{money(benchmark.highPrice)} <small>USD</small>
+      </p>
+      <p>
+        Observed listing-average range for new vinyl across pressings.
+        Item price only; shipping excluded.
+      </p>
+      <dl className="arbitrage-metrics">
+        <Metric
+          label="Observed copies over 3 years"
+          value={`${benchmark.sampleComplete ? "" : "At least "}${count(benchmark.unitsSold1095Days)}`}
+        />
+        <Metric label="Captured listing rows" value={count(benchmark.listingCount)} />
+        <Metric label="Weighted median item price" value={money(benchmark.weightedMedianPrice)} />
+        <Metric
+          label="Sample"
+          value={benchmark.sampleStatus === "thin_sample"
+            ? "Thin sample · 10 or fewer copies"
+            : "More than 10 observed copies"}
+        />
+      </dl>
+      {!benchmark.sampleComplete ? (
+        <p className="muted">Partial capture: counts and prices describe the captured matching rows.</p>
+      ) : null}
+      <p className="muted">
+        Use this range to decide whether to research the offer. Pressing, fees
+        and current retail availability still need review before buying.
+      </p>
+      <p>Research query: <code>{benchmark.query}</code></p>
+      <p className="muted">
+        Window: {new Date(benchmark.observedWindow.startDate).toLocaleDateString(undefined, {timeZone: "UTC"})}–{new Date(benchmark.observedWindow.endDate).toLocaleDateString(undefined, {timeZone: "UTC"})}
+        {" · "}Observed {new Date(benchmark.capturedAt).toLocaleString()}
+      </p>
+      <a href={benchmark.url} target="_blank" rel="noreferrer">Open album Product Research</a>
+    </section>
+  );
+}
+
 function FindDetail({
   find,
   onDismiss,
@@ -945,11 +1026,15 @@ function FindDetail({
             Remaining check: {check}
           </p>
         ))}
-        <p className="muted">{candidateTierDescription(find.candidateTier)}</p>
+        <p className="muted">{candidateTierDescription(find.candidateTier, Boolean(find.albumPriceBenchmark))}</p>
         <p>{albumDemandLabel(find)}</p>
         <ul className="arbitrage-reasons">
           {find.candidateReasons.map((reason) => (
-            <li key={reason}>{reason}</li>
+            <li key={reason}>
+              {find.albumPriceBenchmark && reason === "Treat this as a research lead, not a value claim."
+                ? "Observed album sales provide provisional value context; pressing-specific economics still need review."
+                : reason}
+            </li>
           ))}
         </ul>
         <div className="seller-detail-actions arbitrage-links">
@@ -958,6 +1043,8 @@ function FindDetail({
           </a>
         </div>
       </section>
+
+      {find.albumPriceBenchmark ? <AlbumBenchmarkDetail find={find} /> : null}
 
       <div className="arbitrage-buy-callout">
         <div>
@@ -1635,6 +1722,8 @@ function sortValue(
 ): number | string {
   if (sortKey === "priority") return priorityRank(find);
   if (sortKey === "price") return find.purchasePrice;
+  if (sortKey === "sold_value") return find.albumPriceBenchmark?.weightedMedianPrice ??
+    (find.gates.soldEvidence ? find.averageSoldPrice ?? find.costLedger.expectedResalePrice : null) ?? Number.NEGATIVE_INFINITY;
   if (sortKey === "profit_rate")
     return find.profitPer30Days ?? Number.NEGATIVE_INFINITY;
   if (sortKey === "turn")
@@ -1651,6 +1740,16 @@ function sortValue(
   if (sortKey === "source") return purchaseRetailerLabel(find).toLowerCase();
   if (sortKey === "title") return displayRecordTitle(find).toLowerCase();
   return Number.NEGATIVE_INFINITY;
+}
+
+function scanTimingLabel(payload: ArbitrageImportPayload): string {
+  if (payload.publicationMode === "evidence_updates" || payload.publicationMode === "source_updates") {
+    const broad = payload.sourceUpdates?.lastBroadScanAt;
+    const scan = broad ? `Broad scan ${formatAge(broad)}` : "Broad scan time unavailable";
+    const update = payload.publicationMode === "evidence_updates" ? "Album evidence added" : "Sources updated";
+    return `${scan} · ${update} ${formatAge(payload.createdAt)}`;
+  }
+  return `Scanned ${formatAge(payload.createdAt)}`;
 }
 
 function defaultSortDirection(sortKey: SortKey): SortDirection {
@@ -1888,11 +1987,11 @@ function evidenceStatusLabel(find: ArbitrageScoredFind): string {
     find.ebayResearchStatus === "failed" ||
     find.ebayActiveSearchStatus === "failed"
   )
-    return "Evidence failed";
-  if (find.ebayResearchStatus === "no_rows") return "No sold matches";
+    return find.albumPriceBenchmark ? "Exact evidence failed" : "Evidence failed";
+  if (find.ebayResearchStatus === "no_rows") return find.albumPriceBenchmark ? "No exact sold matches" : "No sold matches";
   if (!find.gates.soldEvidence && !find.gates.activeEvidence)
-    return "Sold + supply needed";
-  if (!find.gates.soldEvidence) return "Sold evidence needed";
+    return find.albumPriceBenchmark ? "Exact sold + supply needed" : "Sold + supply needed";
+  if (!find.gates.soldEvidence) return find.albumPriceBenchmark ? "Exact sold evidence needed" : "Sold evidence needed";
   if (!find.gates.activeEvidence) return "Exact supply needed";
   return "Match review needed";
 }
@@ -1919,6 +2018,14 @@ function albumDemandLabel(find: ArbitrageScoredFind, compact = false): string {
   // existing exact sold evidence must not be described as no recorded demand.
   if (find.gates.soldEvidence)
     return "Purchased before · matching sold evidence recorded";
+  if (find.albumPriceBenchmark) {
+    const benchmark = find.albumPriceBenchmark;
+    const copies = `${benchmark.unitsSold1095Days.toLocaleString()} new ${benchmark.unitsSold1095Days === 1 ? "copy" : "copies"}`;
+    const observed = `${benchmark.sampleComplete ? "" : "At least "}${copies} observed in eBay research`;
+    return compact
+      ? observed
+      : `${observed} over 3 years across pressings. These purchases support the album benchmark; exact pressing evidence is checked separately.`;
+  }
   return compact
     ? "No recorded album demand yet"
     : "No recorded album demand yet. This release has lower research priority until purchases are verified.";
@@ -1982,13 +2089,16 @@ function candidateTierLabel(
 
 function candidateTierDescription(
   tier: ArbitrageScoredFind["candidateTier"],
+  hasAlbumBenchmark = false,
 ): string {
   if (tier === "A")
     return "Fresh exact demand, supply, identity, offer, and full-cost economics all passed.";
   if (tier === "B")
     return "Product-level demand and deal signals are promising, but at least one automatic evidence gate still needs confirmation.";
   if (tier === "C")
-    return "This is a real record offer with a direct purchase path; sold-market research is still required before calling it a deal.";
+    return hasAlbumBenchmark
+      ? "Observed album sales provide a price benchmark; review the pressing, current offer and net margin before calling this a deal."
+      : "This is a real record offer with a direct purchase path; sold-market research is still required before calling it a deal.";
   if (tier === "WATCH")
     return "The record has useful evidence, but the current source price is not yet attractive enough.";
   return "Validated evidence or an explicit preference rules this offer out.";
@@ -2071,11 +2181,6 @@ function isNegativeRecordOutcome(outcome?: RecordOutcome): boolean {
     outcome === "not_for_me" ||
     outcome === "too_slow"
   );
-}
-
-function profitClass(value: number | null): string {
-  if (value === null) return "";
-  return value >= 10 ? "positive-value" : value < 0 ? "negative-value" : "";
 }
 
 function humanize(value: string): string {
