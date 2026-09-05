@@ -3,6 +3,7 @@ import { parseProductResearchRow } from "./productResearchCuration.mjs";
 
 const DAY = 86_400_000;
 const SCOPE = "provisional_album_across_pressings";
+const PARENTHETICAL_GENRE = /\(\s*(?:rock|pop|jazz|blues|soul|funk|disco|reggae|punk|metal|folk|country|classical|electronic|hip[- ]hop|r\s*&\s*b)\s*\)/gi;
 const NON_ALBUM = /\b(?:cds?|compact\s+discs?|cassettes?|dvds?|blu[- ]?ray|lots?|bundles?|poster|magazine|t[- ]?shirt|signed\s+photo|cover\s+only|sleeve\s+only|karaoke|tribute)\b/i;
 const METADATA = new Set("a an the and by with on of for from in at new sealed brand factory shrink shrinkwrap vinyl lp lps record records album ed ltd lmtd edition limited deluxe anniversary remaster remastered rmst reissue repress pressing press original mono stereo analog analogue digital audiophile gram grams g gm rpm inch inches gatefold sleeve cover jacket obi import imported export uk us usa japan japanese germany german europe european eu holland netherlands france french canada canadian numbered num no bonus track tracks soundtrack ost explicit parental advisory blue red green yellow orange pink purple black white clear translucent transparent opaque colored coloured color colour splatter swirl smoke smoky marbled marble galaxy neon ghostly apple tangerine amber ruby coral cream bone grey gray silver gold golden brown teal navy aqua aquamarine turquoise violet lavender magenta burgundy burgandy tan sand beige platinum pearl crystal cloudy milky baby royal light dark sea coke bottle half halfspeed speed master mastered cut etched etching picture disc discs exclusive exclusivepress rsd bf recordstoreday store day blackfriday friday essential essentials classic series verve vault mofi mfsl mobile fidelity music matters tone poet productions acoustic sounds universal capitol columbia warner atlantic geffen reprise rhino def jam craft bluenote prestige riverside impulse decca emi sony mercury rca polydor epic recordlabel recordslabel vmp club subscription release re released anniversaryedition reissued mint unplayed unopened condition free shipping ship ships sealednew authentic genuine official promo promotional test hype sticker stickers w booklet insert inserts download mp3 voucher code made printed mastered direct metal mastering dmm lacquers lacquer recut recuts anniversaryremaster box boxset set best seller sale special editionexclusive collectible collectable rare audiophilequality anniversaryreissue vinylnew vinylrecord vinylexclusive".split(" "));
 
@@ -125,7 +126,11 @@ function albumRowMatches(candidate, title) {
     albumQuery = buildSoldResearchQueryVariants({ artist: "", title: heading[2] })[0]?.query;
   }
   const album = words(albumQuery).filter((word, index) => !(index === 0 && word === "the"));
-  const row = words(title);
+  const withoutGenreLabels = words(title.replace(PARENTHETICAL_GENRE, " "));
+  // Only discard standalone parenthetical labels when the album and artist survive.
+  // A release actually named Jazz or Rock still needs those words as its identity.
+  const row = phraseAt(withoutGenreLabels, album) >= 0 && artist.every((word) => withoutGenreLabels.includes(word))
+    ? withoutGenreLabels : words(title);
   if (!artist.length || !album.length) return false;
   let artistAt = phraseAt(row, artist);
   let artistWords = artist;
