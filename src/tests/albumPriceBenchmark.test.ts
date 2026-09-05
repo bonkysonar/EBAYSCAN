@@ -33,6 +33,27 @@ describe("provisional album price benchmarks", () => {
     const cells = [", preview full size image Artist Name - Actual Album (Vinyl)", "Edit", "$14.55 Fixed price", "$5.07", "9", "$130.95", "-", "Oct 15, 2024"];
     expect(createAlbumPriceBenchmarkIndex({ ...captures, pages: [{ ...page, rows: [{ cells, href: null }, { cells, href: null }] }] }, now).match(candidate)).toMatchObject({ lowPrice: 14.55, unitsSold1095Days: 9, listingCount: 1 });
   });
+  it("accepts a standalone parenthetical genre in the observed Beach Boys row without accepting other releases", () => {
+    const query = "The Beach Boys L. A. Light Album";
+    const cells = [", preview full size image\nBEACH BOYS l a / light album ( rock ) SEALED NEW", "Edit", "$17.15\nFixed price", "$7.38\n0% Free shipping", "1", "$17.15", "-", "Jun 25, 2025"];
+    const badTitles = [
+      "BEACH BOYS l a / light album rock SEALED NEW",
+      "BEACH BOYS l a / light album II (rock) SEALED NEW",
+      "BEACH BOYS l a / light album (Live Rock) SEALED NEW",
+      "BEACH BOYS Different Album (rock) SEALED NEW",
+      "OTHER BAND l a / light album (rock) SEALED NEW",
+      "BEACH BOYS l a / light album (rock) CD SEALED NEW",
+    ];
+    const p = { ...page, query, url: url.replace("Artist+Name+Actual+Album", encodeURIComponent(query)), rows: [
+      { cells, href: null }, ...badTitles.map(title => ({ ...row, title, avgSoldPrice: 999, totalSold: 100 })),
+    ] };
+    expect(createAlbumPriceBenchmarkIndex({ ...captures, pages: [p] }, now).match({ artist: "The Beach Boys", title: "L. A. Light Album LP" })).toMatchObject({ lowPrice: 17.15, highPrice: 17.15, unitsSold1095Days: 1, listingCount: 1, sampleStatus: "thin_sample" });
+  });
+  it("preserves a genre word when it is the album title", () => {
+    const query = "Queen Jazz";
+    const p = { ...page, query, url: url.replace("Artist+Name+Actual+Album", encodeURIComponent(query)), rows: [{ ...row, title: "Queen (Jazz) New Vinyl LP" }, { ...row, title: "Queen News Of The World (Jazz) New Vinyl LP", totalSold: 100 }] };
+    expect(createAlbumPriceBenchmarkIndex({ ...captures, pages: [p] }, now).match({ artist: "Queen", title: "Jazz LP" })).toMatchObject({ unitsSold1095Days: 8, listingCount: 1 });
+  });
   it("deduplicates linked listings across tracking URLs and rejects invalid dates/foreign item links", () => {
     const item = { ...row, itemUrl: "https://www.ebay.com/itm/123456789012" };
     const rows = [item, { ...item, itemUrl: `${item.itemUrl}?tracking=1` }, { ...row, dateLastSold: "2022-01-01" }, { ...row, dateLastSold: "2026-09-06" }, { ...row, itemUrl: "https://example.com/itm/123456789012" }];
@@ -81,5 +102,26 @@ describe("provisional album price benchmarks", () => {
       { ...row, title: 'LIL WAYNE THA CARTER III VINYL NEW LIMITED RED LP LOLLIPOP GOT MONEY', totalSold: 100 },
     ] };
     expect(createAlbumPriceBenchmarkIndex({ ...captures, pages: [p] }, now).match({ artist: "Lil Wayne", title: 'Lollipop 7" (RepublicRecords.com Exclusive)' })).toMatchObject({ unitsSold1095Days: 11, listingCount: 2 });
+  });
+
+  it("allows observed ten-inch releases for unspecified retailer diameters while retaining explicit size and seven-inch conflicts", () => {
+    const tenInch = { ...row, title: 'Artist Name Actual Album Limited Edition 10" IN HAND' };
+    const indexFor = (soldTitle: string) => createAlbumPriceBenchmarkIndex({ ...captures, pages: [{ ...page, rows: [{ ...tenInch, title: soldTitle }] }] }, now);
+    const index = indexFor(tenInch.title);
+    expect(index.match({ ...candidate, title: "Actual Album Limited Edition LP", recordFormat: "LP" })).toMatchObject({ lowPrice: 20, unitsSold1095Days: 8, scope: "provisional_album_across_pressings" });
+    expect(index.match({ ...candidate, title: 'Actual Album 12" LP' })).toBeUndefined();
+    expect(index.match({ ...candidate, recordFormat: "12 inch" })).toBeUndefined();
+    expect(index.match({ ...candidate, title: 'Actual Album 7"' })).toBeUndefined();
+    expect(indexFor('Artist Name Actual Album 7" Single').match(candidate)).toBeUndefined();
+    expect(indexFor('Artist Name Actual Album Single').match(candidate)).toBeUndefined();
+    expect(indexFor('Artist Name Actual Album 12" LP').match({ ...candidate, title: 'Actual Album 10"' })).toBeUndefined();
+    expect(indexFor('Artist Name Actual Album 10" Single').match(candidate)).toMatchObject({ unitsSold1095Days: 8 });
+    expect(indexFor('Artist Name Different Album 10" IN HAND').match(candidate)).toBeUndefined();
+  });
+
+  it("preserves In Hand when it belongs to the actual album title", () => {
+    const query = "Artist Name In Hand";
+    const p = { ...page, query, url: url.replace("Artist+Name+Actual+Album", encodeURIComponent(query)), rows: [{ ...row, title: "Artist Name In Hand Vinyl LP" }, { ...row, title: "Artist Name Other Album Vinyl LP IN HAND", totalSold: 100 }] };
+    expect(createAlbumPriceBenchmarkIndex({ ...captures, pages: [p] }, now).match({ artist: "Artist Name", title: "In Hand LP" })).toMatchObject({ unitsSold1095Days: 8, listingCount: 1 });
   });
 });

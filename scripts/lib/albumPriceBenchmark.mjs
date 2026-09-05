@@ -3,6 +3,7 @@ import { parseProductResearchRow } from "./productResearchCuration.mjs";
 
 const DAY = 86_400_000;
 const SCOPE = "provisional_album_across_pressings";
+const PARENTHETICAL_GENRE = /\(\s*(?:rock|pop|jazz|blues|soul|funk|disco|reggae|punk|metal|folk|country|classical|electronic|hip[- ]hop|r\s*&\s*b)\s*\)/gi;
 const NON_ALBUM = /\b(?:cds?|compact\s+discs?|cassettes?|dvds?|blu[- ]?ray|lots?|bundles?|poster|magazine|t[- ]?shirt|signed\s+photo|cover\s+only|sleeve\s+only|karaoke|tribute)\b/i;
 const METADATA = new Set("a an the and by with on of for from in at new sealed brand factory shrink shrinkwrap vinyl lp lps record records album ed ltd lmtd edition limited deluxe anniversary remaster remastered rmst reissue repress pressing press original mono stereo analog analogue digital audiophile gram grams g gm rpm inch inches gatefold sleeve cover jacket obi import imported export uk us usa japan japanese germany german europe european eu holland netherlands france french canada canadian numbered num no bonus track tracks soundtrack ost explicit parental advisory blue red green yellow orange pink purple black white clear translucent transparent opaque colored coloured color colour splatter swirl smoke smoky marbled marble galaxy neon ghostly apple tangerine amber ruby coral cream bone grey gray silver gold golden brown teal navy aqua aquamarine turquoise violet lavender magenta burgundy burgandy tan sand beige platinum pearl crystal cloudy milky baby royal light dark sea coke bottle half halfspeed speed master mastered cut etched etching picture disc discs exclusive exclusivepress rsd bf recordstoreday store day blackfriday friday essential essentials classic series verve vault mofi mfsl mobile fidelity music matters tone poet productions acoustic sounds universal capitol columbia warner atlantic geffen reprise rhino def jam craft bluenote prestige riverside impulse decca emi sony mercury rca polydor epic recordlabel recordslabel vmp club subscription release re released anniversaryedition reissued mint unplayed unopened condition free shipping ship ships sealednew authentic genuine official promo promotional test hype sticker stickers w booklet insert inserts download mp3 voucher code made printed mastered direct metal mastering dmm lacquers lacquer recut recuts anniversaryremaster box boxset set best seller sale special editionexclusive collectible collectable rare audiophilequality anniversaryreissue vinylnew vinylrecord vinylexclusive".split(" "));
 
@@ -125,7 +126,11 @@ function albumRowMatches(candidate, title) {
     albumQuery = buildSoldResearchQueryVariants({ artist: "", title: heading[2] })[0]?.query;
   }
   const album = words(albumQuery).filter((word, index) => !(index === 0 && word === "the"));
-  const row = words(title);
+  const withoutGenreLabels = words(title.replace(PARENTHETICAL_GENRE, " "));
+  // Only discard standalone parenthetical labels when the album and artist survive.
+  // A release actually named Jazz or Rock still needs those words as its identity.
+  const row = phraseAt(withoutGenreLabels, album) >= 0 && artist.every((word) => withoutGenreLabels.includes(word))
+    ? withoutGenreLabels : words(title);
   if (!artist.length || !album.length) return false;
   let artistAt = phraseAt(row, artist);
   let artistWords = artist;
@@ -139,18 +144,20 @@ function albumRowMatches(candidate, title) {
     const ensembleAt = phraseAt(remainder, ensemble);
     if (ensembleAt >= 0) remainder = [...remainder.slice(0, ensembleAt), ...remainder.slice(ensembleAt + ensemble.length)];
   }
+  const candidateDiameter = /\b(7|10|12)\s*(?:[- ]?inch|["”])/i.exec(`${candidate.title ?? ""} ${candidate.sourceListingTitle ?? ""} ${candidate.shopifyVariantTitle ?? ""} ${candidate.recordFormat ?? ""}`)?.[1];
+  const rowDiameter = /\b(7|10|12)\s*(?:[- ]?inch|["”])/i.exec(title)?.[1];
+  if (rowDiameter && ((candidateDiameter && candidateDiameter !== rowDiameter) || (rowDiameter === "7" && candidateDiameter !== "7"))) return false;
+  const candidateSmallFormat = candidateDiameter === "7" || candidateDiameter === "10";
+  const comparableTenInch = !candidateDiameter && rowDiameter === "10";
   const albumAt = phraseAt(remainder, album);
   if (albumAt < 0) {
     if (artist.join(" ") !== album.join(" ")) return false;
     const selfTitled = /\bself[- ]?titled\b|\bs\s*\/\s*t\b/i.test(title);
     return selfTitled || remainder.every((token) => /^(?:new|sealed|vinyl|lp|record|records|original|remaster(?:ed)?|reissue|mono|stereo|gram|grams|g|factory|brand|gatefold|\d+(?:g|gm|lp)?)$/.test(token));
   }
-  const candidateSmallFormat = /\b(7|10)\s*(?:[- ]?inch|["”])/i.exec(`${candidate.title ?? ""} ${candidate.sourceListingTitle ?? ""} ${candidate.shopifyVariantTitle ?? ""}`)?.[1];
-  const rowSmallFormat = /\b(7|10)\s*(?:[- ]?inch|["”])/i.exec(title)?.[1];
-  if (rowSmallFormat && candidateSmallFormat !== rowSmallFormat) return false;
   const extra = [...remainder.slice(0, albumAt), ...remainder.slice(albumAt + album.length)]
-    .join(" ").replace(/\b(?:blue note|mobile fidelity|analogue productions|music matters|tone poet|classic records|verve vault|record store day|black friday|half speed|bonus tracks?|cash money records?|young money entertainment)\b/g, " ");
-  return extra.split(/\s+/).filter(Boolean).every((token) => METADATA.has(token) || (candidateSmallFormat && token === "single") || /^\d+(?:st|nd|rd|th|g|gm|gram|rpm|lp|x)?$/.test(token));
+    .join(" ").replace(/\b(?:blue note|mobile fidelity|analogue productions|music matters|tone poet|classic records|verve vault|record store day|black friday|half speed|bonus tracks?|cash money records?|young money entertainment|in hand)\b/g, " ");
+  return extra.split(/\s+/).filter(Boolean).every((token) => METADATA.has(token) || ((candidateSmallFormat || comparableTenInch) && token === "single") || /^\d+(?:st|nd|rd|th|g|gm|gram|rpm|lp|x)?$/.test(token));
 }
 
 function phraseAt(words, phrase) { return words.findIndex((_, index) => phrase.every((word, offset) => words[index + offset] === word)); }
