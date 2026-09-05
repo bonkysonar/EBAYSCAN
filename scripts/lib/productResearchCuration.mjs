@@ -293,13 +293,13 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
     return 0;
 
   const originalCandidateText = cleanText(
-    `${find.artist ?? ""} ${find.title ?? ""} ${find.sourceListingTitle ?? ""}`,
+    `${find.artist ?? ""} ${find.title ?? ""} ${find.sourceListingTitle ?? ""} ${find.shopifyVariantTitle || find.variantTitle || ""}`,
   );
   if (hasIncompatibleRecordFormat(originalCandidateText, rowTitle)) return 0;
   if (hasUnconfirmedPressing(originalCandidateText, rowTitle)) return 0;
   const releaseName = `${find.artist ?? ""} ${normalizeCanonicalResearchTitle(find.title ?? "")}`;
   const candidateEdition = extractEditionIdentity(
-    `${find.sourceListingTitle || releaseName} ${find.variantTitle || ""}`, releaseName,
+    `${find.sourceListingTitle || releaseName} ${find.shopifyVariantTitle || find.variantTitle || ""}`, releaseName,
   );
   const rowEdition = extractEditionIdentity(rowTitle, releaseName);
   const candidateColors = candidateEdition.colors.filter((color) => color !== "black");

@@ -77,6 +77,20 @@ describe("active eBay edition matching", () => {
     expect(buildActiveSearchProfile(findFor("Herbie Hancock - Maiden Voyage (Blue Note Essential Vinyl Series) LP"))?.edition.colors).toEqual([]);
   });
 
+  it("distinguishes Ghostly Blue from generic Blue and Sea Blue Smoke without changing release keywords", () => {
+    const find = { ...findFor("Thrice - Identity Crisis (25th Anniversary Edition)"), artist: "Thrice", title: "Identity Crisis (25th Anniversary Edition)", identityStatus: "resolved" as const, shopifyVariantTitle: "LP - Ghostly Blue" };
+    const profile = buildActiveSearchProfile(find)!;
+    expect(profile.primary).toBe("Thrice Identity Crisis");
+    expect(profile.edition.colors).toEqual(expect.arrayContaining(["blue", "ghostly blue"]));
+    expect(matchActiveListing("Thrice Identity Crisis Anniversary Blue Colored Vinyl LP", profile).matched).toBe(false);
+    expect(matchActiveListing("Thrice Identity Crisis Anniversary Sea Blue Smoke Vinyl LP", profile).matched).toBe(false);
+    expect(matchActiveListing("Thrice Identity Crisis Anniversary Ghostly Blue Vinyl LP", profile).matched).toBe(true);
+    expect(matchActiveListing("Thrice Identity Crisis Anniversary Ghostly-Blue Vinyl LP", profile).matched).toBe(true);
+    const genericBlue = buildActiveSearchProfile({ ...find, shopifyVariantTitle: "Blue LP" })!;
+    expect(matchActiveListing("Thrice Identity Crisis Anniversary Ghostly Blue Vinyl LP", genericBlue).matched).toBe(false);
+    expect(buildActiveSearchProfile(findFor("Ghostly Blue - A Real Album Vinyl LP"))?.edition.colors).toEqual([]);
+  });
+
   it("carries the purchase item identity so its own listing can be excluded", () => {
     const find = {
       ...findFor("Artist - Great Escape Vinyl LP"),

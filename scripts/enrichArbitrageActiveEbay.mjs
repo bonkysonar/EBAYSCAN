@@ -18,7 +18,7 @@ const DEFAULT_MAX_SEARCH_PAGES = 2;
 const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_MAX_QUERIES = 100;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
-export const ACTIVE_MATCHING_VERSION = 2;
+export const ACTIVE_MATCHING_VERSION = 3;
 
 const args = new Map(
   process.argv

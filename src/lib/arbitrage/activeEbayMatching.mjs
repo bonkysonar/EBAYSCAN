@@ -38,6 +38,7 @@ const COLORS = [
   "coral",
   "cream",
   "cyan",
+  "ghostly blue",
   "gold",
   "gray",
   "green",
@@ -332,7 +333,8 @@ function compareEditionIdentity(expected, actual) {
     else {
       if (
         expectedChromaticColors.length > 0 &&
-        !expectedChromaticColors.every((color) => actualChromaticColors.includes(color))
+        (!expectedChromaticColors.every((color) => actualChromaticColors.includes(color)) ||
+          actualChromaticColors.some((color) => !expectedChromaticColors.includes(color)))
       ) {
         reasons.push("edition-color-conflict");
       }
@@ -370,7 +372,7 @@ function extractColors(text) {
   }
   const colors = [];
   for (const color of COLORS) {
-    const pattern = new RegExp(`\\b${escapeRegExp(color).replace(/\\ /g, "\\\\s+")}\\b`, "i");
+    const pattern = new RegExp(`\\b${escapeRegExp(color).replace(/\s+/g, "[\\s-]+")}\\b`, "i");
     if (pattern.test(text)) colors.push(color);
   }
   return [...new Set(colors)];
@@ -471,7 +473,7 @@ function escapeRegExp(value) {
 
 function countPhrase(value, phrase) {
   if (!value || !phrase) return 0;
-  const pattern = new RegExp(`\\b${escapeRegExp(phrase).replace(/\\ /g, "\\\\s+")}\\b`, "gi");
+  const pattern = new RegExp(`\\b${escapeRegExp(phrase).replace(/\s+/g, "[\\s-]+")}\\b`, "gi");
   return [...value.matchAll(pattern)].length;
 }
 

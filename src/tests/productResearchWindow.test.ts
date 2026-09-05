@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { curateResearchForFind, parseProductResearchRow, productResearchRowMatchScore, researchVariants } from "../../scripts/lib/productResearchCuration.mjs";
 import { mergeResearchSoldEvidence, verifiedWindowSales } from "../../scripts/lib/soldResearchWindow.mjs";
+import { createMarketplaceAlbumDemandIndex } from "../../scripts/lib/marketplaceAlbumDemand.mjs";
 
 const now = new Date("2026-09-05T01:00:00Z");
 const find = {id:"find-test",artist:"Example Artist",title:"An Actual Album",sourceListingTitle:"Example Artist - An Actual Album LP",purchasePrice:10};
@@ -10,6 +11,18 @@ const run = {query:"Example Artist An Actual Album",url:"https://www.ebay.com/sh
 describe("observed sold research windows", () => {
   it("uses the album title instead of the longer retail listing for research", () => {
     expect(researchVariants({artist:"Thrice",title:"Identity Crisis (25th Anniversary Edition)",sourceListingTitle:"Thrice - Identity Crisis (25th Anniversary Edition) LP - Ghostly Blue",purchasePrice:9.99})).toEqual(["Thrice Identity Crisis"]);
+  });
+  it("keeps generic-blue Thrice purchases as album demand while counting only explicit Ghostly Blue as exact sold evidence", () => {
+    const candidate = { ...find, artist: "Thrice", title: "Identity Crisis (25th Anniversary Edition)", sourceListingTitle: "Thrice - Identity Crisis (25th Anniversary Edition)", shopifyVariantTitle: "LP - Ghostly Blue" };
+    const capturedRun = { ...run, query: "Thrice Identity Crisis", url: `${run.url}&keywords=Thrice+Identity+Crisis`, rows: [
+      { ...row, title: "Thrice - Identity Crisis [New Vinyl LP] Blue, Colored Vinyl, Ltd Ed, Anniversary", avgSoldPrice: 32.49, totalSold: 2 },
+      { ...row, title: "Thrice Identity Crisis 25th Anniversary Limited Ghostly Blue LP Vinyl", avgSoldPrice: 26, totalSold: 1, itemUrl: "https://www.ebay.com/itm/123456789013" },
+    ] };
+    const result = curateResearchForFind(candidate, { entries: [{ findId: candidate.id, runs: [capturedRun] }] }, now);
+    expect(result).toMatchObject({ status: "validated", averageSoldPrice: 26, sales90Days: 1, totalSoldCount: 1 });
+    expect(result.rows).toHaveLength(1);
+    expect(productResearchRowMatchScore(candidate, "Thrice Identity Crisis 25th Anniversary Sea Blue Smoke Vinyl LP")).toBe(0);
+    expect(createMarketplaceAlbumDemandIndex({ captureMethod: "visible_browser", pages: [capturedRun] }, now).match(candidate)).toMatchObject({ unitsSold: 3, unitsSold90Days: null });
   });
   it("does not reuse a different album's research for a self-titled release", () => {
     const selfTitled = {id:"elton-self",artist:"Elton John",title:"Elton John",sourceListingTitle:"Elton John Elton John 1LP",purchasePrice:14};
