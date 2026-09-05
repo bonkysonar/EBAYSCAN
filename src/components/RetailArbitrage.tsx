@@ -6,6 +6,8 @@ import {
 import { RetailScanStatus } from "./RetailScanStatus";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
+import { retailEligibility } from "../../scripts/lib/retailIdentity.mjs";
+import { researchDemand } from "../../scripts/lib/albumDemand.mjs";
 import {
   buildSoldResearchLinks,
   type SoldResearchLink,
@@ -660,6 +662,7 @@ export function RetailArbitrage() {
                     </span>
                     <span className="arbitrage-title">
                       <strong>{displayRecordTitle(find)}</strong>
+                      <small>{albumDemandLabel(find, true)}</small>
                       <small>
                         {find.sourceListingTitle &&
                         find.sourceListingTitle !== find.title
@@ -943,6 +946,7 @@ function FindDetail({
           </p>
         ))}
         <p className="muted">{candidateTierDescription(find.candidateTier)}</p>
+        <p>{albumDemandLabel(find)}</p>
         <ul className="arbitrage-reasons">
           {find.candidateReasons.map((reason) => (
             <li key={reason}>{reason}</li>
@@ -1349,7 +1353,7 @@ function SoldResearchActions({ link }: { link: SoldResearchLink }) {
 function soldResearchKindLabel(link: SoldResearchLink): string {
   if (link.kind === "barcode") return "Barcode";
   if (link.kind === "exact") return "Exact edition";
-  return "Broader release";
+  return "Artist and album";
 }
 
 function ProfileSettings({
@@ -1826,6 +1830,7 @@ function replaceWithLatestFinds(
 function isIndividualRecordFind(find: ArbitrageFind): boolean {
   if (find.opportunityType === "sitewide_sale" || find.purchasePrice <= 0)
     return false;
+  if (!retailEligibility(find).eligible) return false;
   const title = `${find.title} ${find.sourceListingTitle ?? ""}`.trim();
   if (!title || isSourceCopyTitle(title)) return false;
   return assessRecordCandidate({
@@ -1896,6 +1901,27 @@ function velocityLabel(find: ArbitrageFind): string {
   return find.salesPerMonth === null || find.salesPerMonth === undefined
     ? "n/a"
     : `${find.salesPerMonth.toFixed(1)}/mo`;
+}
+
+function albumDemandLabel(find: ArbitrageScoredFind, compact = false): string {
+  const demand = researchDemand(find);
+  if (demand.observed) {
+    const copies = `${demand.units.toLocaleString()} ${demand.units === 1 ? "copy" : "copies"}`;
+    if (demand.source === "album_own_sales")
+      return compact
+        ? `Purchased before · ${copies} in your history`
+        : `Purchased before: ${copies} in your sales history across editions and conditions. This supports research priority; exact pressing evidence is checked separately.`;
+    return compact
+      ? `Purchased before · ${copies} recorded sold`
+      : `Purchased before: ${copies} recorded in ${demand.source === "exact_own_sales" ? "your matching sales history" : "matching eBay sold results"}.`;
+  }
+  // Older validated publications may predate the album-prior metadata. Their
+  // existing exact sold evidence must not be described as no recorded demand.
+  if (find.gates.soldEvidence)
+    return "Purchased before · matching sold evidence recorded";
+  return compact
+    ? "No recorded album demand yet"
+    : "No recorded album demand yet. This release has lower research priority until purchases are verified.";
 }
 
 function longTermVelocityLabel(find: ArbitrageFind): string {

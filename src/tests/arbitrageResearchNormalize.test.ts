@@ -13,8 +13,6 @@ describe("arbitrage research normalization", () => {
     expect(normalizeResearchTitle("$13.99 | Top Gun (Original Motion Picture Soundtrack) (Vinyl) at Amazon")).toBe("Top Gun");
     expect(buildResearchKeywords("", "Dirty Dancing Soundtrack (Walmart )")).toBe("Dirty Dancing");
     expect(buildResearchKeywordVariants("", "Dirty Dancing Soundtrack (Walmart )")).toEqual([
-      "Dirty Dancing Soundtrack",
-      "Dirty Dancing OST",
       "Dirty Dancing",
     ]);
   });
@@ -38,7 +36,7 @@ describe("arbitrage research normalization", () => {
     expect(url.searchParams.get("tabName")).toBe("SOLD");
   });
 
-  it("builds exact, barcode, and broad release queries in that order", () => {
+  it("uses only artist and album even when exact edition and barcode data are available", () => {
     const variants = buildSoldResearchQueryVariants({
       artist: "The Jimi Hendrix Experience",
       barcode: "0 12345-67890 5",
@@ -53,12 +51,6 @@ describe("arbitrage research normalization", () => {
 
     expect(variants).toEqual([
       {
-        identitySignals: ["yellow", "walmart", "exclusive"],
-        kind: "exact",
-        query: "The Jimi Hendrix Experience Are You Experienced yellow walmart exclusive",
-      },
-      { identitySignals: ["012345678905"], kind: "barcode", query: "012345678905" },
-      {
         identitySignals: [],
         kind: "base",
         query: "The Jimi Hendrix Experience Are You Experienced",
@@ -66,7 +58,7 @@ describe("arbitrage research normalization", () => {
     ]);
   });
 
-  it("keeps release identity terms out of the broad fallback without losing them from exact research", () => {
+  it("keeps pressing descriptors out of search while retaining genuine album subtitles", () => {
     expect(
       buildSoldResearchQueryVariants({
         artist: "David Bowie",
@@ -74,11 +66,6 @@ describe("arbitrage research normalization", () => {
         title: "Scary Monsters (And Super Creeps) (2017 Remastered Version)",
       }),
     ).toEqual([
-      {
-        identitySignals: ["2017", "remastered"],
-        kind: "exact",
-        query: "David Bowie Scary Monsters And Super Creeps 2017 remastered",
-      },
       {
         identitySignals: [],
         kind: "base",

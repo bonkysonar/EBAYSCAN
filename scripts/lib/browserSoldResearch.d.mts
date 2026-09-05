@@ -1,0 +1,1 @@
+export function importBrowserSoldResearch(payload: Record<string, any>, captures: Record<string, any>, previous?: Record<string, any>, now?: Date): {runId: string; entries: any[]; importedAt: string; importSummary: {accepted: any[]; rejected: any[]}};

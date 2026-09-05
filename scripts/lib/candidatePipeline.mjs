@@ -1,4 +1,5 @@
 import { retailEligibility } from "./retailIdentity.mjs";
+import { researchDemand } from "./albumDemand.mjs";
 
 const NAVIGATION_LABEL =
   /^(?:all|back|browse|cart|clearance|contact|deals?|discover|explore|featured|filter\s+amazon(?:\s+by\s+price)?|home|learn\s+more|log\s*in|lps?|menu|more|new|new\s+releases|next|previous|records?|sale|search|shop|shop\s+(?:all|now)|sign\s+in|specials?|view\s+(?:all|details|more)|vinyl)[\s!\u2192\u203a\u00bb]*$/i;
@@ -221,6 +222,14 @@ export function candidateQualityScore(candidate) {
 export function isHighSignalProductFind(find) {
   if (!retailEligibility(find).eligible) return false;
   if (find.identityStatus === "unresolved") return false;
+  // Purchases of this album justify exact-edition research even when the local
+  // history cannot price this pressing. Artist popularity alone never does.
+  if (
+    researchDemand(find).observed &&
+    Number(find.purchasePrice) > 0 &&
+    Number(find.purchasePrice) <= 35
+  )
+    return true;
   if (
     find.appliedSaleCampaignId &&
     find.purchasePrice > 0 &&
@@ -1287,48 +1296,96 @@ function clamp(value, minimum, maximum) {
 }
 import { isMarketplaceNonRecordTitle } from "../../src/lib/arbitrage/marketplaceProductClassification.mjs";
 
-/** Preserve research capacity for exact own-sales matches, campaign prices, and exploration. */
+/** Research observed album demand first; unproven sale items have a hard exploration budget. */
 export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
-  const ranked = rankAndSelectCandidatesWithDiagnostics(candidates, {
-    limit: Number.POSITIVE_INFINITY,
-    dedupePressings: false,
-  });
+  const requestedLimit = Number.isFinite(limit)
+    ? Math.max(0, Math.floor(limit))
+    : 240;
+  let explorationLimit = 0;
+  const ranked = candidates
+    .filter(
+      (candidate) =>
+        retailEligibility(candidate).eligible &&
+        candidate.identityStatus !== "unresolved" &&
+        !/^unknown artist$/i.test(cleanText(candidate.artist)),
+    )
+    .map((candidate) => {
+      const demand = researchDemand(candidate);
+      return {
+        ...candidate,
+        discoveryLane: demand.observed ? demand.source : "exploration",
+        researchPriority: demand.observed
+          ? "observed_album_demand"
+          : "unproven_exploration",
+        researchDemand: demand,
+      };
+    })
+    .sort((left, right) => {
+      const a = left.researchDemand,
+        b = right.researchDemand;
+      return (
+        Number(b.observed) - Number(a.observed) ||
+        Number(b.recentUnits > 0) - Number(a.recentUnits > 0) ||
+        Math.min(12, b.recentUnits) - Math.min(12, a.recentUnits) ||
+        candidateQualityScore(right) - candidateQualityScore(left) ||
+        String(left.id ?? left.sourceUrl ?? "").localeCompare(
+          String(right.id ?? right.sourceUrl ?? ""),
+        )
+      );
+    });
   const selected = [],
     seen = new Set();
-  const add = (rows, count, lane) => {
-    let added = 0;
-    for (const row of rows) {
-      if (added >= count || selected.length >= limit) break;
-      if (seen.has(row.id)) continue;
-      seen.add(row.id);
-      selected.push({ ...row, discoveryLane: lane });
-      added++;
+  let explorationCount = 0;
+  for (const candidate of ranked) {
+    if (selected.length >= requestedLimit) break;
+    if (!candidate.researchDemand.observed) {
+      const observedCount = selected.length - explorationCount;
+      explorationLimit = observedCount === 0 ? Math.min(1, requestedLimit) : Math.min(Math.floor(requestedLimit * 0.1), Math.floor(observedCount / 9));
     }
-  };
-  const own = ranked.selected.filter(
-    (f) =>
-      f.soldEvidence?.status === "validated" &&
-      Number(f.soldEvidence?.unitsSold90Days) >= 3 &&
-      f.soldEvidence?.artistMatchConfirmed !== false &&
-      f.soldEvidence?.editionMatchConfirmed !== false,
-  );
-  const campaigns = ranked.selected.filter(
-    (f) =>
-      f.appliedSaleCampaignId ||
-      f.campaignChecks?.some((c) => c.reasons.length === 0),
-  );
-  add(own, Math.floor(limit * 0.4), "exact_own_sales");
-  add(campaigns, Math.floor(limit * 0.4), "campaign");
-  add(ranked.selected, Math.floor(limit * 0.2), "exploration");
-  add(ranked.selected, limit - selected.length, "remaining_capacity");
-  const diagnostics = rankAndSelectCandidatesWithDiagnostics(selected, {
-    limit,
-    dedupePressings: false,
-  }).diagnostics;
+    if (
+      !candidate.researchDemand.observed &&
+      explorationCount >= explorationLimit
+    )
+      continue;
+    const identity = candidateSelectionIdentity(
+      candidate,
+      candidateSourceId(candidate),
+    );
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    selected.push(candidate);
+    if (!candidate.researchDemand.observed) explorationCount++;
+  }
+  const diagnostics = buildCandidateSelectionDiagnostics({
+    dedupeExcluded: [],
+    familyKey: candidateSourceFamily,
+    inputCandidates: ranked,
+    limit: requestedLimit,
+    limitApplied: selected.length < ranked.length,
+    maxPerFamily: Number.POSITIVE_INFINITY,
+    maxPerSource: Number.POSITIVE_INFINITY,
+    options: {},
+    ranked,
+    requestedLimit,
+    selected,
+    selectionPhases: new Map(
+      selected.map((candidate) => [candidate, "protected_quality"]),
+    ),
+  });
   return {
     selected,
     diagnostics: {
       ...diagnostics,
+      observedDemandCandidateCount: ranked.filter(
+        (candidate) => candidate.researchDemand.observed,
+      ).length,
+      observedDemandSelectedCount: selected.length - explorationCount,
+      explorationLimit,
+      explorationSelectedCount: explorationCount,
+      unprovenDeferredCount:
+        ranked.filter((candidate) => !candidate.researchDemand.observed)
+          .length - explorationCount,
+      unusedResearchCapacity: Math.max(0, requestedLimit - selected.length),
       byDiscoveryLane: selected.reduce(
         (counts, f) => (
           (counts[f.discoveryLane] = (counts[f.discoveryLane] ?? 0) + 1),

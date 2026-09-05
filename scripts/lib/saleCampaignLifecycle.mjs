@@ -233,7 +233,24 @@ export function reconcileSaleCampaigns({
       continue;
     }
 
+    // A bounded browser refresh has no information about unvisited campaign
+    // pages. Preserve their status/timestamp instead of turning omission into failure.
+    if (report.evidenceScope === "observed_public_pages_only" && ![...(report.browserObservedUrls ?? []),...(report.salePageConfirmedRemovedUrls ?? [])].map(canonicalSaleUrl).includes(canonicalSaleUrl(previousCampaign.sourceUrl))) {
+      nextById.set(previousCampaign.saleCampaignId,{...previousCampaign,saleObservedThisRun:false});
+      continue;
+    }
+
     const health = campaignObservationHealth(report, previousCampaign);
+    // A fresh, ordinary browser visit can explicitly show that this exact
+    // retailer page was removed. A transport 404, challenge or redirect alone
+    // never supplies this stronger observation.
+    const removedUrls = (report.salePageConfirmedRemovedUrls ?? []).map(canonicalSaleUrl);
+    if (removedUrls.includes(canonicalSaleUrl(previousCampaign.sourceUrl))) {
+      const campaign = {...previousCampaign, endedAt:timestamp, saleFailureCount:0, saleLastCheckedAt:timestamp, saleObservedThisRun:false, saleStatus:'ended', saleEndReason:'source_page_removed'};
+      nextById.set(campaign.saleCampaignId, campaign);
+      history.push(historyEntry(campaign, effectiveRunId, timestamp, 'source_page_removed', previousCampaign.saleStatus));
+      continue;
+    }
     if (health !== "success") {
       const campaign = {
         ...previousCampaign,

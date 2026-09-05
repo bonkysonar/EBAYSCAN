@@ -1,4 +1,5 @@
 import type { VinylShopSource } from "./vinylShopSources";
+import type { AlbumDemand } from "../../../scripts/lib/albumDemand.mjs";
 
 export type ArbitrageDecision = "BUY" | "WATCH" | "REVIEW" | "REJECT";
 export type ArbitrageCandidateTier = "A" | "B" | "C" | "WATCH" | "REJECT";
@@ -79,6 +80,8 @@ export type ArbitrageCostLedger = {
 };
 
 export type ArbitrageSoldEvidence = {
+  albumMatchConfirmed?: boolean;
+  albumMismatchReasons?: string[];
   artistMatchConfirmed?: boolean;
   artistMismatchReasons?: string[];
   capturedAt?: string | null;
@@ -99,9 +102,11 @@ export type ArbitrageSoldEvidence = {
   unitsSold90Days?: number | null;
   unitsSold365Days?: number | null;
   unitsSold1095Days?: number | null;
+  observedWindow?: { startDate: string; endDate: string } | null;
   velocityEvidence?:
     | "aggregate_last_sale_only"
     | "dated_transactions"
+    | "verified_window_totals"
     | "unknown";
 };
 
@@ -164,6 +169,7 @@ export type ArbitrageSettings = {
 };
 
 export type ArbitrageFind = {
+  albumDemand?: AlbumDemand;
   basketScenario?: {
     quantity: number;
     currency: string;
@@ -224,6 +230,9 @@ export type ArbitrageFind = {
   candidateScore?: number;
   candidateTier?: ArbitrageCandidateTier;
   capturedAt: string;
+  retailObservedAt?: string;
+  retailObservationMethod?: "visible_browser" | "visible_browser_catalog";
+  retailObservationUrl?: string;
   condition?: string;
   conservativeResalePrice?: number | null;
   costs?: ArbitrageCostInputs;
@@ -270,6 +279,8 @@ export type ArbitrageFind = {
     totalPrice: number;
   }>;
   ebayActiveSearchError?: string;
+  ebayActiveMatchingVersion?: number;
+  ebayActiveProfileKey?: string;
   ebayActiveSearchKeyword?: string;
   ebayActiveSearchStatus?: "available" | "failed" | "no_results";
   ebayActiveSearchUpdatedAt?: string;
@@ -453,7 +464,22 @@ export type ArbitrageRunManifest = {
   startedAt?: string;
 };
 
+export type ArbitrageResearchProgress = {
+  planned: number;
+  completed: number;
+  validated: number;
+  noRows: number;
+  failed: number;
+  pending: number;
+  researchedRows: number;
+  limit: number;
+  outsidePlan: number;
+  complete: boolean;
+  status: "not_needed" | "complete" | "incomplete";
+};
+
 export type ArbitrageImportPayload = {
+  researchProgress?: ArbitrageResearchProgress;
   publicationMode?: "full" | "source_updates";
   sourceUpdateVersion?: number;
   sourceUpdates?: {

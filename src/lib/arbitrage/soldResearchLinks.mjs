@@ -2,77 +2,16 @@ export const EBAY_RESEARCH_NEW_CONDITION_ID = "1000";
 export const EBAY_RESEARCH_VINYL_CATEGORY_ID = "176985";
 
 const QUERY_MAX_LENGTH = 180;
-const VALID_BARCODE_LENGTHS = new Set([8, 12, 13, 14]);
-const COLOR_TERMS = [
-  "black",
-  "blue",
-  "clear",
-  "gold",
-  "green",
-  "orange",
-  "pink",
-  "purple",
-  "red",
-  "silver",
-  "white",
-  "yellow",
-];
-
 /**
- * Build a deterministic research ladder without navigating to or reading eBay.
- * Exact edition variants lead, a trustworthy barcode is next, and the broad
- * artist/title release query is always retained as the last fallback.
+ * Search the release using only artist and album names. Pressing identifiers
+ * remain on the candidate for validating returned sales; they are not keywords.
+ * Retain the array contract so saved research checkpoints remain readable.
  */
 export function buildSoldResearchQueryVariants(candidate = {}) {
   const artist = normalizeResearchArtist(candidate.artist ?? "");
-  const rawTitle = preferredTitle(candidate);
-  const baseTitle = normalizedCandidateTitle(
-    rawTitle,
-    candidate.sourceListingTitle ?? "",
-    artist,
-  );
-  const baseQuery = cleanResearchText(
-    artist && !startsWithSameWords(baseTitle, artist)
-      ? `${artist} ${baseTitle}`
-      : baseTitle || artist,
-  );
-  const variants = [];
-  const exactSignals = editionSignals(
-    candidate,
-    `${candidate.title ?? ""} ${candidate.sourceListingTitle ?? ""}`,
-  );
-
-  for (const signalSet of exactSignalVariants(exactSignals)) {
-    const exactQuery = truncateQuery(
-      cleanResearchText(`${baseQuery} ${signalSet.join(" ")}`),
-    );
-    if (exactQuery && normalizeKey(exactQuery) !== normalizeKey(baseQuery)) {
-      variants.push({
-        identitySignals: signalSet,
-        kind: "exact",
-        query: exactQuery,
-      });
-    }
-  }
-
-  const barcode = validBarcode(candidate.barcode);
-  if (barcode) {
-    variants.push({
-      identitySignals: [barcode],
-      kind: "barcode",
-      query: barcode,
-    });
-  }
-
-  if (baseQuery) {
-    variants.push({
-      identitySignals: [],
-      kind: "base",
-      query: truncateQuery(baseQuery),
-    });
-  }
-
-  return dedupeVariants(variants);
+  const title = preferredTitle(candidate);
+  const query = buildBaseResearchQuery(artist, title);
+  return query ? [{ identitySignals: [], kind: "base", query }] : [];
 }
 
 export function buildSoldResearchLinks(candidate = {}, options = {}) {
@@ -124,22 +63,15 @@ export function buildEbayPublicSoldUrl(query) {
 
 export function buildBaseResearchQuery(artist, title) {
   const normalizedArtist = normalizeResearchArtist(artist);
-  const normalizedTitle = normalizeResearchTitle(title);
-  const titleWithoutArtist = withoutLeadingArtist(
-    normalizedTitle,
-    normalizedArtist,
+  const normalizedTitle = normalizeResearchTitle(
+    withoutLeadingArtist(decodeEntities(String(title ?? "")), normalizedArtist),
   );
-  const usefulTitle =
-    titleWithoutArtist ||
-    (normalizedArtist &&
-    normalizeKey(normalizedTitle) === normalizeKey(normalizedArtist)
-      ? "self titled"
-      : normalizedTitle);
+  const withoutArtist = withoutLeadingArtist(normalizedTitle, normalizedArtist);
   return truncateQuery(
     cleanResearchText(
-      normalizedArtist && !startsWithSameWords(usefulTitle, normalizedArtist)
-        ? `${normalizedArtist} ${usefulTitle}`
-        : usefulTitle || normalizedArtist,
+      normalizedArtist
+        ? `${normalizedArtist} ${withoutArtist}`
+        : normalizedTitle,
     ),
   );
 }
@@ -159,7 +91,7 @@ export function normalizeResearchArtist(rawArtist = "") {
   );
 }
 
-/** Base release title only. Edition terms are recovered separately for exact queries. */
+/** Remove merchandising suffixes while preserving words that can be album names. */
 export function normalizeResearchTitle(rawTitle = "") {
   let title = decodeEntities(String(rawTitle))
     .replace(/\$\s*[0-9.,]+/g, " ")
@@ -172,51 +104,82 @@ export function normalizeResearchTitle(rawTitle = "") {
       /\bat\s+(?:amazon|target|walmart|urban\s+outfitters|barnes\s*&\s*noble|deep\s+discount)\b.*$/gi,
       " ",
     )
+    .replace(/[[(]([^\])]+)[\])]/g, (whole, inside) =>
+      /\b(?:vinyl|lps?|remaster(?:ed)?|reissue|edition|version|grams?|swirl|splatter|exclusive|variant|walmart|target)\b/i.test(
+        inside,
+      )
+        ? " "
+        : ` ${inside} `,
+    )
     .replace(
-      /\s+-\s+(?:(?:opaque|transparent|translucent)\s+)?(?:black|blue|clear|gold|green|orange|pink|purple|red|silver|white|yellow)\s*$/gi,
+      /\s+[[(](?:ltd\.?|limited|exclusive|opaque|transparent|translucent)\b[^\])]*$/i,
       " ",
     )
-    .replace(/\[[^\]]*\]/g, " ")
-    .replace(
-      /\([^)]*(?:vinyl|lp|record|edition|exclusive|color|colour|soundtrack|remaster|sale|deal)[^)]*\)/gi,
-      " ",
-    )
+    .replace(/^\s*(?:limited|exclusive)\s+edition\s+/i, "")
+    .replace(/\s+alternate\s+artwork\b.*$/i, " ")
     .replace(/\boriginal\s+(?:motion\s+picture\s+)?soundtrack\b/gi, " ")
     .replace(/\bmotion\s+picture\s+soundtrack\b/gi, " ")
-    .replace(/\b(?:soundtrack|ost)\b/gi, " ")
-    .replace(
-      /\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban\s+outfitters|uo)\s+edition\b/gi,
-      " ",
-    )
-    .replace(
-      /\b(?:limited|deluxe|anniversary|collector'?s?|exclusive|import|indie|target|walmart|urban\s+outfitters|uo)\b/gi,
-      " ",
-    )
-    .replace(
-      /\b(?:(?:opaque|transparent|translucent)\s+)?(?:colored|colour|color|clear|red|blue|green|yellow|pink|purple|orange|white|black|gold|silver|splatter|swirl|marbled)\s+vinyl\b/gi,
-      " ",
-    )
-    .replace(
-      /\b(?:vinyl|record|records|album|(?:[1-9]\s*(?:x|-)?)?\s*lps?|ep|single)\b/gi,
-      " ",
-    )
-    .replace(
-      /\b(?:180\s*(?:g|grams?)|heavyweight|remaster(?:ed)?|half[-\s]?speed\s+master(?:ed)?)\b/gi,
-      " ",
-    )
-    .replace(
-      /\b(?:pre[-\s]?order|sale|clearance|new|sealed|brand\s+new|staff\s+pick)\b/gi,
-      " ",
-    )
-    .replace(
-      /\s+-\s+(?:r\s*&\s*b|rock|pop|country|jazz|rap|hip[-\s]?hop)(?:\s+-\s*)*$/gi,
-      " ",
-    )
-    .replace(/[()]/g, " ")
-    .replace(/[|:]+/g, " ")
-    .replace(/\s+-\s+/g, " ");
+    .replace(/\b(?:soundtrack|ost)\s*$/gi, " ");
 
-  return cleanResearchText(title);
+  // Retailers separate the album from format/color/edition with a dash, colon
+  // or pipe. Only discard a suffix made entirely of merchandising descriptors.
+  const chunks = title.split(/\s+[-–—|]\s+|:\s+/);
+  while (
+    chunks.length > 1 &&
+    isEditionDescription(chunks.at(-1)) &&
+    (chunks.length > 2 ||
+      isExplicitEditionTail(chunks.at(-1)) ||
+      /^(?:r\s*&\s*b|rock|pop|country|jazz|rap|hip[-\s]?hop)\s*-*$/i.test(
+        chunks.at(-1),
+      ) ||
+      /^(?:clear|black|white|red|blue|green|tan|pink|purple|yellow)\s+(?:7|10|12)\s*(?:[ -]?inch|["”])/i.test(
+        chunks.at(-1),
+      ))
+  )
+    chunks.pop();
+  title = chunks.join(" ");
+
+  // Without a separator require a format/edition marker before dropping a tail.
+  // Ordinary title words such as New, Blue, Red, Record, Album and EP survive.
+  const tokens = title.trim().split(/\s+/);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const tail = tokens.slice(index).join(" ");
+    if (
+      (isExplicitEditionTail(tail) ||
+        (index > 0 &&
+          /^(?:baby|royal|cloudy|milky|neon|hot|light|dark|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|tan|tangerine|amber|ruby|coral|brown|cream|clear|navy|teal|grey|gray|half)\b.*\b(?:vinyl|lp|inch)\b/i.test(
+            tail,
+          ) &&
+          !/\b(?:album|record|ep|single)\b/i.test(
+            tail.split(/\b(?:vinyl|lp|inch)\b/i)[0],
+          ))) &&
+      isEditionDescription(tail)
+    ) {
+      title = tokens.slice(0, index).join(" ");
+      break;
+    }
+  }
+  return cleanResearchText(
+    title
+      .replace(
+        /\s+(?:[-–—|:]\s*)?(?:rsd|record\s+store\s+day)(?:\s+black\s+friday)?(?:\s+(?:19|20)\d{2})?\s*$/i,
+        " ",
+      )
+      .replace(/[|:]+/g, " ")
+      .replace(/\s+-\s*$/g, " "),
+  );
+}
+
+const EDITION_WORDS =
+  /^(?:(?:baby|royal|cloudy|ghostly|opaque|transparent|translucent|milky|neon|hot|light|dark|limited|exclusive|standard|version|deluxe|anniversary|collector'?s?|import|indie|edition|pressing|reissue|remaster(?:ed)?|heavyweight|half|speed|master(?:ed)?|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|tan|tangerine|amber|ruby|coral|brown|cream|clear|navy|teal|grey|gray|beer|marble|marbled|galaxy|splatter|swirl|smoke|platinum|colour|color|colored|coloured|vinyl|lps?|ep|single|inch|in|gram(?:s)?|g|record|album|box|set|picture|disc|gatefold|soundtrack|ost|mono|stereo|new|sealed|brand|sale|clearance|preorder|pre|order|staff|pick|walmart|target|urban|outfitters|uo|r|b|rock|pop|country|jazz|rap|hip|hop|in|with|w|and|\d+(?:st|nd|rd|th|g|lp)?)|[\s/&()+.\-"”])+$/i;
+function isEditionDescription(value) {
+  const text = String(value ?? "").trim();
+  return !text || EDITION_WORDS.test(text);
+}
+function isExplicitEditionTail(value) {
+  return /^(?:(?:[1-9]\s*[x-]?\s*)?lps?\b|vinyl\b|box[ -]?set\b|picture\s+disc\b|(?:7|10|12)\s*(?:[ -]?inch|in\.?\b|["”])|(?:180|200)\s*(?:g|grams?)\b|(?:limited|deluxe|standard|exclusive|collector'?s?|import|indie|\d+(?:st|nd|rd|th)\s+anniversary)\s+(?:edition|version)\b|(?:limited|exclusive|opaque|transparent|translucent|heavyweight|remaster(?:ed)?|half[ -]speed)\b)/i.test(
+    value,
+  );
 }
 
 function preferredTitle(candidate) {
@@ -226,162 +189,24 @@ function preferredTitle(candidate) {
   return sourceTitle || title;
 }
 
-function normalizedCandidateTitle(title, sourceTitle, artist) {
-  let normalized = normalizeResearchTitle(title);
-  if (
-    !normalized ||
-    normalizeKey(withoutLeadingArtist(normalized, artist)) === ""
-  ) {
-    normalized = normalizeResearchTitle(sourceTitle);
-  }
-  const withoutArtist = withoutLeadingArtist(normalized, artist);
-  if (withoutArtist) return withoutArtist;
-  if (artist && normalized && normalizeKey(normalized) === normalizeKey(artist))
-    return "self titled";
-  return normalized;
-}
-
-function editionSignals(candidate, rawText) {
-  const identity = candidate.ebayActiveEditionIdentity ?? {};
-  const signals = [];
-  const raw = decodeEntities(String(rawText));
-
-  for (const color of Array.isArray(identity.colors) ? identity.colors : []) {
-    const normalized = cleanResearchText(color).toLowerCase();
-    if (COLOR_TERMS.includes(normalized)) signals.push(normalized);
-  }
-
-  const structuredFormat = cleanResearchText(identity.format ?? "");
-  if (structuredFormat) signals.push(structuredFormat);
-  const formatMatch = raw.match(/\b([2-9])\s*(?:x|-)?\s*lp\b/i);
-  if (formatMatch) signals.push(`${formatMatch[1]}LP`);
-
-  const structuredRetailer = cleanResearchText(
-    identity.retailerExclusive ?? "",
-  );
-  const retailerMatch = raw.match(
-    /\b(walmart|target|urban\s+outfitters|uo|indie)\b.{0,24}\bexclusive\b/i,
-  );
-  const retailer =
-    structuredRetailer || cleanResearchText(retailerMatch?.[1] ?? "");
-  if (retailer) signals.push(retailer.toLowerCase(), "exclusive");
-
-  for (const signal of Array.isArray(identity.signals)
-    ? identity.signals
-    : []) {
-    const normalized = normalizeEditionSignal(signal);
-    if (normalized) signals.push(normalized);
-  }
-
-  const anniversary = raw.match(
-    /\b((?:\d{1,3})(?:st|nd|rd|th)\s+anniversary)\b/i,
-  );
-  if (anniversary)
-    signals.push(cleanResearchText(anniversary[1]).toLowerCase());
-  if (/\bdeluxe\b/i.test(raw)) signals.push("deluxe");
-  if (/\bhalf[-\s]?speed\b/i.test(raw)) signals.push("half speed");
-  if (/\b180\s*(?:g|grams?)\b/i.test(raw)) signals.push("180g");
-  if (/\bmono\b/i.test(raw)) signals.push("mono");
-  if (/\bstereo\b/i.test(raw)) signals.push("stereo");
-  if (/\bremaster(?:ed)?\b/i.test(raw)) {
-    const remasterYear = raw.match(
-      /\b((?:19|20)\d{2})\b.{0,18}\bremaster(?:ed)?\b/i,
-    )?.[1];
-    if (remasterYear) signals.push(remasterYear);
-    signals.push("remastered");
-  }
-
-  const rawColor = raw.match(
-    new RegExp(
-      `\\b(?:opaque|transparent|translucent)?\\s*(${COLOR_TERMS.join("|")})\\b.{0,18}\\bvinyl\\b`,
-      "i",
-    ),
-  );
-  if (rawColor) signals.push(rawColor[1].toLowerCase());
-  const rawPattern = raw.match(
-    /\b(splatter|marbled|swirl|picture\s+disc)\b.{0,18}\bvinyl\b/i,
-  );
-  if (rawPattern) signals.push(rawPattern[1].toLowerCase());
-  if (/\b(?:soundtrack|original\s+motion\s+picture|\bost\b)/i.test(raw))
-    signals.push("soundtrack");
-
-  return uniqueSignals(signals);
-}
-
-function exactSignalVariants(signals) {
-  if (!signals.length) return [];
-  if (!signals.includes("soundtrack")) return [signals];
-  const withoutSoundtrack = signals.filter((signal) => signal !== "soundtrack");
-  return [
-    [...withoutSoundtrack, "Soundtrack"],
-    [...withoutSoundtrack, "OST"],
-  ];
-}
-
-function normalizeEditionSignal(signal) {
-  const normalized = cleanResearchText(signal).toLowerCase();
-  if (/^remaster(?:ed)?$/.test(normalized)) return "remastered";
-  if (
-    /^(?:deluxe|mono|stereo|splatter|transparent|translucent|marbled|swirl)$/.test(
-      normalized,
-    )
-  )
-    return normalized;
-  if (/^\d{1,3}(?:st|nd|rd|th) anniversary$/.test(normalized))
-    return normalized;
-  return "";
-}
-
-function validBarcode(value) {
-  const barcode = String(value ?? "").replace(/[\s-]/g, "");
-  return /^\d+$/.test(barcode) && VALID_BARCODE_LENGTHS.has(barcode.length)
-    ? barcode
-    : "";
-}
-
 function withoutLeadingArtist(title, artist) {
   if (!title || !artist) return title;
   const titleWords = title.split(/\s+/);
   const artistWords = artist.split(/\s+/);
   const prefix = titleWords.slice(0, artistWords.length).join(" ");
   return normalizeKey(prefix) === normalizeKey(artist)
-    ? cleanResearchText(titleWords.slice(artistWords.length).join(" "))
+    ? titleWords
+        .slice(artistWords.length)
+        .join(" ")
+        .replace(/^\s*[-:|]\s*/, "")
+        .trim()
     : title;
-}
-
-function startsWithSameWords(value, prefix) {
-  if (!value || !prefix) return false;
-  return (
-    value.toLowerCase().split(/\s+/).slice(0, 4).join(" ") ===
-    prefix.toLowerCase().split(/\s+/).slice(0, 4).join(" ")
-  );
-}
-
-function dedupeVariants(variants) {
-  const seen = new Set();
-  return variants.filter((variant) => {
-    const key = normalizeKey(variant.query);
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function uniqueSignals(signals) {
-  const seen = new Set();
-  return signals.filter((signal) => {
-    const cleaned = cleanResearchText(signal);
-    const key = normalizeKey(cleaned);
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function cleanResearchText(value) {
   return String(value ?? "")
     .replace(/[\u2013\u2014]/g, " ")
-    .replace(/[^A-Za-z0-9&'./\s-]/g, " ")
+    .replace(/[^\p{L}\p{N}&'./\s-]/gu, " ")
     .replace(/(?:\s+-)+\s*$/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -390,7 +215,7 @@ function cleanResearchText(value) {
 function normalizeKey(value) {
   return cleanResearchText(value)
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 }
 

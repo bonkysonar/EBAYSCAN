@@ -124,6 +124,7 @@ export async function retailOperations(
     updatedAt: new Date().toISOString(),
     sourceCount: bounded(input.sourceCount),
     updatedSourceCount: bounded(input.updatedSourceCount),
+    researchProgress: boundedResearchProgress(input.researchProgress),
     lastPublishedAt: ["published", "partial"].includes(String(input.status))
       ? new Date().toISOString()
       : (previous?.lastPublishedAt ?? null),
@@ -172,6 +173,19 @@ function validDate(value: unknown) {
 }
 function bounded(value: unknown) {
   return Math.max(0, Math.min(1000000, Math.floor(Number(value) || 0)));
+}
+function boundedResearchProgress(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  const planned = Math.min(240, bounded(input.planned));
+  const completed = Math.min(planned, bounded(input.completed));
+  const validated = Math.min(completed, bounded(input.validated));
+  const noRows = Math.min(completed - validated, bounded(input.noRows));
+  const failed = Math.min(planned - validated - noRows, bounded(input.failed));
+  const pending = Math.max(bounded(input.pending), planned - validated - noRows - failed);
+  const outsidePlan = bounded(input.outsidePlan);
+  const complete = planned > 0 && completed === planned && validated + noRows === planned && failed === 0 && pending === 0 && outsidePlan === 0;
+  return { planned, completed, validated, noRows, failed, pending: Math.min(planned, pending), researchedRows: bounded(input.researchedRows), limit: 240, outsidePlan, complete, status: planned === 0 ? "not_needed" : complete ? "complete" : "incomplete" };
 }
 async function read(
   cwd: string,

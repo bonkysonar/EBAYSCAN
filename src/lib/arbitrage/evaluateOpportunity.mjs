@@ -836,6 +836,8 @@ function canonicalSoldEvidence(find, now) {
       hasStructuredEvidence &&
       units90 !== null &&
       (evidence.velocityEvidence === "dated_transactions" ||
+        (evidence.velocityEvidence === "verified_window_totals" && evidence.observedWindow &&
+          (Date.parse(evidence.observedWindow.endDate) - Date.parse(evidence.observedWindow.startDate)) / 86400000 === 90) ||
         evidence.source === "local-own-sales-history"),
   };
 }
@@ -1220,7 +1222,7 @@ function describeDecision(context) {
     );
   if (reasonCodes.includes("SOLD_VELOCITY_UNVALIDATED")) {
     reasons.push(
-      "Recent sold counts must come from dated transactions; an aggregate total plus latest-sale date cannot prove 30/90-day velocity.",
+      "Recent sold counts need dated transactions or a verified, complete date-window search; a long-window total plus latest-sale date cannot prove recent velocity.",
     );
   }
   if (reasonCodes.includes("ECONOMICS_HARD_FAIL")) {

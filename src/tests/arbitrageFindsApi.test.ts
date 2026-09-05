@@ -105,6 +105,35 @@ describe("arbitrage finds publication", () => {
     expect(rawStoredPayload).not.toContain("deliveryPostalCode");
   });
 
+  it("preserves observed album demand, bounded sold windows, and research progress on the public API", async () => {
+    const albumDemand = {
+      version: 1, status: "observed", source: "ebay-product-research",
+      scope: "album_across_conditions_and_editions", artistMatchConfirmed: true,
+      albumMatchConfirmed: true, capturedAt: "2026-07-13T12:45:44.923Z",
+      latestSaleDate: "2026-07-12", unitsSold: 3, unitsSold90Days: null,
+      unitsSold365Days: null, transactionCount: null,
+    };
+    const observedWindow = { startDate: "2026-04-14", endDate: "2026-07-13" };
+    const researchProgress = {
+      planned: 10, completed: 2, validated: 1, noRows: 1, failed: 0, pending: 8,
+      researchedRows: 2, limit: 240, outsidePlan: 0, complete: false, status: "incomplete",
+    };
+    await uploadArbitrageFinds(workspace, finalPayload({
+      runId: "evidence-preservation", researchProgress,
+      finds: [productFind({ albumDemand, soldEvidence: {
+        source: "ebay-product-research", status: "candidate", observedWindow,
+        velocityEvidence: "verified_window_totals", unitsSold90Days: 3,
+      } })],
+    }), "test-upload-token");
+    const latest = await readLatestArbitrageFinds(workspace);
+    expect(latest).toMatchObject({ status: "available", payload: {
+      researchProgress,
+      finds: [expect.objectContaining({ albumDemand, soldEvidence: expect.objectContaining({
+        observedWindow, velocityEvidence: "verified_window_totals", unitsSold90Days: 3,
+      }) })],
+    } });
+  });
+
   it("rejects draft, legacy, and unsafe run payloads", async () => {
     await expect(
       uploadArbitrageFinds(

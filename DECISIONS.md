@@ -239,3 +239,13 @@ Shopify products with descriptive handle/title identities that share no meaningf
 Keep the full-run coverage gate. Add a separately versioned, validated source-update contract instead of freezing verified retailer observations behind unrelated failures. Never refresh an untouched offer's timestamp. Show last publication and last attempted scan separately.
 
 Bind each campaign discount to its own scope and terms, carry a broad pool through research, and default to at most fifteen qualified releases. Unknown turnover stays unknown. One explicit timing or checkout check may remain on a strong B candidate; it cannot be an automatic BUY. Use signed opaque review receipts and deterministic repeat suppression. Measure usefulness through explicit outcomes rather than the number of candidates or green labels.
+
+## 2026-09-04: observed purchases and browser source recovery
+
+Supersede the previous edition/barcode search ladder with one artist-and-album query for both sold research and active supply. Check pressing, format, color and condition against returned listings. A rare pressing's price cannot establish the value of a standard reissue. Explicit physical variants take precedence over mixed catalog taxonomy; CDs and unresolved mixed formats are excluded.
+
+Prioritize albums with observed purchases from sanitized own sales or fresh, explicitly captured marketplace results. Album demand crosses editions and conditions but supplies neither resale prices nor exact-edition velocity. Unproven exploration is capped at ten percent of the actual selected research queue, with one bootstrap search when no observed-demand candidates exist.
+
+Use official feeds first and bounded visible-browser observations when normal retailer pages are accessible. Preserve actual observation times and selected-variant evidence. A few observed catalog cards do not establish full-catalog coverage. Repair moved domains, catalog paths and current forum pagination; never count a disabled source or a relabeled failure as recovered. A retailer-branded, visibly confirmed removed campaign page can end that exact campaign; access failures cannot.
+
+Signed-in Product Research observations are imported into the exact draft checkpoint. A complete, visibly confirmed 90-day result window supports that window's matched quantities only. The paid-shipping average excludes free-shipping sales, so weight it by the displayed paid-shipping share before calculating proceeds. Source publication and research completion remain separate, measurable states. Keep private research captures in ignored local exports.

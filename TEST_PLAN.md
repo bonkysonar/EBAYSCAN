@@ -78,7 +78,7 @@
    node scripts/prepareArbitrageResearchPlan.mjs exports\arbitrage-finds\<scan-file>.json --max=40
    ```
 
-   Verify every entry is keyed by stable find ID and carries exact-edition, barcode, and base-release variants, source identity, Seller Hub URL, public Sold/Completed URL, and edition terms. Without `--max`, every researchable visible candidate must be planned; an explicit cap must be honored. The plan must not require title-specific source-code edits or contain retailer taxonomy.
+   Verify every entry is keyed by stable find ID and carries one artist/album-only query, source identity, Seller Hub URL, and public Sold/Completed URL. Colors, formats, barcodes, and retailer copy must not appear in keyword fields. The workflow plans at most 240 retained candidates and reports any outside that bound; a standalone explicit cap is honored. Returned rows still require edition and condition matching.
 
 6. Curate the scan with a raw Product Research result:
 
@@ -88,7 +88,7 @@
 
    Verify bundles, merch, damaged, used, and conflicting-edition rows are excluded. Pending/failed/no-row research must remain a validation state instead of becoming a false reject.
 
-7. Verify aggregate Product Research rows can populate price and aggregate sold fields but cannot, by themselves, satisfy the dated 30/90/365-day velocity gate or produce `BUY`.
+7. Verify three-year aggregate rows plus last-sale dates cannot create 90-day velocity. A completed, fresh New/Vinyl search with an observed exact 90-day results header and distinct listing identities may populate only the 90-day count. Missing header/filter/completeness metadata, wrong dates, duplicate IDs, and invalid sale dates must withhold window counts. All other BUY gates still apply.
 
 8. Inspect known fully evidenced records. Verify a fast mover can qualify at the smaller-margin profile, a balanced record uses the middle thresholds, and a slower record requires the higher-margin profile. Every `BUY` must still require condition-matched dated velocity, fresh sold and active evidence, confident artist/title/edition matches, complete exact active supply, an acceptable estimated turn, full-ledger economics, and sufficient priority. A same-title/different-artist local sale must remain unvalidated. A complete exact search above the active-listing ceiling must hard-reject even when sold research is pending. Two aggregate sales over three years against roughly twenty active listings must not become recent velocity or a buy.
 
@@ -155,7 +155,7 @@ Coverage should include:
 - Local sold-history building preserves quantity-weighted dated 30/90/365-day velocity and condition evidence and does not validate same-title rows from another artist.
 - eBay sold-history synchronization paginates bounded Fulfillment/Finances slices, sanitizes persisted output, joins fees/refunds/labels without buyer data, refreshes an overlap idempotently, and builds artist aggregates.
 - The canonical arbitrage evaluator applies fast-turn, balanced, and high-margin profiles, returns `BUY` only when one profile plus evidence/priority gates pass, and hard-rejects known excessive exact supply.
-- Aggregate Product Research rows cannot masquerade as dated recent velocity.
+- Long-window Product Research aggregates cannot masquerade as recent velocity; verified complete window totals apply only to their observed window.
 - Product Research planning and curation are find-ID based, cover all visible candidates by default, provide manual Seller Hub and public sold links, reject incompatible rows generically, and keep pending research in review.
 - The full arbitrage ledger includes acquisition costs, marketplace/advertising costs, fulfillment, packaging, and returns reserve; unknown inbound shipping uses the default reserve and foreign economics require fresh conversion evidence.
 - Scan and enrichment payloads cannot be published as latest; explicit legacy drafts remain drafts, final publication is immutable and idempotent by `runId`, and latest/fallback selection uses lifecycle observation time.
@@ -175,7 +175,7 @@ Mocks should remain deterministic and credential-free. Add fixture cases wheneve
 
 ## Future Real eBay Testing
 
-Use official eBay APIs only. Keep unit tests independent from credentials. Add integration tests behind environment-gated configuration once token minting is automated.
+Prefer official eBay APIs; explicitly authorized signed-in Seller Hub research may use normal visible browser pages and the local evidence inbox. Do not bypass challenges or access controls. Keep unit tests independent from credentials. Add integration tests behind environment-gated configuration once token minting is automated.
 
 ## Hosted Testing
 
@@ -217,3 +217,13 @@ Browser smoke test: load Retail Arbitrage; verify Worth considering is the defau
 
 
 Release verification, September 4, 2026: the fresh broad run attempted 127 sources and discovered Blue Note's 20% music campaign; 49 sources failed or were blocked, so it requires the separately labeled source-update publication path. Seller Hub browser validation reproduced and fixed the missing explicit date-range URL problem while retaining New/Vinyl Records filters. This release establishes measurement; it does not claim a measured 70% usefulness rate or comprehensive source coverage.
+
+## Signed-in research and resumable workflow regression
+
+- Run `npx vitest run src/tests/albumDemand.test.ts src/tests/localSoldEvidence.test.ts src/tests/retailWorkflow.test.ts src/tests/retailOperations.test.ts src/tests/productResearchWindow.test.ts`.
+- Verify an album with observed purchases precedes cheaper unproven campaigns; unproven rows occupy at most 10% of actual selections, with at most one bootstrap lead if no observed album exists. Exact pricing must never borrow another album, condition, or pressing.
+- Capture a real Seller Hub page through the normal signed-in browser and save it at `http://127.0.0.1:4319/research`. Import to the exact new draft. Confirm checkpoint find IDs match the draft and the importer rejects stale, incomplete, or wrong-query captures.
+- Finish a saved workflow with `--browserResearch=<captures>` and verify import precedes curation. Finish with no `--research` argument and verify the existing checkpoint is resumed. A mismatched checkpoint must fail rather than attach evidence to another scan.
+- Verify empty and pending checkpoints have completed=0; blocked runs count as failed; complete successful-empty searches count as noRows; validated rows count separately. Partial publication must not change researchProgress.complete to true. Verify context, final artifact, and operations status agree.
+- Compare updatedSourceCount with the source-update publication contract. Reachable empty or failed catalogs and failed sale pages must not increase it.
+- Pass `--browserObservations=<captures>` only when creating a new scan. Verify it reaches the scanner and cannot retroactively alter an existing draft.

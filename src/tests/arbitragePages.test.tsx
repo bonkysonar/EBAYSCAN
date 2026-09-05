@@ -327,6 +327,8 @@ describe("arbitrage pages", () => {
     });
     expect(container?.textContent).toContain("Research Candidate");
     expect(container?.textContent).not.toContain("Promising Candidate");
+    expect(container?.textContent).toContain("No recorded album demand yet");
+    expect(container?.textContent).toContain("lower research priority until purchases are verified");
   });
 
   it("shows signed-in Product Research and public sold-listing handoffs for every selected candidate", async () => {
@@ -366,10 +368,8 @@ describe("arbitrage pages", () => {
     await render(<RetailArbitrage />);
 
     expect(container?.textContent).toContain("Check the sold market");
-    expect(container?.textContent).toContain("Exact edition query");
-    expect(container?.textContent).toContain(
-      "Try 2 alternate sold-search queries",
-    );
+    expect(container?.textContent).toContain("Artist and album query");
+    expect(container?.textContent).not.toContain("alternate sold-search");
     const productAnchor = Array.from(
       container?.querySelectorAll<HTMLAnchorElement>("a") ?? [],
     ).find((anchor) => anchor.textContent?.includes("eBay Product Research"));
@@ -385,15 +385,70 @@ describe("arbitrage pages", () => {
         productAnchor?.href ?? "https://invalid.example",
       ).searchParams.get("keywords"),
     ).toBe(
-      "The Jimi Hendrix Experience Are You Experienced yellow walmart exclusive",
+      "The Jimi Hendrix Experience Are You Experienced",
     );
     const publicUrl = new URL(publicAnchor?.href ?? "https://invalid.example");
     expect(publicUrl.searchParams.get("_nkw")).toBe(
-      "The Jimi Hendrix Experience Are You Experienced yellow walmart exclusive",
+      "The Jimi Hendrix Experience Are You Experienced",
     );
     expect(publicUrl.searchParams.get("LH_Complete")).toBe("1");
     expect(publicUrl.searchParams.get("LH_Sold")).toBe("1");
     expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps retained CD variants out of every retail queue even with stale vinyl flags", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      fileName: "retail-arbitrage-formats.json",
+      payload: {
+        createdAt: now(), phase: "final", runId: "formats", sourceReports: [],
+        finds: [validatedBuyFind(), {
+          ...validatedBuyFind(), id: "retained-cd", title: "Forbidden Compact Disc Offer",
+          sourceListingTitle: "Artist - Forbidden Compact Disc Offer Vinyl LP",
+          shopifyVariantTitle: "Default Title", recordFormat: "CD", physicalFormatConfirmed: true,
+        }],
+      }, status: "available",
+    })));
+    await render(<RetailArbitrage />);
+    expect(container?.textContent).toContain("Runtime Test Album");
+    for (const value of ["ALL", "CANDIDATES", "C", "REJECT"]) {
+      const select = Array.from(container?.querySelectorAll("select") ?? [])
+        .find((element) => Array.from(element.options).some((option) => option.value === "CANDIDATES"));
+      await act(async () => {
+        if (select) {
+          select.value = value;
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      });
+      expect(container?.textContent).not.toContain("Forbidden Compact Disc Offer");
+    }
+  });
+
+  it("shows observed album purchases as research context without inventing exact pressing proof", async () => {
+    const researched = {
+      ...validatedBuyFind(), id: "album-demand", soldEvidence: { status: "pending" },
+      albumDemand: {
+        version: 1, status: "observed", source: "local-own-sales-history",
+        scope: "album_across_conditions_and_editions", artistMatchConfirmed: true, albumMatchConfirmed: true,
+        capturedAt: now(), latestSaleDate: now(), transactionCount: 4, unitsSold: 7, unitsSold90Days: 2, unitsSold365Days: 7,
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      fileName: "retail-album-demand.json", status: "available",
+      payload: { createdAt: now(), phase: "final", runId: "album-demand", sourceReports: [], finds: [researched] },
+    })));
+    await render(<RetailArbitrage />);
+    const queue = Array.from(container?.querySelectorAll("select") ?? [])
+      .find((select) => Array.from(select.options).some((option) => option.value === "CANDIDATES"));
+    await act(async () => {
+      if (queue) {
+        queue.value = "ALL";
+        queue.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    expect(container?.textContent).toContain("Purchased before · 7 copies in your history");
+    expect(container?.textContent).toContain("across editions and conditions");
+    expect(container?.textContent).toContain("exact pressing evidence is checked separately");
+    expect(container?.textContent).not.toContain("Evidence: BUY");
   });
 
   it("releases dismissal and outcome feedback when the retail offer price changes", async () => {

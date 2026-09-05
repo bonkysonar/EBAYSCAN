@@ -15,8 +15,16 @@ const digital =
 const accessory =
   /\b(?:funko|figurines?|vinyl\s+figures?|pop!|record\s+bowl|coasters?|slipmats?)\b/i;
 const vinyl = /\b(?:(?:\d[ x-]?)?lp|vinyl|12[ -]inch)\b/i;
+const vinylFormat =
+  /\b(?:vinyl\b|(?:[1-9]\s*[x-]?\s*)?lps?\b|phonograph\s+record\b|record\s+album\b|(?:7|10|12)\s*(?:[ -]?inch\b|in\.?\b|["”]))/i;
+const nonVinylFormat =
+  /\b(?:(?:\d+\s*x?\s*)?cds?|compact\s+discs?|cassettes?|(?:audio\s+)?tapes?|dvds?|blu[ -]?ray|sacd|mini[ -]?disc)\b/i;
+// “Tapes” also names albums (The Basement Tapes, The Tiberi Tapes). A
+// product title needs an explicit tape-format cue; selected SKU metadata does not.
+const nonVinylTitleFormat =
+  /\b(?:(?:\d+\s*x?\s*)?cds?|compact\s+discs?|cassettes?|audio\s+tapes?|\d+\s+tapes|tape|dvds?|blu[ -]?ray|sacd|mini[ -]?disc)\b/i;
 const variantOnly =
-  /^(?:(?:baby|royal|cloudy|opaque|transparent|translucent|milky|neon|hot|light|dark|limited|exclusive|standard|180g|180|gram|vinyl|lp|2lp|3lp|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|clear|beer|marble|marbled|galaxy|splatter|swirl|smoke|in|with|w|and|edition|pressing|colour|color|colored|coloured|\d+)|[\s/&()+.-])+$/i;
+  /^(?:(?:baby|royal|cloudy|opaque|transparent|translucent|milky|neon|hot|light|dark|limited|exclusive|standard|180g|180|gram|vinyl|lp|2lp|3lp|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|clear|beer|tan|tangerine|amber|ruby|coral|navy|teal|grey|gray|sea|coke|bottle|inch|in|marble|marbled|galaxy|splatter|swirl|smoke|in|with|w|and|edition|pressing|colour|color|colored|coloured|\d+)|[\s/&()+.\-"”])+$/i;
 const storeVendor =
   /\b(?:records?|recordings|official|shop|store|merchnow|music|distribution|entertainment)\b/i;
 
@@ -26,6 +34,11 @@ export function retailEligibility(find = {}) {
   );
   const variant = clean(find.shopifyVariantTitle ?? find.variantTitle);
   const text = `${title} ${variant}`;
+  // A selected SKU's format takes precedence over a mixed-format parent page.
+  // Explicit non-vinyl variants cannot borrow "vinyl" from tags or title copy.
+  const format = retailRecordFormat(find);
+  if (format === "non_vinyl")
+    return { eligible: false, reason: "non_vinyl_format" };
   if (find.physicalFormatConfirmed === false)
     return { eligible: false, reason: "physical_record_format_unconfirmed" };
   if (accessory.test(text))
@@ -51,6 +64,21 @@ export function retailEligibility(find = {}) {
   return { eligible: true, reason: null };
 }
 
+export function retailRecordFormat(find = {}) {
+  const variant = clean(find.shopifyVariantTitle ?? find.variantTitle);
+  if (nonVinylFormat.test(variant)) return "non_vinyl";
+  if (vinylFormat.test(variant)) return "vinyl";
+  const structured = clean(find.recordFormat);
+  if (structured === "non_vinyl" || nonVinylFormat.test(structured))
+    return "non_vinyl";
+  const title = clean(
+    find.sourceListingTitle ?? find.listingTitle ?? find.title,
+  );
+  if (nonVinylTitleFormat.test(title)) return "non_vinyl";
+  if (vinylFormat.test(`${title} ${structured}`)) return "vinyl";
+  return "unknown";
+}
+
 export function shopifyIdentity(product, variant = {}, source = {}) {
   const rawTitle = clean(product.title);
   const tags = Array.isArray(product.tags)
@@ -61,6 +89,12 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
     .find((tag) => /^(?:artist|band)\s*[:=]/i.test(tag))
     ?.replace(/^[^:=]+[:=]\s*/, "");
   const vendor = clean(product.vendor);
+  const sourceId = source.sourceId ?? source.id;
+  // This distributor's vendor is the issuing label (for example Enjoy the
+  // Ride), while the artist may appear only in unstructured tags. Do not guess
+  // which unlabelled tag is the artist.
+  const vendorIsLabel =
+    source.vendorIsLabel === true || sourceId === "light-in-the-attic";
   const retailerVendor = retailerArtistConflict(
     vendor,
     source.name ?? source.displayName ?? source.sourceName ?? source.id,
@@ -68,20 +102,32 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
   const knownArtist =
     taggedArtist ||
     (vendor &&
+    !vendorIsLabel &&
     !retailerVendor &&
     !storeVendor.test(vendor) &&
     vendor !== "Default Title"
       ? vendor
       : null);
   const parts = rawTitle.split(/\s+[-–—]\s+/);
-  const endsInVariant = parts.length > 1 && variantOnly.test(parts.at(-1));
+  const endsInVariant = parts.length > 1 && isVariantDescription(parts.at(-1));
   let artist = inferRetailArtist(rawTitle);
   let title = inferRetailTitle(rawTitle);
+  // For split releases the vendor often names only one of the two artists.
+  // The explicit shared artist heading is stronger than that partial vendor.
+  const splitArtist =
+    parts.length > 1 &&
+    /\s\/\s/.test(parts[0]) &&
+    (!knownArtist ||
+      parts[0]
+        .split(/\s\/\s/)
+        .some((part) => part.toLowerCase() === knownArtist.toLowerCase()));
   if (
+    !splitArtist &&
     knownArtist &&
     (taggedArtist ||
       !title ||
       variantOnly.test(title) ||
+      vinylFormat.test(artist) ||
       (endsInVariant && parts.length === 2) ||
       artist === "Unknown Artist" ||
       rawTitle.toLowerCase().startsWith(knownArtist.toLowerCase()))
@@ -97,7 +143,8 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
         withoutArtist
           .split(/\s+[-–—]\s+/)
           .filter(
-            (part, i, all) => i !== all.length - 1 || !variantOnly.test(part),
+            (part, i, all) =>
+              i !== all.length - 1 || !isVariantDescription(part),
           )
           .join(" - "),
       ) || withoutArtist;
@@ -114,10 +161,16 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
     product.type,
     ...tags.filter((tag) => !/^(?:artist|band)\s*[:=]/i.test(tag)),
   ].join(" ");
+  const selectedFormat = retailRecordFormat({
+    sourceListingTitle: rawTitle,
+    shopifyVariantTitle: variant.title,
+  });
+  const explicitVinylVariant = vinylFormat.test(clean(variant.title));
   const physicalFormatConfirmed =
-    /\b(?:vinyl|[1-9]?lp|record\s+album|[127][02]?[ -]inch|box[ -]?set)\b/i.test(
-      formatText,
-    );
+    variant.requires_shipping !== false &&
+    selectedFormat !== "non_vinyl" &&
+    (explicitVinylVariant ||
+      (!nonVinylFormat.test(formatText) && vinylFormat.test(formatText)));
   const explicitArtist =
     artist !== "Unknown Artist" && !variantOnly.test(artist);
   return {
@@ -132,20 +185,27 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
         : explicitArtist
           ? "title_structure"
           : "needs_artist",
-    recordFormat: /\b7\s*(?:inch|in\.|["”])|7-inch/i.test(
-      `${rawTitle} ${variant.title ?? ""}`,
-    )
-      ? "7-inch"
-      : /\b(?:box\s*set|boxset)\b/i.test(rawTitle)
-        ? "box_set"
-        : "LP",
+    recordFormat:
+      selectedFormat === "non_vinyl"
+        ? "non_vinyl"
+        : /\b7\s*(?:inch|in\.|["”])|7-inch/i.test(
+              `${rawTitle} ${variant.title ?? ""}`,
+            )
+          ? "7-inch"
+          : /\b(?:box\s*set|boxset)\b/i.test(rawTitle)
+            ? "box_set"
+            : "LP",
     preorder: /\bpre[ -]?order\b/i.test(`${rawTitle} ${variant.title ?? ""}`),
     releaseDate: product.release_date ?? null,
   };
 }
 
 export function isVariantDescription(value) {
-  return variantOnly.test(clean(value));
+  const text = clean(value);
+  return (
+    variantOnly.test(text) ||
+    /^(?:[\w -]{1,40}\s+)?picture\s+disc(?:\s+vinyl(?:\s+lp)?)?$/i.test(text)
+  );
 }
 
 export function retailerArtistConflict(artist, sourceName) {

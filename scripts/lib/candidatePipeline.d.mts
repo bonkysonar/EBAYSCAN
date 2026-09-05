@@ -1,3 +1,5 @@
+import type { AlbumDemand, ResearchDemand } from "./albumDemand.mjs";
+
 export type RecordCandidateSource = {
   crawlType?: string | null;
   displayName?: string | null;
@@ -22,6 +24,7 @@ export type RecordCandidateAssessment = {
 };
 
 export type RankableCandidate = RecordCandidateSource & {
+  albumDemand?: AlbumDemand;
   activeListingCount?: number | null;
   appliedSaleCampaignId?: string | null;
   appliedSaleCode?: string | null;
@@ -60,7 +63,18 @@ export type RankableCandidate = RecordCandidateSource & {
   soldEvidence?: {
     status?: string | null;
     unitsSold90Days?: number | null;
+    unitsSold365Days?: number | null;
+    source?: string | null;
+    artistMatchConfirmed?: boolean;
+    albumMatchConfirmed?: boolean;
+    editionMatchConfirmed?: boolean;
+    matchConfidence?: number | string | null;
+    latestSaleDate?: string | null;
   } | null;
+  ebayResearchStatus?: string | null;
+  ebaySoldMatchConfidence?: string | number | null;
+  ebayResearchLatestSaleDate?: string | null;
+  productResearchRows?: Array<{ matchScore?: number; totalSold?: number }>;
   sourceId?: string;
   sourceListingTitle?: string | null;
   sourceName?: string;
@@ -244,4 +258,21 @@ export function sourceMetadataScore(source: RecordCandidateSource): number;
 export function selectResearchCandidates<T extends RankableCandidate>(
   candidates: T[],
   options?: { limit?: number },
-): ReturnType<typeof rankAndSelectCandidatesWithDiagnostics<T>>;
+): {
+  selected: Array<
+    T & {
+      discoveryLane: string;
+      researchPriority: string;
+      researchDemand: ResearchDemand;
+    }
+  >;
+  diagnostics: CandidateSelectionDiagnostics & {
+    observedDemandCandidateCount: number;
+    observedDemandSelectedCount: number;
+    explorationLimit: number;
+    explorationSelectedCount: number;
+    unprovenDeferredCount: number;
+    unusedResearchCapacity: number;
+    byDiscoveryLane: Record<string, number>;
+  };
+};

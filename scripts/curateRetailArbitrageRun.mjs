@@ -1,3 +1,7 @@
+import { createMarketplaceAlbumDemandIndex } from "./lib/marketplaceAlbumDemand.mjs";
+import { revalidateCandidateLocalSold } from "./lib/localSoldEvidence.mjs";
+import { browserVerifiedRetailOffer } from "./lib/browserRetailVerification.mjs";
+import { mergeResearchSoldEvidence } from "./lib/soldResearchWindow.mjs";
 import { verifyRetailOffers } from "./lib/retailOfferVerification.mjs";
 import { retailerArtistConflict } from "./lib/retailIdentity.mjs";
 import { createPoliteFetcher } from "./lib/politeHttp.mjs";
@@ -57,13 +61,19 @@ const memoryPath = resolve(
 const researchMemory = existsSync(memoryPath)
   ? JSON.parse(readFileSync(memoryPath, "utf8"))
   : {};
+const browserPath = resolve(workspace, "exports/arbitrage-finds/browser-source-observations.json");
+const browserCaptures = existsSync(browserPath) ? JSON.parse(readFileSync(browserPath, "utf8")) : {};
+const localIndexPath = resolve(workspace, "exports/sold-history/sold-comps-index.json");
+const localIndex = existsSync(localIndexPath) ? JSON.parse(readFileSync(localIndexPath, "utf8")) : null;
+const marketplaceCapturesPath = resolve(workspace, "exports/arbitrage-finds/browser-product-research.json");
+const marketplaceDemand = createMarketplaceAlbumDemandIndex(existsSync(marketplaceCapturesPath) ? JSON.parse(readFileSync(marketplaceCapturesPath, "utf8")) : {}, curatedAt);
 const evidenceByFindId = {};
 const retained =
   payload.researchCandidates ??
   (payload.finds ?? []).filter(
     (find) => find.opportunityType !== "sitewide_sale",
   );
-let curatedProducts = retained.map((find) =>
+let curatedProducts = retained.map((find) => localIndex ? revalidateCandidateLocalSold(find, localIndex, curatedAt) : find).map((find) => ({...find, albumDemand: find.albumDemand ?? marketplaceDemand.match(find)})).map((find) =>
   curateFind(
     find.identitySource === "retailer_vendor" &&
       retailerArtistConflict(find.artist, find.sourceName)
@@ -71,15 +81,16 @@ let curatedProducts = retained.map((find) =>
       : find,
   ),
 );
-if (String(payload.runManifest?.scannerVersion ?? "").endsWith("/4")) {
+if (Number(String(payload.runManifest?.scannerVersion ?? "").split("/").at(-1)) >= 4) {
   const fetchRetail = createPoliteFetcher({
     maxConcurrency: 2,
     minHostDelayMs: 1200,
     maxRetries: 0,
     requestTimeoutMs: 12000,
   });
+  curatedProducts = curatedProducts.map((find) => browserVerifiedRetailOffer(find, browserCaptures, new Date(curatedAt)) ?? find);
   const prioritized = [...curatedProducts]
-    .filter((f) => f.identityStatus !== "unresolved")
+    .filter((f) => f.identityStatus !== "unresolved" && f.retailVerification?.captureMethod !== "visible_browser")
     .sort((a, b) => (b.candidateScore ?? 0) - (a.candidateScore ?? 0))
     .slice(0, 80);
   const verified = await verifyRetailOffers(
@@ -109,6 +120,7 @@ const recommendedIds = new Set(
 const ranked = curatedProducts.sort(
   (a, b) =>
     Number(recommendedIds.has(b.id)) - Number(recommendedIds.has(a.id)) ||
+    Number(b.ebayResearchStatus === "validated") - Number(a.ebayResearchStatus === "validated") ||
     (b.candidateScore ?? 0) - (a.candidateScore ?? 0),
 );
 const finds = [
@@ -216,7 +228,7 @@ function curateFind(find) {
       totalSoldCount: 0,
       oneSellerSoldCount: 0,
     };
-  const researchCheckedAt = priorEmpty?.checkedAt ?? curatedAt;
+  const researchCheckedAt = priorEmpty?.checkedAt ?? research.capturedAt ?? curatedAt;
   evidenceByFindId[find.id] = research;
   const notes = [...(find.notes ?? [])];
   const output = {
@@ -246,9 +258,10 @@ function curateFind(find) {
     output.totalSoldCount = research.totalSoldCount;
     output.ebaySoldCondition = "new_sealed";
     output.ebaySoldMatchConfidence = research.matchConfidence ?? "unknown";
-    output.soldEvidence = mergeAggregateResearchWithDatedEvidence(
+    output.soldEvidence = mergeResearchSoldEvidence(
       find.soldEvidence,
       research,
+      researchCheckedAt,
     );
     notes.push(
       `Product Research matched ${research.aggregateUnitsSold ?? research.totalSoldCount} sold units across ${
@@ -258,7 +271,9 @@ function curateFind(find) {
       )} + ${money(research.averageSoldShipping)} shipping; latest sale ${
         research.latestSoldDate ?? "unknown"
       }.`,
-      research.velocityStatus === "dated_single_unit_rows"
+      research.velocityStatus === "verified_window_totals"
+        ? "Sold quantities come from the observed, completed date-window search; counts apply only to that window, not shorter or longer periods."
+        : research.velocityStatus === "dated_single_unit_rows"
         ? "Every accepted Product Research row was a unique, individually dated single-unit observation, so those rows can support dated 30/90/365-day velocity."
         : "Aggregate Product Research quantities remain long-window evidence only; they cannot prove recent velocity or create a BUY by themselves.",
     );
@@ -307,46 +322,11 @@ function curateFind(find) {
   return evaluateOpportunity(output, {}, curatedAt);
 }
 
-function mergeAggregateResearchWithDatedEvidence(existing, research) {
-  if (hasDatedVelocityEvidence(existing)) {
-    return {
-      ...existing,
-      supportsMarketplaceSellerRepeatProof:
-        existing.supportsMarketplaceSellerRepeatProof === true,
-      unitsSold1095Days:
-        research.aggregateUnitsSold ?? existing.unitsSold1095Days ?? null,
-    };
-  }
-
-  const hasSafeDatedRows =
-    research.velocityStatus === "dated_single_unit_rows" &&
-    research.sales30Days !== null &&
-    research.sales90Days !== null &&
-    research.sales365Days !== null;
-  return {
-    capturedAt: curatedAt,
-    condition: "new_sealed",
-    conservativeResalePrice: null,
-    latestSaleDate: research.latestSoldDate ?? null,
-    matchConfidence: research.matchConfidence ?? "unknown",
-    source: "ebay-product-research",
-    status: "validated",
-    supportsMarketplaceSellerRepeatProof: false,
-    transactionCount: hasSafeDatedRows ? research.rows.length : null,
-    unitsSold30Days: hasSafeDatedRows ? research.sales30Days : null,
-    unitsSold90Days: hasSafeDatedRows ? research.sales90Days : null,
-    unitsSold365Days: hasSafeDatedRows ? research.sales365Days : null,
-    unitsSold1095Days: research.aggregateUnitsSold ?? null,
-    velocityEvidence: hasSafeDatedRows
-      ? "dated_transactions"
-      : "aggregate_last_sale_only",
-  };
-}
-
 function hasDatedVelocityEvidence(evidence) {
   return Boolean(
     evidence &&
       (evidence.velocityEvidence === "dated_transactions" ||
+        evidence.velocityEvidence === "verified_window_totals" ||
         evidence.source === "local-own-sales-history"),
   );
 }

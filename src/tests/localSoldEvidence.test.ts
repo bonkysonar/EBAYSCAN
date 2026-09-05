@@ -1,7 +1,94 @@
 import { describe, expect, it } from "vitest";
-import { buildLocalSoldEvidence } from "../../scripts/lib/localSoldEvidence.mjs";
+import { buildLocalSoldEvidence, revalidateCandidateLocalSold } from "../../scripts/lib/localSoldEvidence.mjs";
 
 describe("local sold evidence mapping", () => {
+  it("revalidates a draft's old pricing while keeping retailer capture time and album demand", () => {
+    const capturedAt = "2026-06-29T12:00:00.000Z";
+    const result = revalidateCandidateLocalSold({ artist: "Creedence Clearwater Revival", title: "Bayou Country (Tangerine LP)", capturedAt, averageSoldPrice: 110, totalSoldCount: 1, soldEvidence: { source: "local-own-sales-history", status: "validated" } }, {
+      createdAt: "2026-06-30T00:00:00.000Z", comps: [{ records: [{ title: "Creedence Clearwater Revival- Bayou Country 2002 Factory Sealed 2002", conditionBucket: "new_sealed", quantity: 1, saleDate: "2026-06-20", soldFor: 110, shippingPaid: 4.47, totalBuyerPaid: 114.47 }] }],
+    }, "2026-06-30T00:00:00.000Z");
+    expect(result).toMatchObject({ capturedAt, averageSoldPrice: null, totalSoldCount: null, albumDemand: { status: "observed", unitsSold: 1 } });
+    expect(result.soldEvidence.status).toBe("candidate");
+  });
+
+  it("does not mistake an artist name for a vinyl color in local comparisons", () => {
+    const result = buildLocalSoldEvidence({ matchScore: 1, comp: { records: [{ title: "The White Stripes - Elephant Vinyl LP Brand New Sealed", conditionBucket: "new_sealed", quantity: 2, saleDate: "2026-06-20", soldFor: 25, shippingPaid: 5, totalBuyerPaid: 30 }] } }, { createdAt: "2026-06-30T00:00:00.000Z" }, { candidate: { artist: "The White Stripes", title: "Elephant", sourceListingTitle: "Elephant Vinyl LP" } });
+    expect(result.soldEvidence).toMatchObject({ status: "validated", editionMatchConfirmed: true });
+  });
+
+  it("does not price a current reissue from an unspecified older sealed pressing or premium series", () => {
+    const candidate = { artist: "Creedence Clearwater Revival", title: "Bayou Country", sourceListingTitle: "Bayou Country (Tangerine LP)" };
+    for (const title of ["Creedence Clearwater Revival- Bayou Country 2002 Factory Sealed 2002", "Creedence Clearwater Revival - Bayou Country Analogue Productions 45 RPM Vinyl New Sealed"]) {
+      const result = buildLocalSoldEvidence({ matchScore: 0.95, comp: { records: [{ title, conditionBucket: "new_sealed", quantity: 1, saleDate: "2026-06-20", soldFor: 110, shippingPaid: 4.47, totalBuyerPaid: 114.47 }] } }, { createdAt: "2026-06-30T00:00:00.000Z" }, { candidate });
+      expect(result.metrics).toBeNull();
+      expect(result.soldEvidence?.status).toBe("candidate");
+    }
+  });
+
+  it("does not borrow another album's prices when a fuzzy same-artist match is otherwise strong", () => {
+    const result = buildLocalSoldEvidence(
+      {
+        matchScore: 0.95,
+        comp: {
+          inferredArtist: "Queen",
+          records: [
+            {
+              title: "Queen - Greatest Hits II Vinyl LP",
+              inferredArtist: "Queen",
+              conditionBucket: "new_sealed",
+              quantity: 10,
+              saleDate: "2026-06-20",
+              soldFor: 80,
+              shippingPaid: 5,
+              totalBuyerPaid: 85,
+            },
+          ],
+        },
+      },
+      { createdAt: "2026-06-30T00:00:00.000Z" },
+      { candidate: { artist: "Queen", title: "Greatest Hits" } },
+    );
+    expect(result.metrics).toBeNull();
+    expect(result.soldEvidence).toMatchObject({
+      albumMatchConfirmed: false,
+      status: "candidate",
+      conservativeResalePrice: null,
+    });
+  });
+
+  it("confirms complete artist and album in a real sale title even when the importer missed its unspaced dash", () => {
+    const result = buildLocalSoldEvidence(
+      {
+        matchScore: 0.95,
+        comp: {
+          records: [
+            {
+              title: "Queen- Greatest Hits Vinyl Brand New/Sealed",
+              conditionBucket: "new_sealed",
+              quantity: 2,
+              saleDate: "2026-06-20",
+              soldFor: 25,
+              shippingPaid: 5,
+              totalBuyerPaid: 30,
+            },
+          ],
+        },
+      },
+      { createdAt: "2026-06-30T00:00:00.000Z" },
+      { candidate: { artist: "Queen", title: "Greatest Hits" } },
+    );
+    expect(result.metrics).toMatchObject({
+      unitsSold: 2,
+      conservativeResalePrice: 30,
+    });
+    expect(result.soldEvidence).toMatchObject({
+      artistMatchConfirmed: true,
+      albumMatchConfirmed: true,
+      editionMatchConfirmed: true,
+      status: "validated",
+    });
+  });
+
   it("uses quantity-weighted, condition-matched windows without claiming marketplace seller proof", () => {
     const result = buildLocalSoldEvidence(
       {

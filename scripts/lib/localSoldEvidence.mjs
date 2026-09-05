@@ -2,6 +2,38 @@ import {
   buildActiveSearchProfile,
   extractEditionIdentity,
 } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
+import { createAlbumDemandIndex, ownSaleMatchesAlbum } from "./albumDemand.mjs";
+
+const localDemandIndexes = new WeakMap();
+
+/** Recheck a retained draft against current matching rules without refreshing its retail observation. */
+export function revalidateCandidateLocalSold(find, index, referenceAt = new Date().toISOString()) {
+  if (!index?.comps || find.soldEvidence?.source === "ebay-product-research") return find;
+  let cached = localDemandIndexes.get(index);
+  if (!cached || cached.referenceAt !== referenceAt) {
+    cached = { referenceAt, demand: createAlbumDemandIndex(index, { now: referenceAt }) };
+    localDemandIndexes.set(index, cached);
+  }
+  let best = null;
+  for (const comp of cached.demand.matchingComps(find)) {
+    const result = buildLocalSoldEvidence({ comp, matchScore: 1 }, index, { candidate: find, condition: "new_sealed", referenceAt });
+    if (!best || Number(result.soldEvidence?.status === "validated") > Number(best.soldEvidence?.status === "validated") ||
+      (result.soldEvidence?.status === best.soldEvidence?.status && (result.metrics?.unitsSold90Days ?? 0) > (best.metrics?.unitsSold90Days ?? 0))) best = result;
+  }
+  const hadLocal = find.soldEvidence?.source === "local-own-sales-history";
+  const notes = (find.notes ?? []).filter((note) => !/^Local (?:new\/sealed sold-history match|sold-history|CSV history)|^Condition evidence:/.test(note));
+  const metrics = best?.metrics;
+  notes.push(metrics ? `Revalidated exact local artist/album/edition: ${metrics.unitsSold} New/Sealed units; ${metrics.unitsSold90Days} within 90 days.` : "No exact local pressing comp after revalidation; album purchases remain a research signal only.");
+  return {
+    ...find,
+    albumDemand: cached.demand.match(find),
+    averageSoldPrice: metrics?.averageSoldFor ?? null,
+    averageSoldShipping: metrics?.averageShipping ?? null,
+    totalSoldCount: metrics?.unitsSold ?? null,
+    soldEvidence: best?.soldEvidence ?? (hadLocal ? undefined : find.soldEvidence),
+    notes,
+  };
+}
 
 export function buildLocalSoldEvidence(compMatch, index, options = {}) {
   if (!compMatch?.comp) return { metrics: null, soldEvidence: undefined };
@@ -9,10 +41,12 @@ export function buildLocalSoldEvidence(compMatch, index, options = {}) {
   const referenceAt = options.referenceAt ?? index?.createdAt ?? new Date().toISOString();
   const artistConfirmation = confirmCandidateArtist(options.candidate, compMatch.comp);
   const artistMatchedRecords = candidateArtistMatchedRecords(options.candidate, compMatch.comp);
+  const albumMatchedRecords = artistMatchedRecords.filter((record) => ownSaleMatchesAlbum(options.candidate, record));
+  const albumConfirmed = albumMatchedRecords.length > 0;
   const editionConfirmation = confirmCandidateEdition(
     options.candidate,
     compMatch.comp,
-    artistMatchedRecords,
+    albumMatchedRecords,
   );
   const metrics = conditionMatchedSoldMetrics(
     { records: editionConfirmation.matchedRecords },
@@ -21,14 +55,16 @@ export function buildLocalSoldEvidence(compMatch, index, options = {}) {
     referenceAt,
   );
   const usableMetrics =
-    artistConfirmation.confirmed && editionConfirmation.confirmed ? metrics : null;
-  const matchConfidence = artistConfirmation.confirmed && editionConfirmation.confirmed
+    artistConfirmation.confirmed && albumConfirmed && editionConfirmation.confirmed ? metrics : null;
+  const matchConfidence = artistConfirmation.confirmed && albumConfirmed && editionConfirmation.confirmed
     ? Math.min(1, Number(compMatch.matchScore) || 0)
     : Math.min(0.65, Number(compMatch.matchScore) || 0);
 
   return {
     metrics: usableMetrics,
     soldEvidence: {
+      albumMatchConfirmed: albumConfirmed,
+      albumMismatchReasons: albumConfirmed ? [] : ["album_title_not_confirmed"],
       artistMatchConfirmed: artistConfirmation.confirmed,
       artistMismatchReasons: artistConfirmation.reasons,
       capturedAt: index?.createdAt ?? referenceAt ?? null,
@@ -47,6 +83,7 @@ export function buildLocalSoldEvidence(compMatch, index, options = {}) {
         compMatch.matchScore >= 0.8 &&
         Boolean(usableMetrics && usableMetrics.unitsSold > 0) &&
         artistConfirmation.confirmed &&
+        albumConfirmed &&
         editionConfirmation.confirmed
           ? "validated"
           : "candidate",
@@ -62,6 +99,7 @@ export function buildLocalSoldEvidence(compMatch, index, options = {}) {
 function confirmCandidateArtist(candidate, comp) {
   const candidateArtist = normalizeArtist(candidate?.artist);
   if (!candidateArtist) return { confirmed: false, reasons: ["candidate_artist_missing"] };
+  if ((comp?.records ?? []).some((record) => ownSaleMatchesAlbum(candidate, record))) return { confirmed: true, reasons: [] };
 
   const compArtists = [
     comp?.inferredArtist,
@@ -87,6 +125,7 @@ function candidateArtistMatchedRecords(candidate, comp) {
   const candidateArtist = normalizeArtist(candidate?.artist);
   if (!candidateArtist) return [];
   return (comp?.records ?? []).filter((record) => {
+    if (ownSaleMatchesAlbum(candidate, record)) return true;
     const recordArtist = normalizeArtist(record?.inferredArtist ?? comp?.inferredArtist);
     return (
       recordArtist &&
@@ -112,8 +151,9 @@ function confirmCandidateEdition(candidate, comp, records) {
         : 1,
   });
   const releaseTitleBaseline = profile?.title ?? candidate?.title ?? "";
+  const fullIdentityBaseline = `${profile?.artist ?? candidate?.artist ?? ""} ${releaseTitleBaseline}`;
   const expected =
-    profile?.edition ?? extractEditionIdentity(candidateText, releaseTitleBaseline);
+    profile?.edition ?? extractEditionIdentity(candidateText, fullIdentityBaseline);
   const titledRecords = (records ?? []).filter((record) => record?.title);
   if (titledRecords.length === 0) {
     return {
@@ -127,8 +167,9 @@ function confirmCandidateEdition(candidate, comp, records) {
     (record) =>
       extractEditionIdentity(
         record.title,
-        releaseTitleBaseline,
-      ).key === expected.key,
+        fullIdentityBaseline,
+      ).key === expected.key &&
+      localPressingCompatible(candidateText, record.title, releaseTitleBaseline),
   );
   return matchedRecords.length > 0
     ? { confirmed: true, matchedRecords, reasons: [] }
@@ -137,6 +178,31 @@ function confirmCandidateEdition(candidate, comp, records) {
         matchedRecords: [],
         reasons: [`edition_not_confirmed:${expected.key}`],
       };
+}
+
+function localPressingCompatible(candidateText, saleTitle, releaseTitle) {
+  const premiumMarkers = [
+    /\b(?:mofi|mobile\s+fidelity)\b/i,
+    /\banalogue\s+productions\b/i,
+    /\bmusic\s+matters\b/i,
+    /\b(?:original|first)\s+press(?:ing)?\b/i,
+    /\btest\s+press(?:ing)?\b/i,
+    /\b45\s*rpm\b/i,
+    /\btone\s+poet\b/i,
+    /\bblue\s+note\s+classics?\b/i,
+    /\bblue\s+note\s+essentials?\b/i,
+    /\b(?:japanese|japan|obi)\b/i,
+  ];
+  if (premiumMarkers.some((pattern) => pattern.test(candidateText) !== pattern.test(saleTitle))) return false;
+  const escapedRelease = String(releaseTitle ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const withoutRelease = (text) => escapedRelease ? String(text).replace(new RegExp(escapedRelease, "gi"), " ") : String(text);
+  const years = (text) => new Set(withoutRelease(text).match(/\b(?:19|20)\d{2}\b/g) ?? []);
+  const expectedYears = years(candidateText);
+  const actualYears = years(saleTitle);
+  // An older sealed pressing may have a very different value. An unspecified
+  // current reissue cannot borrow that historical pressing's price.
+  return [...actualYears].every((year) => expectedYears.has(year)) &&
+    [...expectedYears].every((year) => actualYears.has(year));
 }
 
 function normalizeArtist(value) {

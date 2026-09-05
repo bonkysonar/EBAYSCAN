@@ -55,6 +55,31 @@ export function mergeVerifiedSourceUpdates(
     Number.isFinite(Date.parse(date)) &&
     Date.parse(date) >= started - 300000 &&
     Date.parse(date) <= now + 300000;
+  const freshProduct = (find: ArbitrageImportPayload["finds"][number]) => {
+    if (!find.retailObservationMethod && !find.retailObservedAt && !find.retailObservationUrl)
+      return fresh(find.capturedAt);
+    if (!["visible_browser", "visible_browser_catalog"].includes(find.retailObservationMethod ?? ""))
+      return false;
+    const report = reports.find((entry) => entry.id === find.sourceId);
+    const observed = Date.parse(find.retailObservedAt ?? "");
+    const reportObserved = Date.parse(String(report?.browserObservedAt ?? ""));
+    if (!Number.isFinite(observed) || now - observed > 6 * 3600000 || observed > now + 300000 ||
+        Date.parse(find.capturedAt) !== observed || !Number.isFinite(reportObserved) ||
+        observed > reportObserved || reportObserved > now + 300000 ||
+        !(Number(report?.browserObservationCount) > 0) ||
+        report?.browserCatalogCoverage !== "bounded_visible_pages" ||
+        !Array.isArray(report.browserObservedUrls)) return false;
+    try {
+      const page = new URL(find.retailObservationUrl ?? "");
+      const product = new URL(find.sourceUrl);
+      const canonical = (url: URL) => `${url.origin.replace(/^https:\/\/www\./, "https://")}${url.pathname}${url.search}`;
+      const safeUrl = (url: URL) => url.protocol === "https:" && !url.username && !url.password && !url.port &&
+        !/(?:account|checkout|customer_authentication|cart|buyer_flags)/i.test(url.href);
+      return safeUrl(page) && safeUrl(product) &&
+        page.hostname.replace(/^www\./, "") === product.hostname.replace(/^www\./, "") &&
+        report.browserObservedUrls.some((url) => typeof url === "string" && canonical(new URL(url)) === canonical(page));
+    } catch { return false; }
+  };
   const observations = (
     incoming.saleObservations ??
     incoming.saleEvents ??
@@ -64,7 +89,7 @@ export function mergeVerifiedSourceUpdates(
     (f) =>
       f.opportunityType !== "sitewide_sale" &&
       products.has(f.sourceId ?? "") &&
-      fresh(f.capturedAt) &&
+      freshProduct(f) &&
       retailEligibility(f).eligible,
   );
   if (!products.size && !sales.size)

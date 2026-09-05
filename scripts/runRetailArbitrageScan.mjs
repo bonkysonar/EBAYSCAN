@@ -1,10 +1,14 @@
 import { applyRetailLearning } from "./lib/retailLearning.mjs";
+import { createAlbumDemandIndex } from "./lib/albumDemand.mjs";
+import { createMarketplaceAlbumDemandIndex } from "./lib/marketplaceAlbumDemand.mjs";
+import { buildSoldResearchQueryVariants } from "../src/lib/arbitrage/soldResearchLinks.mjs";
 import {
   extractRetailCampaigns,
   applyCampaignOffers,
   campaignBasketScenario,
 } from "./lib/campaignOffers.mjs";
 import { shopifyIdentity, retailEligibility } from "./lib/retailIdentity.mjs";
+import { validateBrowserRetailObservations, browserObservationUrl, browserObservationPage, browserSourceDiagnostics, browserProductCandidates } from "./lib/browserRetailObservations.mjs";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -71,7 +75,7 @@ import {
   parseRetailProductPrices,
 } from "./lib/retailListingParsing.mjs";
 import { discoverRetailCatalogLinks } from "./lib/retailCatalogDiscovery.mjs";
-import { discoverRetailPaginationLinks } from "./lib/retailPagination.mjs";
+import { discoverRetailPaginationLinks, discoverNewestForumPages } from "./lib/retailPagination.mjs";
 import { extractRetailProductCards } from "./lib/retailProductCards.mjs";
 import {
   extractShopifyCurrency,
@@ -304,8 +308,18 @@ const soldIndex = existsSync(SOLD_INDEX_PATH)
   ? JSON.parse(readFileSync(SOLD_INDEX_PATH, "utf8"))
   : null;
 const capturedAt = new Date().toISOString();
+const albumDemandIndex = createAlbumDemandIndex(soldIndex ?? {}, { now: capturedAt });
+const marketplaceResearchPath = resolve("exports/arbitrage-finds/browser-product-research.json");
+const marketplaceAlbumDemandIndex = createMarketplaceAlbumDemandIndex(
+  existsSync(marketplaceResearchPath) ? JSON.parse(readFileSync(marketplaceResearchPath, "utf8")) : {},
+  capturedAt,
+);
+const browserObservations = args.get("browserObservations")
+  ? validateBrowserRetailObservations(JSON.parse(readFileSync(resolve(args.get("browserObservations")), "utf8")), sourceCatalog, capturedAt)
+  : [];
+const browserPagesByUrl = new Map(browserObservations.map((page) => [browserObservationUrl(page.url), page]));
 const runId = `scan-${timestampForFile(capturedAt)}`;
-const previousScanState = loadPreviousScanState(OUTPUT_DIR);
+const previousScanState = loadPreviousScanState(OUTPUT_DIR, args.get("previousScan"));
 const sourceReports = [];
 const allCandidates = [];
 const allSaleEvents = [];
@@ -316,6 +330,9 @@ const scheduledFetch = createPoliteFetcher({
   maxRetries: fetchRetries,
   minHostDelayMs: hostDelayMs,
   requestTimeoutMs: fetchTimeoutMs,
+  // Access challenges are frequently delivered as 429 HTML by retailer hosts.
+  // Defer that host to a normal browser observation instead of repeating it.
+  retryStatuses: new Set([408, 425, 500, 502, 503, 504]),
 });
 
 const sourceScanResults = await mapWithConcurrency(
@@ -436,6 +453,7 @@ const sourceScanResults = await mapWithConcurrency(
 );
 
 for (const result of sourceScanResults) {
+  Object.assign(result.report, browserSourceDiagnostics(browserObservations, result.report.id));
   sourceReports.push(result.report);
   allCandidates.push(...result.candidates);
   allSaleEvents.push(...result.saleEvents);
@@ -755,9 +773,18 @@ function readBooleanField(block, fieldName) {
 
 async function scanSource(source) {
   const adapter = sourceAdapterFor(source);
-  const result = await adapter.scan(source);
+  const observed = browserObservations.filter((page) => page.sourceId === source.id);
+  let result;
+  if (args.has("browserOnly")) {
+    if (!observed.length) throw new Error(`No fresh browser observations for ${source.id}`);
+    const observedReports = observed.map((page) => ({purpose:"browser-observation",requestedUrl:page.url,resolvedUrl:page.url,role:page.catalogProducts?.length || page.productEvidence ? "catalog" : "sale",status:page.outcome === "available" ? "available" : "confirmed_removed",observationMethod:"visible_browser",observedAt:page.capturedAt,catalogCoverage:"bounded_visible_page"}));
+    result = genericRetailerResult(source,{pages:observed.filter((page)=>page.outcome === "available").map((page)=>({...browserObservationPage(page),scanPurpose:"browser-observation",scanRootPurpose:"configured"})),pageReports:observedReports});
+    result.sourceStatus = "partial";
+    result.reportFields = {scanComplete:false,coverageStopReason:"bounded_visible_browser_capture",evidenceScope:"observed_public_pages_only"};
+  } else result = await adapter.scan(source);
   return {
     ...result,
+    candidates: dedupeCandidates([...browserProductCandidates(browserObservations, source, stableId), ...(result.candidates ?? [])]),
     adapterStats: {
       adapterFamily: adapter.id,
       ...(result.adapterStats ?? {}),
@@ -1195,7 +1222,8 @@ function genericRetailerResult(source, pageScan) {
     },
     candidates,
     pageReports: pageScan.pageReports,
-    saleEvents: dedupeSaleEvents(
+    // Forum coupons are leads for retailer rechecks, never verified retail offers.
+    saleEvents: source.sourceType === "deal-aggregator" && /\/threads\//.test(source.url) ? [] : dedupeSaleEvents(
       pageScan.pages.flatMap((page) =>
         detectSaleEvents(source, page.html, page.url),
       ),
@@ -1220,6 +1248,7 @@ function cookieHeaderFromPages(pages) {
 }
 
 function genericCandidatePages(pages, source) {
+  const observedPages = pages.filter((page) => page.observationMethod === "visible_browser");
   const configuredPages = pages.filter(
     (page) =>
       page.scanRootPurpose === "configured" &&
@@ -1236,9 +1265,9 @@ function genericCandidatePages(pages, source) {
     (page) => page.scanRootPurpose === "discovered-catalog-link",
   );
   if (configuredPages.length > 0)
-    return dedupePages([...configuredPages, ...discoveredVinylSalePages]);
+    return dedupePages([...configuredPages, ...discoveredVinylSalePages, ...observedPages]);
   if (recoveredCatalogPages.length > 0) {
-    return dedupePages([...recoveredCatalogPages, ...discoveredVinylSalePages]);
+    return dedupePages([...recoveredCatalogPages, ...discoveredVinylSalePages, ...observedPages]);
   }
 
   try {
@@ -1248,7 +1277,7 @@ function genericCandidatePages(pages, source) {
   } catch {
     // A malformed configured URL is already represented in source diagnostics.
   }
-  return [];
+  return observedPages;
 }
 
 function isSuspiciousHomepageRedirect(requestedUrl, resolvedUrl) {
@@ -2028,6 +2057,10 @@ async function fetchSourcePages(source, options = {}) {
   const attempted = new Set();
   const resolved = new Set();
 
+  for (const observation of browserObservations.filter((page) => page.sourceId === source.id)) {
+    await addPage(observation.url, "browser-observation", observation.role === "catalog" || /\/products\//.test(new URL(observation.url).pathname) ? "catalog" : "sale");
+  }
+
   for (const target of sourceEntryTargetsWithPriorRechecks(source, {
     maxHintUrls: salePathHintLimit(source),
   })) {
@@ -2071,7 +2104,17 @@ async function fetchSourcePages(source, options = {}) {
     await addPage(url, "discovered-sale-link", "sale");
   }
 
-  if (options.followPagination !== false && genericMaxPages > 1) {
+  const isForumThread = source.sourceType === "deal-aggregator" && /\/threads\//.test(source.url);
+  if (isForumThread && options.followPagination !== false) {
+    // Visit the latest linked page, then use its navigation to observe the previous page.
+    // This avoids scanning page two of a years-old discussion for today's sale leads.
+    for (let round = 0; round < 2; round += 1) {
+      const latest = [...new Set(pages.flatMap((page) => discoverNewestForumPages(page.html,page.url,3)))].filter((url) => !attempted.has(url)).sort((a,b)=>Number(b.match(/page-(\d+)/)?.[1] ?? 0)-Number(a.match(/page-(\d+)/)?.[1] ?? 0))[0];
+      if (!latest) break;
+      await addPage(latest,"newest-forum-page","sale","configured");
+    }
+  }
+  if (!isForumThread && options.followPagination !== false && genericMaxPages > 1) {
     let paginationPageCount = 0;
     for (
       let pageIndex = 0;
@@ -2111,12 +2154,17 @@ async function fetchSourcePages(source, options = {}) {
 
     try {
       const page = await fetchPage(url);
+      if (page.browserOutcome === "not_found") {
+        pageReports.push({purpose,requestedUrl:url,resolvedUrl:page.url,role,status:"confirmed_removed",observationMethod:"visible_browser",observedAt:page.observedAt});
+        return false;
+      }
       pageReports.push({
         purpose,
         requestedUrl: url,
         resolvedUrl: page.url,
         role,
         status: "available",
+        ...(page.observationMethod ? {observationMethod:page.observationMethod,observedAt:page.observedAt,catalogCoverage:"bounded_visible_page"} : {}),
       });
       if (!resolved.has(page.url)) {
         resolved.add(page.url);
@@ -3409,17 +3457,17 @@ function saleFingerprint(source, rawSignal, url, discountPercent, scope) {
   );
 }
 
-function loadPreviousScanState(outputDir) {
+function loadPreviousScanState(outputDir, previousPath) {
   const preferredUrls = new Map();
   if (!existsSync(outputDir))
     return { preferredUrls, saleCampaignLedger: null };
 
   let latest = null;
-  for (const fileName of readdirSync(outputDir)) {
-    if (!/^retail-arbitrage-.*\.json$/i.test(fileName)) continue;
+  for (const fileName of previousPath ? [resolve(previousPath)] : readdirSync(outputDir)) {
+    if (!previousPath && !/^retail-arbitrage-.*\.json$/i.test(fileName)) continue;
     try {
       const payload = JSON.parse(
-        readFileSync(join(outputDir, fileName), "utf8"),
+        readFileSync(previousPath ? fileName : join(outputDir, fileName), "utf8"),
       );
       const createdAtMs = new Date(payload.createdAt ?? 0).getTime();
       if (
@@ -3433,6 +3481,7 @@ function loadPreviousScanState(outputDir) {
     }
   }
 
+  if (previousPath && !latest) throw new Error(`Cannot read requested previous scan: ${previousPath}`);
   for (const report of latest?.payload?.sourceReports ?? []) {
     if (!report?.id) continue;
     if (report.preferredUrl) {
@@ -3464,7 +3513,7 @@ function enrichCandidate(candidate, index) {
   const sourceCurrency =
     normalizeCurrency(candidate.sourceCurrency) ??
     defaultCurrencyForCountry(sourceMetadata?.country);
-  const compMatch = index ? bestCompMatch(candidate, index.comps) : null;
+  const compMatch = index ? bestCompMatch(candidate, albumDemandIndex.matchingComps(candidate)) : null;
   const artistAggregate = index
     ? bestArtistAggregateMatch(candidate, index.artistAggregates)
     : null;
@@ -3560,11 +3609,12 @@ function enrichCandidate(candidate, index) {
     ...candidate,
     ...sourceMetadataForCandidate(sourceMetadata),
     activeListingCount: null,
+    albumDemand: albumDemandIndex.match(candidate) ?? marketplaceAlbumDemandIndex.match(candidate),
     artistSoldUnits365Days: artistAggregate?.unitsSold365Days ?? null,
     artistSoldUnits1095Days: null,
     averageSoldPrice,
     averageSoldShipping,
-    capturedAt,
+    capturedAt: candidate.retailObservationMethod?.startsWith("visible_browser") ? candidate.retailObservedAt : capturedAt,
     ebayResearchUrl: ebayResearchUrl(candidate),
     ebayResearchKeywordVariants: researchKeywordVariants(candidate),
     lowestActivePrice: null,
@@ -3659,6 +3709,8 @@ function bestCompMatch(candidate, comps) {
 }
 
 async function fetchPage(url, options = {}) {
+  const browserPage = browserPagesByUrl.get(browserObservationUrl(url));
+  if (browserPage) return browserObservationPage(browserPage);
   const host = new URL(url).host;
   if (inaccessibleRetailHosts.has(host))
     throw Object.assign(
@@ -4252,45 +4304,11 @@ function ebayResearchUrl(candidate) {
 }
 
 function researchKeywords(candidate) {
-  const normalizedArtist = normalizeResearchArtist(candidate.artist);
-  const normalizedTitle = normalizeResearchTitle(
-    candidate.title || candidate.sourceListingTitle || "",
-  );
-  if (!normalizedArtist) return normalizedTitle;
-  return cleanResearchText(
-    startsWithSameWords(normalizedTitle, normalizedArtist)
-      ? normalizedTitle
-      : `${normalizedArtist} ${normalizedTitle}`,
-  );
+  return buildSoldResearchQueryVariants(candidate)[0]?.query ?? "";
 }
 
 function researchKeywordVariants(candidate) {
-  const primary = researchKeywords(candidate);
-  const variants = new Set([primary]);
-  const rawTitle = cleanResearchText(
-    String(candidate.title || candidate.sourceListingTitle || "").replace(
-      /[()]/g,
-      " ",
-    ),
-  );
-
-  if (/\bsoundtrack\b|\bmotion\s+picture\b/i.test(rawTitle)) {
-    const baseTitle = normalizeResearchTitle(
-      candidate.title || candidate.sourceListingTitle || "",
-    );
-    const normalizedArtist = normalizeResearchArtist(candidate.artist);
-    const prefix =
-      normalizedArtist && !startsWithSameWords(baseTitle, normalizedArtist)
-        ? `${normalizedArtist} `
-        : "";
-    if (baseTitle) {
-      variants.add(cleanResearchText(`${prefix}${baseTitle}`));
-      variants.add(cleanResearchText(`${prefix}${baseTitle} Soundtrack`));
-      variants.add(cleanResearchText(`${prefix}${baseTitle} OST`));
-    }
-  }
-
-  return [...variants].filter(Boolean);
+  return buildSoldResearchQueryVariants(candidate).map((variant)=>variant.query);
 }
 
 function absolutize(base, href) {

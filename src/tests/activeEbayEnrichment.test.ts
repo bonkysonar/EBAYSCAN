@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildActiveSearchProfile } from "../lib/arbitrage/activeEbayMatching.mjs";
-import { enrichActiveEntry, searchVariantPages, type ActiveVariantResult } from "../../scripts/enrichArbitrageActiveEbay.mjs";
+import { ACTIVE_MATCHING_VERSION, buildQueue, enrichActiveEntry, searchVariantPages, type ActiveVariantResult } from "../../scripts/enrichArbitrageActiveEbay.mjs";
 import type { ArbitrageFind } from "../lib/arbitrage/types";
 
 function sourceFind(): ArbitrageFind {
@@ -37,6 +37,19 @@ function ebayItem(id: string, title: string, price: number) {
 }
 
 describe("active eBay enrichment", () => {
+  it("rechecks completed searches when their matching version or pressing identity changes", () => {
+    const find = sourceFind();
+    const profile = buildActiveSearchProfile(find)!;
+    const completed: ArbitrageFind = {
+      ...find, ebayActiveSearchStatus: "available", ebayActiveSearchComplete: true,
+      ebayActiveMatchingVersion: ACTIVE_MATCHING_VERSION, ebayActiveProfileKey: profile.key,
+    };
+    expect(buildQueue([completed])).toHaveLength(0);
+    expect(buildQueue([{ ...completed, ebayActiveMatchingVersion: undefined }])).toHaveLength(1);
+    expect(buildQueue([{ ...completed, sourceListingTitle: "Artist - Great Escape (Tangerine LP)" }])).toHaveLength(1);
+    expect(buildQueue([{ ...completed, ebayActiveSearchStatus: "failed" }])).toHaveLength(1);
+  });
+
   it("excludes the source eBay purchase listing from its own active comparisons", async () => {
     const find = {
       ...sourceFind(),
@@ -226,6 +239,8 @@ describe("active eBay enrichment", () => {
       shippingDestinationVerified: false,
     });
     const [requestedUrl, requestInit] = fetchImpl.mock.calls[0];
+    expect(new URL(String(requestedUrl)).searchParams.get("q")).toBe("Artist Great Escape");
+    expect(new URL(String(requestedUrl)).searchParams.get("category_ids")).toBe("176985");
     expect(new URL(String(requestedUrl)).searchParams.get("filter")).not.toContain(
       "deliveryPostalCode",
     );

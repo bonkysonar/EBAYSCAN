@@ -25,6 +25,58 @@ function findFor(title: string): ArbitrageFind {
 }
 
 describe("active eBay edition matching", () => {
+  it("uses one artist and album search while validating pressing details on results", () => {
+    const profile = buildActiveSearchProfile({
+      ...findFor("Artist - Great Escape (Sea Blue Smoke Vinyl 2LP)"),
+      artist: "Artist", title: "Great Escape", identityStatus: "resolved",
+      barcode: "012345678905", ebayResearchKeywordVariants: ["012345678905", "Artist Great Escape blue vinyl 2LP"],
+    })!;
+    expect(profile.primary).toBe("Artist Great Escape");
+    expect(profile.variants).toEqual(["Artist Great Escape"]);
+    expect(matchActiveListing("Artist Great Escape SEA BLUE SMOKE 2LP Vinyl New Sealed", profile).matched).toBe(true);
+    expect(matchActiveListing("Artist Great Escape RED 2LP Vinyl New Sealed", profile).matched).toBe(false);
+    expect(matchActiveListing("Artist Great Escape SEA BLUE SMOKE CD", profile).matched).toBe(false);
+  });
+
+  it("uses resolved retailer identity rather than reparsing format-bearing album text as an artist", () => {
+    const profile = buildActiveSearchProfile({
+      ...findFor("Screen Violence Alternate Artwork O-Card Vinyl: How Not To Drown Edition"),
+      artist: "Chvrches", identityStatus: "resolved", title: "Screen Violence",
+    })!;
+    expect(profile).toMatchObject({ artist: "Chvrches", title: "Screen Violence", primary: "Chvrches Screen Violence" });
+  });
+
+  it("retains real album words and excludes CDs before spending Browse quota", () => {
+    for (const title of ["Blue", "New", "The White Album", "The Record"]) {
+      const profile = buildActiveSearchProfile({ ...findFor(`Artist - ${title} Vinyl LP`), artist: "Artist", title })!;
+      expect(profile.primary).toBe(`Artist ${title}`);
+      expect(matchActiveListing(`Artist ${title} Vinyl LP New Sealed`, profile).matched).toBe(true);
+      expect(matchActiveListing("Artist Some Other Release Vinyl LP", profile).matched).toBe(false);
+      expect(matchActiveListing("Artist Some Other Release Blue Vinyl LP New Sealed", profile).matched).toBe(false);
+    }
+    expect(buildActiveSearchProfile({ ...findFor("Artist - Great Escape Vinyl LP"), shopifyVariantTitle: "CD", physicalFormatConfirmed: true })).toBeNull();
+  });
+
+  it("keeps 7-inch identity out of keywords but requires it in compared listings", () => {
+    const profile = buildActiveSearchProfile({ ...findFor('Artist - Split - Tan 7" Vinyl'), artist: "Artist", title: "Split", recordFormat: "7-inch" })!;
+    expect(profile.primary).toBe("Artist Split");
+    expect(profile.edition.format).toBe("7-inch");
+    expect(matchActiveListing('Artist Split Tan 7" Vinyl New Sealed', profile).matched).toBe(true);
+    expect(matchActiveListing('Artist Split Tan Vinyl LP New Sealed', profile).matched).toBe(false);
+  });
+
+  it("does not call a named-color pressing standard or use color words from artist names", () => {
+    for (const color of ["Tangerine", "Ruby", "Amber", "Coral"]) {
+      const profile = buildActiveSearchProfile({ ...findFor(`Creedence Clearwater Revival - Bayou Country (${color} LP)`), artist: "Creedence Clearwater Revival", title: `Bayou Country (${color} LP)` })!;
+      expect(profile.primary).toBe("Creedence Clearwater Revival Bayou Country");
+      expect(profile.edition.colors).toContain(color.toLowerCase());
+      expect(matchActiveListing("Creedence Clearwater Revival Bayou Country Vinyl LP New Sealed", profile).matched).toBe(false);
+      expect(matchActiveListing(`Creedence Clearwater Revival Bayou Country ${color} Vinyl LP New Sealed`, profile).matched).toBe(true);
+    }
+    expect(buildActiveSearchProfile(findFor("The White Stripes - Elephant Vinyl LP"))?.edition.colors).toEqual([]);
+    expect(buildActiveSearchProfile(findFor("Herbie Hancock - Maiden Voyage (Blue Note Essential Vinyl Series) LP"))?.edition.colors).toEqual([]);
+  });
+
   it("carries the purchase item identity so its own listing can be excluded", () => {
     const find = {
       ...findFor("Artist - Great Escape Vinyl LP"),
@@ -140,13 +192,13 @@ describe("active eBay edition matching", () => {
   it("keeps dash and quoted source separators when inferring artist and title", () => {
     expect(buildActiveSearchProfile(findFor("Cave In – Final Transmission Vinyl LP"))).toMatchObject({
       artist: "Cave In",
-      primary: "Cave In Final Transmission Vinyl LP",
+      primary: "Cave In Final Transmission",
       title: "Final Transmission",
     });
     expect(buildActiveSearchProfile(findFor('Anthony Ramos “Love And Lies” (Black/Platinum Swirl Vinyl LP)'))).toMatchObject({
       artist: "Anthony Ramos",
       title: "Love And Lies",
-      primary: expect.stringContaining("Platinum Swirl"),
+      primary: "Anthony Ramos Love And Lies",
     });
   });
 
@@ -184,7 +236,7 @@ describe("active eBay edition matching", () => {
       ),
     ).toMatchObject({
       artist: "Creedence Clearwater Revival",
-      primary: "Creedence Clearwater Revival At The Royal Albert Hall Vinyl",
+      primary: "Creedence Clearwater Revival At The Royal Albert Hall",
       title: "At The Royal Albert Hall",
     });
 
@@ -220,7 +272,7 @@ describe("active eBay edition matching", () => {
     expect(profile).toMatchObject({
       artist: "Artist",
       edition: { format: "2lp" },
-      title: "Double",
+      title: "Double Album",
     });
     expect(profile?.primary).not.toMatch(/\bcd\b/i);
     expect(matchActiveListing("Artist Double Album Vinyl 2LP New Sealed", profile!)).toMatchObject({
@@ -242,7 +294,7 @@ describe("active eBay edition matching", () => {
         colors: expect.arrayContaining(["blue"]),
         format: "2lp",
       },
-      title: "Double",
+      title: "Double Album",
     });
     expect(matchActiveListing("Artist Double Album Blue Vinyl 2LP New Sealed", profile!)).toMatchObject({
       confidence: "high",
@@ -260,7 +312,7 @@ describe("active eBay edition matching", () => {
 
     expect(profile).toMatchObject({
       edition: { format: "2lp" },
-      title: "Double",
+      title: "Double Album",
     });
     expect(matchActiveListing("Artist Double Album Vinyl 2LP New Sealed", profile!)).toMatchObject({
       confidence: "high",
