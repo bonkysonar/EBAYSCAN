@@ -1,3 +1,4 @@
+import { reviewCampaignClaim } from "../../../scripts/lib/campaignClaims.mjs";
 import type { ArbitrageFind } from "./types";
 
 export type SaleLifecycleStatus =
@@ -151,6 +152,12 @@ export function normalizeSaleCampaigns(
   campaigns: SaleObservation[],
   rawObservations: SaleObservation[] = [],
 ): NormalizedSaleData {
+  campaigns = campaigns
+    .map(reviewCampaignClaim)
+    .filter((c): c is SaleObservation => c !== null);
+  rawObservations = rawObservations
+    .map(reviewCampaignClaim)
+    .filter((c): c is SaleObservation => c !== null);
   const scopedSources = new Set(
     campaigns
       .filter((c) => c.campaignTerms?.version === 1)
