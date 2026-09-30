@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { publicationConfiguration, publicationRequest } from "./lib/retailPublicationClient.mjs";
 
 const WORKSPACE = process.cwd();
 const FINDS_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
@@ -16,11 +17,7 @@ const args = new Map(
     return [key, valueParts.length ? valueParts.join("=") : "true"];
   }),
 );
-const uploadUrl = process.env.ARBITRAGE_UPLOAD_URL;
-const uploadToken = process.env.ARBITRAGE_UPLOAD_TOKEN;
-if (!args.has("dryRun") && (!uploadUrl || !uploadToken)) {
-  throw new Error("ARBITRAGE_UPLOAD_URL and ARBITRAGE_UPLOAD_TOKEN are required.");
-}
+if (!args.has("dryRun")) publicationConfiguration();
 
 const selected = args.get("file")
   ? readExplicitFinalPayload(args.get("file"))
@@ -41,12 +38,8 @@ if (args.has("dryRun")) {
     ),
   );
 } else {
-  const response = await fetch(uploadUrl, {
-    body: JSON.stringify(publishablePayload),
-    headers: {
-      Authorization: `Bearer ${uploadToken}`,
-      "Content-Type": "application/json",
-    },
+  const response = await publicationRequest("/api/arbitrage/upload", {
+    body: publishablePayload,
     method: "POST",
   });
   const responseBody = await response.text();

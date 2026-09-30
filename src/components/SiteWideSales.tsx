@@ -1,4 +1,5 @@
 import { RetailScanStatus } from "./RetailScanStatus";
+import { RetailDiscoveryStatus } from "./RetailDiscoveryStatus";
 import { CampaignRecordResults } from "./CampaignRecordResults";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -461,6 +462,7 @@ export function SiteWideSales() {
         onReview={reviewCampaign}
       />
 
+      <RetailDiscoveryStatus payload={latestPayload} />
       {sourceReports.length ? (
         <details className="panel site-sale-coverage">
           <summary>

@@ -1,0 +1,1 @@
+export function discoverVinylPriceDrop(options: { fetchPage: (url: string) => Promise<{url: string; html: string}>; mapConcurrent: (rows: any[], concurrency: number, mapper: (row: any) => Promise<any>) => Promise<any[]>; concurrency?: number; extraLimit?: number }): Promise<{outcomes: any[]; pages: any[]; stats: Record<string, any>}>;

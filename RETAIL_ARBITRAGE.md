@@ -2,6 +2,16 @@
 
 This guide describes the record-buying workflow used by the Retail Arbitrage and Site-wide Sales pages.
 
+## Daily discovery refresh (September 29, 2026)
+
+The daily task starts with open-web discovery, not just a fixed retailer loop. Start `node scripts/serveRetailObservationInbox.mjs` and use the normal browser for Google searches (current-month sitewide sales, extra-clearance discounts, and label warehouse/blowout sales). Save each search at `/discovery` as `{query,url,capturedAt,links:[{url,text}],status:"observed"}`. Access failures use `status:"access_failed"` and an empty links array, never a successful-empty claim. The inbox stores `browser-web-discovery.json` beside the existing captures. Searches expire after 24 hours. The scanner automatically reads that file; `--webDiscovery=<path>` overrides it.
+
+Matched, same-retailer sale URLs enter the normal verification path. Snippets never create discounts, products or verified coverage. Unconfigured domains remain a visible onboarding queue on Site-wide Sales, with no automatic network access or production-source admission. Review policy, region, shipping and exact format before onboarding a domain; scheduled runs must not modify source definitions. Whole-market coverage is unknown; configured-source percentages are not market-share estimates.
+
+VinylPriceDrop checks all unique homepage cards, its sitewide list, and up to `--discoveryDetailLimit` additional feed cards. The limit no longer truncates the homepage. Diagnostics retain per-detail outcomes: discovery lead, expired, missing price, access failure, or identity/format exclusion, plus research queued/deferred status. Full homepage checking is not full-catalog coverage or retailer verification. At most 10% of research is now reserved before prior-demand records fill the cap and rotated across sources. With no observed demand, only one bootstrap lead is selected. Buy and profit gates are unchanged.
+
+For a manual bounded refresh, use `npm run arbitrage:daily -- --sources=<comma-separated-ids>` with fresh browser captures. It returns a new context/draft/checkpoint/plan and can publish only source updates. Do not combine it with `--full`, `--browserOnly` or `--finish`. Svart Records is browser-observation-only: absent captures remain unknown, markdown bands are not sitewide offers, and mixed CD/LP From prices cannot price an LP. EUR, FX and international shipping remain unknown until evidenced.
+
 ## Purpose
 
 The scanner has two related jobs:
@@ -268,7 +278,7 @@ Local feedback changes the browser's working queues; it does not alter retailer 
 
 ## Daily Automation
 
-The `daily-vinyl-retail-arbitrage-scan` automation offers runs every two hours. The first eligible run after 5 a.m. Los Angeles time performs the daily broad scan; other runs refresh bounded active sources. Its workflow is:
+The `daily-vinyl-retail-arbitrage-scan` automation runs daily at 5:30 a.m. Los Angeles time. Manual follow-up runs can still refresh bounded active sources. First run `node scripts/runRetailWorkflow.mjs --preflight`: this checks connectivity and the automatic credential against the fixed production destination without writing data or printing credentials. A denied network request must be resolved through the execution tool's approval mechanism, never by bypassing the restriction or treating the failure as retailer evidence. Its workflow is:
 
 1. Refresh sanitized eBay Fulfillment/Finances history with the incremental overlap.
 2. Run the broad source scan and retain honest page-level coverage.
@@ -303,7 +313,7 @@ npx vitest run src/tests/saleCampaignLifecycle.test.ts src/tests/arbitrageFindsA
 
 Run `npm run arbitrage:daily` to prepare a daily broad scan or a bounded campaign refresh. It returns an exact context path, draft path, and research checkpoint path. `--full` forces a broad scan. The cadence file records the last broad attempt; it never substitutes an older draft after a failed command.
 
-The daily automation runs at 5:30 local, with refresh opportunities every two hours. Refreshes check up to twelve sources, pinning up to six priority active-campaign sources and rotating the others. Retailer blocks remain unknown coverage. Requests to a host stop after a final 403/429, and offer verification has a three-minute pass budget. No browser fingerprint or access-control workaround is used.
+The daily automation runs at 5:30 local. Follow-up refreshes check up to twelve sources, pinning up to six priority active-campaign sources and rotating the others. Retailer blocks remain unknown coverage. Requests to a host stop after a final 403/429, and offer verification has a three-minute pass budget. No browser fingerprint or access-control workaround is used.
 
 Research uses the retained pool (up to 240 products), not the preliminary visible 80. Use the normal signed-in browser and save each completed artist/album search immediately. Start the local inbox with `node scripts/serveRetailObservationInbox.mjs`; `http://127.0.0.1:4319/` stores visible retailer observations, and `/research` stores visible Seller Hub rows in `exports/arbitrage-finds/browser-product-research.json`. Capture the actual query, URL, timestamp, displayed date window, New/Vinyl filters, rows, and whether pagination is complete. No cookies, credentials, hidden page state, or raw account data belong in either file.
 

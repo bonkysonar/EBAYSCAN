@@ -1,5 +1,9 @@
 ﻿# Test Plan
 
+## Retail discovery refresh regression
+
+Run `npx vitest run src/tests/retailDiscoveryRefresh.test.ts src/tests/retailDiscoveryStatus.test.tsx src/tests/albumDemand.test.ts src/tests/retailScannerRegressions.test.ts`, then `npm test` and `npm run build`. Verify >30 homepage cards all receive outcomes, duplicate URLs are not rechecked, failed details remain unknown, and empty parsing cannot mean complete. Confirm the 10% exploration reserve survives a full prior-demand queue and is source-diverse. Google observations expire, reject private/credentialed URLs, avoid prices from snippets, seed only known same-host sale pages, and expose unknown domains as unverified leads. Inspect Site-wide Sales after publication for homepage fractions, search dates and coverage limitations. Signed markdown bands remain collection-scoped/already marked. Research queries strip `(2xLP)` but preserve album identity.
+
 ## Manual Flow
 
 1. Run `npm install`.
