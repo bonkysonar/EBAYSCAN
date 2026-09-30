@@ -38,20 +38,21 @@ createServer(async (req, res) => {
     const value = JSON.parse(new URLSearchParams(body).get("observations"));
     const incoming = Array.isArray(value) ? value : [value];
     const research = req.url === "/research";
+    const discovery = req.url === "/discovery";
     if (
       !incoming.every(
         (entry) =>
           entry &&
           /^https:\/\//.test(entry.url) &&
           Number.isFinite(Date.parse(entry.capturedAt)) &&
-          (research
+          (discovery ? typeof entry.query === "string" && Array.isArray(entry.links) : research
             ? typeof entry.query === "string" && Array.isArray(entry.rows)
             : typeof entry.sourceId === "string" &&
               typeof entry.visibleText === "string"),
       )
     )
       throw new Error("Fresh visible observation fields required");
-    const targetPath = research
+    const targetPath = discovery ? resolve(dirname(outputPath), "browser-web-discovery.json") : research
       ? resolve(dirname(outputPath), "browser-product-research.json")
       : outputPath;
     const previous = existsSync(targetPath)

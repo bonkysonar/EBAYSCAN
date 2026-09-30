@@ -46,9 +46,25 @@ export function extractRetailCampaigns(
   const events = blocks.flatMap((block) =>
     parseCampaignBlock(source, block, pageUrl, capturedAt),
   );
+  // Some labels expose separate markdown bands as "-60% Blowout Sale"
+  // links. Bind each to its own collection; never apply the highest band
+  // to the store or discount already-marked product prices a second time.
+  if (/(?:label|record|audiophile)/i.test(source.retailSourceType ?? source.sourceType ?? "")) {
+    for (const link of safeHtml.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+      const text = clean(link[2]);
+      const band = text.match(/^[-−](\d{1,2})%\s+(?:(?:blowout|clearance|warehouse)\s+)?sale$/i);
+      if (!band || Number(band[1]) <= 0) continue;
+      let target;
+      try { target = new URL(decodeHtmlEntities(link[1]), pageUrl); } catch { continue; }
+      if (target.protocol !== "https:" || target.origin !== new URL(pageUrl).origin || !/\/(?:category|collections)\//.test(target.pathname)) continue;
+      const event = campaign(source, text, text, target.toString(), capturedAt, {scope:"collection",kind:"percent",discountPercent:Number(band[1]),discountQualifier:"exact"});
+      event.campaignTerms.priceMode = "marked";
+      events.push(event);
+    }
+  }
   const unique = new Map();
   for (const event of events.map(reviewCampaignClaim).filter(Boolean)) {
-    const key = `${event.scope}:${event.discountPercent}:${event.discountQualifier}:${event.promoCode}:${event.campaignTerms.kind}:${event.campaignTerms.minimumSpend}:${event.campaignTerms.fixedAmount}`;
+    const key = `${event.sourceUrl}:${event.scope}:${event.discountPercent}:${event.discountQualifier}:${event.promoCode}:${event.campaignTerms.kind}:${event.campaignTerms.minimumSpend}:${event.campaignTerms.fixedAmount}`;
     if (!unique.has(key)) unique.set(key, event);
   }
   return [...unique.values()];

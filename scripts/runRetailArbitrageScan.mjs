@@ -1,4 +1,7 @@
 import { applyRetailLearning } from "./lib/retailLearning.mjs";
+import { publicationRequest } from "./lib/retailPublicationClient.mjs";
+import { discoverVinylPriceDrop } from "./lib/vinylPriceDropDiscovery.mjs";
+import { webSaleDiscovery } from "./lib/webSaleDiscovery.mjs";
 import { createAlbumDemandIndex } from "./lib/albumDemand.mjs";
 import { createMarketplaceAlbumDemandIndex } from "./lib/marketplaceAlbumDemand.mjs";
 import { buildSoldResearchQueryVariants } from "../src/lib/arbitrage/soldResearchLinks.mjs";
@@ -21,10 +24,8 @@ import { join, resolve } from "node:path";
 import {
   extractAmazonAsin,
   extractSlickdealsDealCards,
-  extractVinylPriceDropCards,
   parseOldRedditDealPage,
   parseRedditAtomFeed,
-  parseVinylPriceDropDetail,
   splitDealArtistTitle,
 } from "./lib/dealSourceAdapters.mjs";
 import {
@@ -290,6 +291,8 @@ const requestedSourceIds = new Set(
     .filter(Boolean),
 );
 const sourceCatalog = await readVinylSources(SOURCE_FILE);
+const webDiscoveryPath = resolve(args.get("webDiscovery") ?? "exports/arbitrage-finds/browser-web-discovery.json");
+const webDiscovery = webSaleDiscovery(existsSync(webDiscoveryPath) ? JSON.parse(readFileSync(webDiscoveryPath, "utf8")) : null, sourceCatalog);
 const sources = requestedSourceIds.size
   ? sourceCatalog.filter((source) => requestedSourceIds.has(source.id))
   : sourceCatalog;
@@ -351,10 +354,10 @@ const sourceScanResults = await mapWithConcurrency(
       : catalogUrl;
     const scanTarget = {
       ...source,
-      priorSaleUrls: priorSaleRecheckUrlsForSource(
+      priorSaleUrls: [...new Set([...(webDiscovery.sourceUrls[source.id] ?? []), ...priorSaleRecheckUrlsForSource(
         previousScanState.saleCampaignLedger,
         source,
-      ),
+      )])],
       url: preferredUrl,
     };
     try {
@@ -495,6 +498,15 @@ const researchSelection =
         },
       );
 const researchProductFinds = researchSelection.selected;
+for (const report of sourceReports) {
+  for (const outcome of report.adapterStats?.dealOutcomes ?? []) {
+    if (!outcome.candidateId) continue;
+    const find = enrichedProducts.find(row => row.id === outcome.candidateId);
+    outcome.researchStatus = researchProductFinds.some(row => row.id === outcome.candidateId)
+      ? "queued" : !find ? "learning_suppressed" : !isHighSignalProductFind(find)
+        ? "below_discovery_threshold" : "deferred_research_budget";
+  }
+}
 const researchSourceReports = annotateSourceYield(
   sourceReports,
   enrichedProducts,
@@ -532,6 +544,7 @@ const scored = [...saleEventFinds, ...researchProductFinds].sort(
 );
 
 let payload = {
+  discoveryAudit: webDiscovery,
   createdAt: capturedAt,
   finds: scored,
   phase: "scan",
@@ -775,7 +788,7 @@ async function scanSource(source) {
   const adapter = sourceAdapterFor(source);
   const observed = browserObservations.filter((page) => page.sourceId === source.id);
   let result;
-  if (args.has("browserOnly")) {
+  if (args.has("browserOnly") || source.browserObservationOnly) {
     if (!observed.length) throw new Error(`No fresh browser observations for ${source.id}`);
     const observedReports = observed.map((page) => ({purpose:"browser-observation",requestedUrl:page.url,resolvedUrl:page.url,role:page.catalogProducts?.length || page.productEvidence ? "catalog" : "sale",status:page.outcome === "available" ? "available" : "confirmed_removed",observationMethod:"visible_browser",observedAt:page.capturedAt,catalogCoverage:"bounded_visible_page"}));
     result = genericRetailerResult(source,{pages:observed.filter((page)=>page.outcome === "available").map((page)=>({...browserObservationPage(page),scanPurpose:"browser-observation",scanRootPurpose:"configured"})),pageReports:observedReports});
@@ -2632,70 +2645,14 @@ async function scanReddit(source) {
 }
 
 async function scanVinylPriceDrop(source) {
-  const origin = new URL(source.url).origin;
-  const dealsUrl = `${origin}/deals`;
-  const sitewideUrl = `${origin}/deals/type/sitewide`;
-  const pageReports = [];
-  let dealsPage;
-  try {
-    dealsPage = await fetchPage(dealsUrl);
-    pageReports.push(
-      availablePageReport("deal-index", dealsUrl, dealsPage.url),
-    );
-  } catch (error) {
-    pageReports.push(failedPageReport("deal-index", dealsUrl, error));
-    error.pageReports = pageReports;
-    throw error;
-  }
-
-  let sitewidePage = null;
-  try {
-    sitewidePage = await fetchPage(sitewideUrl);
-    pageReports.push(
-      availablePageReport("sitewide-index", sitewideUrl, sitewidePage.url),
-    );
-  } catch (error) {
-    pageReports.push(failedPageReport("sitewide-index", sitewideUrl, error));
-  }
-
-  const productCards = extractVinylPriceDropCards(
-    dealsPage.html,
-    dealsPage.url,
-  ).slice(0, discoveryDetailLimit);
-  const sitewideCards = sitewidePage
-    ? extractVinylPriceDropCards(sitewidePage.html, sitewidePage.url)
-    : [];
-  const cards = dedupeByKey(
-    [
-      ...productCards.map((card) => ({ ...card, dealType: "product" })),
-      ...sitewideCards.map((card) => ({ ...card, dealType: "sitewide" })),
-    ],
-    (card) => card.detailUrl,
-  );
-  let detailErrorCount = 0;
-  const details = (
-    await mapWithConcurrency(cards, discoveryConcurrency, async (card) => {
-      try {
-        const page = await fetchPage(card.detailUrl);
-        return {
-          ...parseVinylPriceDropDetail(page.html, page.url, card.title),
-          dealType: card.dealType,
-        };
-      } catch {
-        detailErrorCount += 1;
-        return null;
-      }
-    })
-  ).filter(Boolean);
-
-  const activeDetails = details.filter((detail) => !detail.expired);
-  const expiredDealCount = details.length - activeDetails.length;
+  const discovery = await discoverVinylPriceDrop({ fetchPage, mapConcurrent: mapWithConcurrency, concurrency: discoveryConcurrency, extraLimit: discoveryDetailLimit });
+  const activeDetails = discovery.outcomes.filter(detail => detail.status === "discovery_lead");
   const candidates = activeDetails
     .filter(
       (detail) => detail.dealType === "product" && detail.currentPrice !== null,
     )
-    .map((detail) =>
-      discoveryDealToCandidate(source, {
+    .map((detail) => {
+      const candidate = discoveryDealToCandidate(source, {
         directUrl: detail.directUrl,
         discussionUrl: detail.detailUrl,
         expired: false,
@@ -2704,8 +2661,11 @@ async function scanVinylPriceDrop(source) {
         publishedAt: null,
         sourceDiscountPercent: detail.discountPercent,
         title: detail.title,
-      }),
-    )
+      });
+      detail.candidateId = candidate?.id ?? null;
+      if (!candidate) detail.status = "identity_or_format_excluded";
+      return candidate ? { ...candidate, discoveryHomepage: detail.homepage, discoveryCheckedAt: capturedAt } : null;
+    })
     .filter(Boolean);
   const saleEvents = activeDetails
     .filter((detail) => detail.dealType === "sitewide")
@@ -2714,17 +2674,15 @@ async function scanVinylPriceDrop(source) {
 
   return {
     adapterStats: {
-      adapter: "vinyl-price-drop-detail-pages",
+      ...discovery.stats,
       activeDealCount: activeDetails.length,
       candidateCount: uniqueCandidates.length,
-      detailErrorCount,
-      detailPageCount: details.length,
-      expiredDealCount,
-      productCardCount: productCards.length,
-      sitewideCardCount: sitewideCards.length,
+      // Every homepage item has an outcome, even when it never reaches research.
+      dealOutcomes: discovery.outcomes,
     },
     candidates: uniqueCandidates,
-    pageReports,
+    pageReports: discovery.pages,
+    reportFields: { scanComplete: false, evidenceScope: discovery.stats.evidenceScope, coverageStopReason: "discovery_only_not_retailer_verification" },
     saleEvents: dedupeSaleEvents(saleEvents),
   };
 }
@@ -4454,19 +4412,10 @@ function cleanResearchText(value) {
 }
 
 async function readScannerFeedback() {
-  if (!process.env.ARBITRAGE_UPLOAD_URL || !process.env.ARBITRAGE_UPLOAD_TOKEN)
+  if (!process.env.ARBITRAGE_UPLOAD_TOKEN)
     return [];
   try {
-    const url = new URL(
-      "/api/arbitrage/operations?action=feedback",
-      process.env.ARBITRAGE_UPLOAD_URL,
-    );
-    const response = await fetch(url, {
-      headers: {
-        Authorization: "Bearer " + process.env.ARBITRAGE_UPLOAD_TOKEN,
-      },
-      signal: AbortSignal.timeout(15000),
-    });
+    const response = await publicationRequest("/api/arbitrage/operations?action=feedback");
     if (!response.ok) throw new Error("HTTP " + response.status);
     return (await response.json()).entries ?? [];
   } catch {

@@ -1,5 +1,9 @@
 ﻿# Decisions
 
+## 2026-09-29: Homepage accountability and open-web discovery
+
+David requested a deep refresh after repeated low-usefulness scans. Account for every VinylPriceDrop homepage card separately from bounded feed extras and retailer verification. Preserve expired/access-failed/deferred outcomes. Reserve the existing 10% unproven research allowance before prior-demand records fill the cap, distributed across sources; buy gates are unchanged. Capture Google searches through the local inbox; only existing same-host retailers enter automated verification. New domains remain visible, unverified onboarding leads until reviewed. Source-list coverage is not whole-market coverage. Svart is a bounded browser-only source, not a repaired full catalog.
+
 ## 2026-05-16: Mock-first Marketplace Architecture
 
 The app uses a `MarketplaceClient` interface with a mock eBay client first. This lets scoring, UI, tests, and scanner workflow be developed without credentials and without scraping.

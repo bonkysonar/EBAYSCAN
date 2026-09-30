@@ -481,6 +481,12 @@ export type ArbitrageResearchProgress = {
 };
 
 export type ArbitrageImportPayload = {
+  discoveryAudit?: {
+    status: string;
+    searches: Array<{ query: string; url: string; capturedAt: string; status: string; resultCount: number }>;
+    leads: Array<{ url: string; title: string; status: string; sourceId: string | null; capturedAt: string }>;
+    newRetailerLeads: Array<{ url: string; title: string; status: string; capturedAt: string }>;
+  };
   researchProgress?: ArbitrageResearchProgress;
   publicationMode?: "full" | "source_updates" | "evidence_updates";
   evidenceUpdateVersion?: number;

@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { publicationPreflight, publicationRequest } from "./lib/retailPublicationClient.mjs";
 import { admittedSourceIds, browserRecoveryScan, freshWorkflowDraftSummary, researchProgress, scannerOutputPath, WORKFLOW_RESEARCH_LIMIT } from "./lib/retailWorkflowState.mjs";
 const cwd = process.cwd(),
   dir = join(cwd, "exports", "arbitrage-finds");
@@ -24,14 +25,24 @@ const args = new Map(
     return [key, value.join("=") || true];
   }),
 );
+if (args.has("preflight")) {
+  try {
+    console.log(JSON.stringify(await publicationPreflight(), null, 2));
+    process.exit(0);
+  } catch (error) {
+    console.error(`Retail publication preflight failed: ${error.message}. Check runner network access and automatic credentials before scanning.`);
+    process.exit(1);
+  }
+}
 mkdirSync(dir, { recursive: true });
 const cadencePath = join(dir, "workflow-cadence.json");
 const cadence = existsSync(cadencePath)
   ? JSON.parse(readFileSync(cadencePath, "utf8"))
   : {};
-if (args.has("finish") && ["browserOnly", "browserObservations", "previousScan"].some((name) => args.has(name)))
+if (args.has("finish") && ["browserOnly", "browserObservations", "previousScan", "sources", "webDiscovery"].some((name) => args.has(name)))
   throw new Error("Browser retailer recovery must start a new workflow; these scan options cannot change an existing draft.");
 if (args.has("previousScan") && !args.has("browserOnly")) throw new Error("--previousScan requires a new --browserOnly recovery workflow.");
+if (args.has("sources") && (args.has("full") || args.has("browserOnly"))) throw new Error("Explicit sources require a separate bounded refresh.");
 let context = args.has("finish")
   ? JSON.parse(readFileSync(resolve(String(args.get("finish"))), "utf8"))
   : null;
@@ -82,7 +93,9 @@ try {
     const pinned = activeSources
       .filter((id) => priority.includes(id))
       .slice(0, 6);
-    const selected = [
+    const explicitSources = args.has("sources") ? String(args.get("sources")).split(",").map(id => id.trim()).filter(Boolean) : null;
+    if (explicitSources && !explicitSources.length) throw new Error("--sources requires at least one source id");
+    const selected = explicitSources ?? [
       ...new Set([
         ...pinned,
         ...activeSources.slice(offset),
@@ -92,7 +105,7 @@ try {
     ].slice(0, 12);
     context = {
       version: 1,
-      mode: recovery ? "refresh" : full || !selected.length ? "full" : "refresh",
+      mode: recovery || explicitSources ? "refresh" : full || !selected.length ? "full" : "refresh",
       startedAt: new Date().toISOString(),
       runId: "workflow-" + Date.now(),
       ...(recovery ? { browserOnly: true, previousScanPath, previousRunId: recovery.previousRunId, requestedSourceIds: recovery.sourceIds } : {}),
@@ -106,6 +119,7 @@ try {
       writeFileSync(cadencePath, JSON.stringify(cadence, null, 2));
     }
     const scanArgs = recovery?.scanArgs ?? ["scripts/runRetailArbitrageScan.mjs", "--skipUpload"];
+    if (args.has("webDiscovery")) scanArgs.push("--webDiscovery=" + argumentPath("webDiscovery"));
     if (browserObservationsPath) {
       context.browserObservationsPath = browserObservationsPath;
     }
@@ -272,23 +286,17 @@ async function status(state, funnel) {
   context.status = state;
   context.updatedAt = new Date().toISOString();
   writeFileSync(context.contextPath, JSON.stringify(context, null, 2));
-  if (!process.env.ARBITRAGE_UPLOAD_URL || !process.env.ARBITRAGE_UPLOAD_TOKEN)
+  if (!process.env.ARBITRAGE_UPLOAD_TOKEN)
     return;
   const body = { ...context, status: state, funnel };
   try {
-    const response = await fetch(
-      new URL("/api/arbitrage/operations", process.env.ARBITRAGE_UPLOAD_URL),
+    await publicationRequest(
+      "/api/arbitrage/operations",
       {
         method: "POST",
-        headers: {
-          Authorization: "Bearer " + process.env.ARBITRAGE_UPLOAD_TOKEN,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(20000),
+        body,
       },
     );
-    if (!response.ok) throw new Error("HTTP " + response.status);
   } catch (error) {
     console.error("Scan status update unavailable: " + error.message);
   }

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { publicationRequest } from "./lib/retailPublicationClient.mjs";
 for (const line of (existsSync(".env.local")
   ? readFileSync(".env.local", "utf8")
   : ""
@@ -7,16 +8,7 @@ for (const line of (existsSync(".env.local")
   if (m && !process.env[m[1]])
     process.env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, "$2");
 }
-const response = await fetch(
-  new URL(
-    "/api/arbitrage/operations?action=feedback",
-    process.env.ARBITRAGE_UPLOAD_URL,
-  ),
-  {
-    headers: { Authorization: "Bearer " + process.env.ARBITRAGE_UPLOAD_TOKEN },
-    signal: AbortSignal.timeout(20000),
-  },
-);
+const response = await publicationRequest("/api/arbitrage/operations?action=feedback");
 if (!response.ok)
   throw new Error(`Feedback report unavailable: HTTP ${response.status}`);
 const { entries = [] } = await response.json();

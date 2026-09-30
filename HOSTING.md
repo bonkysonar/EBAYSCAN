@@ -43,7 +43,15 @@ npm run dev
 
 Local Vite dev still provides `/api/ebay/search` through `vite.config.ts`, reading `.env.local`.
 
-To publish daily Retail Arbitrage output to the hosted site, set these on the machine running the automation:
+The daily runner loads its existing credential from `.env.local` automatically; David does not enter a token for each run. Publication is pinned to the production HTTPS destination and rejects redirects. `ARBITRAGE_UPLOAD_URL` is optional and, if supplied, must equal the production upload endpoint.
+
+Check connectivity and authentication without publishing or printing the credential:
+
+```powershell
+node scripts/runRetailWorkflow.mjs --preflight
+```
+
+The runner uses these existing machine settings:
 
 ```env
 ARBITRAGE_UPLOAD_URL=https://ebayscan.vercel.app/api/arbitrage/upload

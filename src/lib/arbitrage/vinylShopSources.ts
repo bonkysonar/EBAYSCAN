@@ -35,6 +35,7 @@ export type SourceGroup =
   | "US retailers";
 
 export type RetailArbitrageSource = {
+  browserObservationOnly?: boolean;
   baseUrl: string;
   country: string;
   crawlType: VinylShopSourceType;
@@ -310,11 +311,12 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
     country: "US",
     sourceType: "major_label_store",
     crawlType: "shopify-store",
+    browserObservationOnly: true,
     priority: 1,
     saleLikelihood: "medium",
     ...normalSourceRules,
     group: "Major label stores",
-    notes: "Current official US store; catalog, exclusives and hip-hop reissues.",
+    notes: "Current official US store. Automated catalog crawling is withheld because its terms prohibit scraping; only permitted, bounded visible observations can refresh this source. Missing observations mean unknown coverage.",
     salePathHints: ["/collections/10-vinyl", "/collections/vinyl-sale-1", ...commonSalePathHints],
   }),
   source({
@@ -766,6 +768,25 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
     }),
   ),
   source({
+    id: "svart-records",
+    displayName: "Svart Records",
+    domain: "svartrecords.com",
+    baseUrl: "https://www.svartrecords.com/en/category/2026-blowout-sale/201",
+    country: "FI",
+    sourceType: "metal_punk_label",
+    crawlType: "retailer",
+    browserObservationOnly: true,
+    priority: 2,
+    saleLikelihood: "high",
+    defaultDiscountThreshold: 0.4,
+    minNetProfit: 12,
+    minROI: 0.5,
+    noiseLevel: "medium",
+    group: "UK / international retailers",
+    notes: "Discovered through open-web search. Bounded visible browser evidence only; mixed CD/LP From prices are not LP prices. EUR, international shipping and FX require verification.",
+    salePathHints: [],
+  }),
+  source({
     id: "vinyl-price-drop",
     displayName: "Vinyl Price Drop",
     domain: "vinylpricedrop.com",
@@ -780,7 +801,7 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
     minROI: 0.45,
     noiseLevel: "high",
     group: "Discovery sources",
-    notes: "Deal aggregator retained as discovery/watchlist source.",
+    notes: "Every homepage card checked daily, plus bounded feed extras and sitewide leads. Per-card outcomes retained; retailer stock, price and sold-market evidence remain unverified until checked.",
     salePathHints: [],
   }),
   source({

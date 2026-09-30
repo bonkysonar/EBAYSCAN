@@ -222,6 +222,13 @@ export function candidateQualityScore(candidate) {
 export function isHighSignalProductFind(find) {
   if (!retailEligibility(find).eligible) return false;
   if (find.identityStatus === "unresolved") return false;
+  // Homepage drops deserve a bounded research slot even without prior sales.
+  // This is discovery eligibility, not physical-format, stock or value proof.
+  if (find.sourceId === "vinyl-price-drop" && find.discoveryHomepage === true &&
+      find.purchaseOfferVerification === "discovery_lead" &&
+      /^https:\/\/(?:www\.)?vinylpricedrop\.com\/deals\//.test(find.discoveryUrl ?? "") &&
+      Number(find.purchasePrice) > 0 && Number(find.purchasePrice) <= 30)
+    return true;
   // Purchases of this album justify exact-edition research even when the local
   // history cannot price this pressing. Artist popularity alone never does.
   if (
@@ -1333,29 +1340,35 @@ export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
         )
       );
     });
-  const selected = [],
-    seen = new Set();
-  let explorationCount = 0;
-  for (const candidate of ranked) {
-    if (selected.length >= requestedLimit) break;
-    if (!candidate.researchDemand.observed) {
-      const observedCount = selected.length - explorationCount;
-      explorationLimit = observedCount === 0 ? Math.min(1, requestedLimit) : Math.min(Math.floor(requestedLimit * 0.1), Math.floor(observedCount / 9));
-    }
-    if (
-      !candidate.researchDemand.observed &&
-      explorationCount >= explorationLimit
-    )
-      continue;
-    const identity = candidateSelectionIdentity(
-      candidate,
-      candidateSourceId(candidate),
-    );
-    if (seen.has(identity)) continue;
+  const seen = new Set();
+  const unique = ranked.filter(candidate => {
+    const identity = candidateSelectionIdentity(candidate, candidateSourceId(candidate));
+    if (seen.has(identity)) return false;
     seen.add(identity);
-    selected.push(candidate);
-    if (!candidate.researchDemand.observed) explorationCount++;
+    return true;
+  });
+  const observed = unique.filter(candidate => candidate.researchDemand.observed);
+  const unproven = unique.filter(candidate => !candidate.researchDemand.observed);
+  explorationLimit = observed.length === 0 ? Math.min(1, requestedLimit) :
+    Math.min(Math.floor(requestedLimit * 0.1), Math.floor(observed.length / 9));
+  // Reserve the existing ten-percent allowance BEFORE the observed pool fills
+  // the cap. Round-robin sources so one high-volume feed cannot take it all.
+  const lanes = new Map();
+  for (const candidate of unproven) {
+    const key = candidateSourceId(candidate);
+    if (!lanes.has(key)) lanes.set(key, []);
+    lanes.get(key).push(candidate);
   }
+  const exploration = [];
+  while (exploration.length < explorationLimit && lanes.size) {
+    for (const [key, lane] of lanes) {
+      if (exploration.length >= explorationLimit) break;
+      exploration.push(lane.shift());
+      if (!lane.length) lanes.delete(key);
+    }
+  }
+  const explorationCount = exploration.length;
+  const selected = [...observed.slice(0, requestedLimit - explorationCount), ...exploration];
   const diagnostics = buildCandidateSelectionDiagnostics({
     dedupeExcluded: [],
     familyKey: candidateSourceFamily,
