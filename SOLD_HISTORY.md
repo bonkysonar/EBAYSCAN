@@ -115,3 +115,9 @@ The ignored local `research-queue-state.json` preserves opaque task hashes, time
 # Empty Product Research searches
 
 Seller Hub may switch automatically to Active when a Sold search is empty. Select Sold again and capture the explicit no-sold-results state; never import the Active table as sales. If the empty state hides its date header, selecting Custom exposes the current start/end fields without changing their dates. Save those observed dates with the zero-row capture, the visible New/Vinyl filters, and the actual Sold URL. Do not infer dates from a prior search or manufacture zero demand after a failed request.
+
+## Older sales without listing links
+
+Seller Hub can retain a sold row after it stops offering a listing link. An annual capture may retain these observations only with `captureMethod: "visible_browser"`, explicit `completePagination: true`, all eight displayed row `cells`, and `listingLinkUnavailable: true` on each row whose link is visibly absent. The latest sale on such a row must be at least 90 days before the observed window end. Missing links on recent rows remain repair work. A malformed or conflicting URL is never replaced with a synthetic link.
+
+Validation checks item IDs where links exist and compares the displayed title, price, shipping, quantity, revenue and last-sale date for unlinked rows. Repeated observations, including overlap between linked and unlinked copies, invalidate the window. Annual quantities remain annual quantities, never inferred recent sales. Exact artist, album, edition and condition matching still applies; this does not admit an unidentified or policy-removed listing as a comparable sale. Existing captures are not retroactively marked as observed without checking the visible table.

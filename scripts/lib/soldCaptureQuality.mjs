@@ -1,5 +1,6 @@
 import { parseProductResearchRow } from "./productResearchCuration.mjs";
 import { verifiedResearchWindow, verifiedResearchFilters } from "./soldResearchWindow.mjs";
+import { observedSoldRowIdentities } from "./observedSoldRowIdentity.mjs";
 
 export const researchQueryKey = (value) => String(value ?? "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]/g, "");
 export const CAPTURE_REPAIRS = {
@@ -12,7 +13,7 @@ export const CAPTURE_REPAIRS = {
   pagination_incomplete: "Finish every result page, then mark pagination complete.",
   rows_invalid: "Capture the complete sold table with prices, quantities, dates, and listing links.",
   window_unverified: "Save the actual displayed start/end dates and research timezone.",
-  listing_identity_missing: "Capture the eBay item link for every row.",
+  listing_identity_missing: "Capture each listing link. For older annual rows with no visible link, explicitly record that absence and all eight displayed cells.",
   duplicate_listings: "Remove pagination overlap; each listing must appear once.",
   row_date_outside_window: "Check that the saved table belongs to the displayed date window.",
 };
@@ -39,9 +40,9 @@ export function assessSoldCapture(page = {}, now = new Date()) {
   const window = verifiedResearchWindow(page, now, [30, 90, 365, 1095]);
   if (!window) add("window_unverified");
   const rows = Array.isArray(page.rows) ? page.rows.map(parseProductResearchRow) : [];
-  const ids = rows.map(row => row.itemUrl.match(/^https:\/\/(?:www\.)?ebay\.com\/itm\/(?:[^/]+\/)?(\d{9,15})(?:[/?#]|$)/)?.[1]);
-  if (ids.some(id => !id)) add("listing_identity_missing");
-  if (new Set(ids.filter(Boolean)).size !== ids.filter(Boolean).length) add("duplicate_listings");
+  const identities = observedSoldRowIdentities(page, window);
+  if (identities.missing) add("listing_identity_missing");
+  if (identities.duplicate) add("duplicate_listings");
   if (rows.some(row => !row.title || !(row.avgSoldPrice > 0) || !Number.isInteger(row.totalSold) || row.totalSold <= 0 || !Number.isFinite(Date.parse(row.dateLastSold)))) add("rows_invalid");
   if (window && rows.some(row => Date.parse(row.dateLastSold) < window.start || Date.parse(row.dateLastSold) > window.end)) add("row_date_outside_window");
   return {

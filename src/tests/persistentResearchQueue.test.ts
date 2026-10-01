@@ -83,6 +83,38 @@ describe("persistent sold research", () => {
 });
 
 describe("capture repair and observed periods", () => {
+  const olderRow = {
+    listingLinkUnavailable: true,
+    cells: ["Example Artist Actual Album New Vinyl LP", "Edit", "$ 40.00 Fixed price", "$ 0.00 100% Free shipping", "6", "$ 240.00", "-", "Mar 24, 2026"],
+  };
+  const annualObserved = {
+    ...page, captureMethod: "visible_browser", completePagination: true, periodDays: 365,
+    url: page.url.replace("dayRange=90", "dayRange=365"),
+    observedWindow: { startDate: "2025-09-30", endDate: "2026-09-30" }, rows: [olderRow],
+  };
+  it("retains older observed annual rows when eBay no longer supplies a listing link", () => {
+    expect(assessSoldCapture(annualObserved, now).windowVerified).toBe(true);
+    const result = curateResearchForFind(find, { entries: [{ findId: find.id, runs: [annualObserved] }] }, now);
+    expect(result).toMatchObject({ sales90Days: null, sales365Days: 6, averageSoldPrice: 40, velocityStatus: "verified_window_totals" });
+    expect(result).toMatchObject({ rows: [{ itemUrl: "" }] });
+    expect(buildPersistentResearchQueue(draft, { captures: { ...captures, pages: [annualObserved] }, now }).checkpoint.entries).toHaveLength(1);
+  });
+  it.each([
+    { ...annualObserved, rows: [{ ...olderRow, listingLinkUnavailable: undefined }] },
+    { ...annualObserved, captureMethod: undefined },
+    { ...annualObserved, completePagination: undefined },
+    { ...annualObserved, rows: [{ ...olderRow, cells: olderRow.cells.slice(0, 7) }] },
+    { ...annualObserved, rows: [{ ...olderRow, cells: olderRow.cells.map((cell, index) => index === 7 ? "Sep 24, 2026" : cell) }] },
+    { ...annualObserved, rows: [{ ...olderRow, href: "https://other.example/123456789012" }] },
+  ])("requires explicit complete historical-table evidence for unlinked sales", (bad) => {
+    expect(assessSoldCapture(bad, now).reasonCodes).toContain("listing_identity_missing");
+    expect(curateResearchForFind(find, { entries: [{ findId: find.id, runs: [bad] }] }, now).sales365Days).toBeNull();
+  });
+  it.each([olderRow, { ...olderRow, href: row.itemUrl }])("rejects repeated observed rows, including overlap with a linked copy", (copy) => {
+    const duplicate = { ...annualObserved, rows: [olderRow, copy] };
+    expect(assessSoldCapture(duplicate, now).reasonCodes).toContain("duplicate_listings");
+    expect(curateResearchForFind(find, { entries: [{ findId: find.id, runs: [duplicate] }] }, now).sales365Days).toBeNull();
+  });
   it("accepts visibly confirmed filter controls when Seller Hub omits a URL parameter, never a conflict", () => {
     const observed = { ...page, url: page.url.replace("&conditionId=1000", ""), observedFilters: { conditionId: "1000", categoryId: "176985", tabName: "SOLD" } };
     expect(assessSoldCapture(observed, now).windowVerified).toBe(true);
