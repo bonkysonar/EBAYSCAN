@@ -32,5 +32,6 @@ export function buildActiveSearchProfile(find: ArbitrageFind): ActiveSearchProfi
 export function cleanActiveSearchText(value: unknown): string;
 export function ebayItemIdentityTokens(...values: unknown[]): string[];
 export function extractEditionIdentity(value: unknown, releaseTitle?: string): ActiveEditionIdentity;
+export function sameDistinctiveVariant(expected: ActiveEditionIdentity, actual: ActiveEditionIdentity): boolean;
 export function isExcludedEbayActiveListing(item: unknown, profile: ActiveSearchProfile): boolean;
 export function matchActiveListing(title: string, profile: ActiveSearchProfile): ActiveListingMatch;

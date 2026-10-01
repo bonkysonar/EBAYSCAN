@@ -124,6 +124,14 @@ function source(source: RetailArbitrageSource): RetailArbitrageSource {
 
 export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
   source({
+    id: "best-buy", displayName: "Best Buy", domain: "bestbuy.com",
+    baseUrl: "https://www.bestbuy.com/site/music/all-music/pcmcat1754074717277.c?id=pcmcat1754074717277",
+    country: "US", sourceType: "us_retailer", crawlType: "retailer", priority: 1,
+    saleLikelihood: "high", ...normalSourceRules, group: "US retailers",
+    browserObservationOnly: true,
+    notes: "Research-led clearance offers. Verify the primary product SKU, Best Buy as seller, current stock and shipping terms; bounded observations do not establish catalog coverage.",
+  }),
+  source({
     id: "deep-discount",
     displayName: "DeepDiscount",
     domain: "deepdiscount.com",

@@ -172,6 +172,10 @@ export type ArbitrageSettings = {
 };
 
 export type ArbitrageFind = {
+  shippingOffer?: { sourceUrl: string; capturedAt: string; minimumSubtotal: number; currency: string; standardShipping: number };
+  shippingScenario?: { quantity: number; minimumSubtotal: number; subtotal: number; additionalSpend: number; standardShipping: number; sourceUrl: string; condition: string; singleRecordNetProfit?: number | null } | null;
+  historicalResalePrice?: number | null;
+  activeResaleCap?: number | null;
   albumDemand?: AlbumDemand;
   albumPriceBenchmark?: AlbumPriceBenchmark;
   basketScenario?: {
@@ -235,7 +239,7 @@ export type ArbitrageFind = {
   candidateTier?: ArbitrageCandidateTier;
   capturedAt: string;
   retailObservedAt?: string;
-  retailObservationMethod?: "visible_browser" | "visible_browser_catalog";
+  retailObservationMethod?: "visible_browser" | "visible_browser_catalog" | "public_page_reader";
   retailObservationUrl?: string;
   condition?: string;
   conservativeResalePrice?: number | null;

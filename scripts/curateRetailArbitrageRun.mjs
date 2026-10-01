@@ -2,6 +2,7 @@ import { createMarketplaceAlbumDemandIndex } from "./lib/marketplaceAlbumDemand.
 import { createAlbumPriceBenchmarkIndex } from "./lib/albumPriceBenchmark.mjs";
 import { revalidateCandidateLocalSold } from "./lib/localSoldEvidence.mjs";
 import { browserVerifiedRetailOffer } from "./lib/browserRetailVerification.mjs";
+import { refreshReviewedRetailOffer } from "./lib/reviewedRetailOffers.mjs";
 import { mergeResearchSoldEvidence } from "./lib/soldResearchWindow.mjs";
 import { verifyRetailOffers } from "./lib/retailOfferVerification.mjs";
 import { retailerArtistConflict } from "./lib/retailIdentity.mjs";
@@ -93,6 +94,7 @@ if (Number(String(payload.runManifest?.scannerVersion ?? "").split("/").at(-1)) 
     requestTimeoutMs: 12000,
   });
   curatedProducts = curatedProducts.map((find) => browserVerifiedRetailOffer(find, browserCaptures, new Date(curatedAt)) ?? find);
+  curatedProducts = curatedProducts.map(find => refreshReviewedRetailOffer(find, curatedAt));
   const prioritized = [...curatedProducts]
     .filter((f) => f.identityStatus !== "unresolved" && f.retailVerification?.captureMethod !== "visible_browser")
     .sort((a, b) => (b.candidateScore ?? 0) - (a.candidateScore ?? 0))

@@ -386,7 +386,9 @@ function compareEditionIdentity(expected, actual) {
 
   const expectedSignals = new Set(expected.signals);
   const actualSignals = new Set(actual.signals);
+  const namedVariant = sameDistinctiveVariant(expected, actual);
   for (const signal of expectedSignals) {
+    if (namedVariant && ["deluxe", "anniversary"].includes(signal)) continue;
     if (!actualSignals.has(signal)) reasons.push(`edition-signal-missing:${signal}`);
   }
   for (const signal of actualSignals) {
@@ -398,6 +400,17 @@ function compareEditionIdentity(expected, actual) {
     exact: reasons.length === 0,
     reasons,
   };
+}
+
+// A compound color/effect plus an explicit disc count can identify a variant
+// even when sellers omit marketing labels. Other pressing signals stay strict.
+export function sameDistinctiveVariant(expected, actual) {
+  const colors = expected.colors.filter(color => color !== "black");
+  return Boolean(expected.format && expected.format === actual.format &&
+    colors.length >= 2 && colors.some(color => !["clear", "transparent", "smoke"].includes(color)) &&
+    colors.length === actual.colors.filter(color => color !== "black").length &&
+    colors.every(color => actual.colors.includes(color)) &&
+    (!expected.retailerExclusive || !actual.retailerExclusive || expected.retailerExclusive === actual.retailerExclusive));
 }
 
 function extractColors(text) {

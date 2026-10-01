@@ -695,6 +695,7 @@ export function RetailArbitrage() {
                       <strong>{displayRecordTitle(find)}</strong>
                       <small>{albumDemandLabel(find, true)}</small>
                       {find.combinedShipping ? <small>Assumes combined shipping · {find.combinedShipping.orderRecords}-record order</small> : null}
+                      {find.shippingScenario ? <small>Conditional: qualifying ${find.shippingScenario.minimumSubtotal} same-shop order</small> : null}
                       <small>
                         {find.sourceListingTitle &&
                         find.sourceListingTitle !== find.title
@@ -1153,6 +1154,18 @@ function FindDetail({
 
       <section className="arbitrage-detail-section">
         <h3>Profit ledger</h3>
+        {find.shippingScenario ? (
+          <p role="note">
+            {find.shippingScenario.condition}{" "}
+            Example: {find.shippingScenario.quantity} copies total {money(find.shippingScenario.subtotal)} before tax;
+            the extra {money(find.shippingScenario.additionalSpend)} buys additional inventory. This is not a quantity recommendation.{" "}
+            Bought alone with {money(find.shippingScenario.standardShipping)} shipping, estimated net is {nullableMoney(find.shippingScenario.singleRecordNetProfit ?? null)}.{" "}
+            <a href={find.shippingScenario.sourceUrl} target="_blank" rel="noreferrer">Retailer shipping terms</a>
+          </p>
+        ) : null}
+        {find.historicalResalePrice != null && find.activeResaleCap != null && find.activeResaleCap < find.historicalResalePrice ? (
+          <p>Historical sold estimate {money(find.historicalResalePrice)}; current resale plan {nullableMoney(find.conservativeResalePrice ?? null)} includes a 2% undercut of the matching active quote.</p>
+        ) : null}
         {find.combinedShipping ? (
           <p role="note">
             This estimate assumes {find.combinedShipping.orderRecords} records in one same-shop order:

@@ -13,6 +13,7 @@ import {
 } from "./lib/campaignOffers.mjs";
 import { shopifyIdentity, retailEligibility } from "./lib/retailIdentity.mjs";
 import { validateBrowserRetailObservations, browserObservationUrl, browserObservationPage, browserSourceDiagnostics, browserProductCandidates, preferObservedSkuCandidates } from "./lib/browserRetailObservations.mjs";
+import { reviewedRetailOffers } from "./lib/reviewedRetailOffers.mjs";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -323,6 +324,7 @@ const browserObservations = args.get("browserObservations")
   ? validateBrowserRetailObservations(JSON.parse(readFileSync(resolve(args.get("browserObservations")), "utf8")), sourceCatalog, capturedAt)
   : [];
 const browserPagesByUrl = new Map(browserObservations.map((page) => [browserObservationUrl(page.url), page]));
+const reviewedOffers = args.get("reviewedOffers") ? reviewedRetailOffers(JSON.parse(readFileSync(resolve(args.get("reviewedOffers")), "utf8")), capturedAt) : [];
 const runId = `scan-${timestampForFile(capturedAt)}`;
 const previousScanState = loadPreviousScanState(OUTPUT_DIR, args.get("previousScan"));
 const sourceReports = [];
@@ -787,6 +789,10 @@ function readBooleanField(block, fieldName) {
 }
 
 async function scanSource(source) {
+  const reviewed = reviewedOffers.filter(offer => offer.sourceId === source.id);
+  if (reviewed.length) return { candidates: reviewed, saleEvents: [], sourceStatus: "partial",
+    pageReports: reviewed.map(offer => ({purpose:"reviewed-product",requestedUrl:offer.sourceUrl,resolvedUrl:offer.sourceUrl,role:"catalog",status:"available",observedAt:offer.capturedAt,catalogCoverage:"bounded_primary_pages"})),
+    reportFields: {scanComplete:false,coverageStopReason:"individually_reviewed_primary_pages",evidenceScope:"observed_public_pages_only"} };
   const adapter = sourceAdapterFor(source);
   const observed = browserObservations.filter((page) => page.sourceId === source.id);
   let result;
@@ -3575,7 +3581,7 @@ function enrichCandidate(candidate, index) {
     artistSoldUnits1095Days: null,
     averageSoldPrice,
     averageSoldShipping,
-    capturedAt: candidate.retailObservationMethod?.startsWith("visible_browser") ? candidate.retailObservedAt : capturedAt,
+    capturedAt: candidate.retailObservedAt ?? capturedAt,
     ebayResearchUrl: ebayResearchUrl(candidate),
     ebayResearchKeywordVariants: researchKeywordVariants(candidate),
     lowestActivePrice: null,
