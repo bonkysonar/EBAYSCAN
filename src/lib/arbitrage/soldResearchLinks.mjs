@@ -97,6 +97,10 @@ export function normalizeResearchTitle(rawTitle = "") {
     .replace(/^\s*(?:soundtrack|ost)\s+[-–—]\s+/i, "")
     .replace(/\s*\((?:with\s+)?(?:autograph(?:ed)?|signed)(?:\s+(?:postcard|card|jacket|insert))?\)\s*$/i, " ")
     .replace(/\s+(?:with\s+(?:autographed|signed)\s+(?:postcard|card|jacket|insert)|[-–—]\s*(?:autographed|signed))\s*$/i, " ")
+    // A trailing parenthesis after the explicit record format describes the
+    // retailer's variant, including names outside our color vocabulary. Keep
+    // the original candidate title unchanged for strict pressing validation.
+    .replace(/\b((?:[1-9]\s*[x×-]?\s*)?lps?|vinyl)\s*[[(][^\])]+[\])]\s*$/i, " $1")
     // Keep the format marker until its trailing merchandising color label is
     // removed. Dropping "2LP" first would leave "Color" in the album query.
     .replace(/\b((?:[1-9]\s*[x×-]?\s*)?lps?)\s*(?:[-–—]\s*)?\(?colou?r(?:ed)?\)?\s*$/i, " $1")

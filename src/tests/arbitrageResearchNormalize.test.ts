@@ -8,6 +8,21 @@ import {
 } from "../lib/arbitrage/soldResearchLinks.mjs";
 
 describe("arbitrage research normalization", () => {
+  it("searches the album without a format-anchored named variant while retaining its pressing identity", () => {
+    for (const [artist, title, expected] of [
+      ["Bartees Strange", "Live Forever Exclusive LP (Pinwheel)", "Bartees Strange Live Forever"],
+      ["Bartees Strange", "Live Forever Exclusive LP (Split)", "Bartees Strange Live Forever"],
+      ["State Champs", "Kings Of The New Age Exclusive LP (Starfruit)", "State Champs Kings Of The New Age"],
+      ["Structures", "Life Through a Window Vinyl (Extinction)", "Structures Life Through a Window"],
+      ["Between The Buried And Me", "Colors II Vinyl (Trans Green + White Galaxy)", "Between The Buried And Me Colors II"],
+    ]) {
+      const candidate = { artist, title };
+      expect(buildSoldResearchQueryVariants(candidate)[0].query).toBe(expected);
+      expect(candidate.title).toBe(title);
+    }
+    expect(buildSoldResearchQueryVariants({ artist: "David Bowie", title: "Scary Monsters (And Super Creeps) LP" })[0].query).toBe("David Bowie Scary Monsters And Super Creeps");
+  });
+
   it("removes trailing color labels anchored to a record format, without deleting album words", () => {
     for (const title of ["Ship To Shore 2LP - Color (Autographed)", "Ship To Shore 2LP (Color)", "Ship To Shore LP - Colour", "Ship To Shore 2xLP - Colored"]) {
       expect(buildSoldResearchQueryVariants({ artist: "Richard Thompson", title })[0].query).toBe("Richard Thompson Ship To Shore");
