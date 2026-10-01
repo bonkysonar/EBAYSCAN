@@ -142,7 +142,7 @@ function confirmCandidateEdition(candidate, comp, records) {
       reasons: ["candidate_edition_missing"],
     };
   }
-  const candidateText = String(candidate?.sourceListingTitle ?? candidate?.title ?? "");
+  const candidateText = `${candidate?.sourceListingTitle ?? candidate?.title ?? ""} ${candidate?.retailEditionText ?? ""}`;
   const profile = buildActiveSearchProfile({
     ...candidate,
     purchasePrice:

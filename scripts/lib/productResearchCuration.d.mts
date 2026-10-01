@@ -26,6 +26,7 @@ export function curateResearchForFind(
   now?: Date,
 ): Record<string, unknown>;
 export function parseProductResearchRow(row: unknown): Record<string, unknown>;
+export function resetPressingSoldEvidence(find: Record<string, unknown>): Record<string, unknown>;
 export function productResearchRowMatchScore(
   find: Record<string, unknown>,
   rowTitle: string,

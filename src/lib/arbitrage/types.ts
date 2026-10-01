@@ -393,6 +393,8 @@ export type ArbitrageFind = {
   sellThroughRate?: number | null;
   shopifyVariantId?: number | string | null;
   shopifyVariantTitle?: string | null;
+  retailEditionText?: string | null;
+  retailCatalogNumber?: string | null;
   sku?: string | null;
   activeSupplyMonths?: number | null;
   title: string;

@@ -14,6 +14,7 @@ import {
   curateResearchForFind,
   buildProductResearchPlan,
   researchCheckpointComplete,
+  resetPressingSoldEvidence,
 } from "./lib/productResearchCuration.mjs";
 
 import {
@@ -108,13 +109,16 @@ if (Number(String(payload.runManifest?.scannerVersion ?? "").split("/").at(-1)) 
     { concurrency: 2 },
   );
   const byId = new Map(verified.map((find) => [find.id, find]));
-  curatedProducts = curatedProducts.map((find) =>
-    evaluateOpportunity(
-      { ...(byId.get(find.id) ?? find), requiresRetailVerification: true },
-      {},
-      new Date().toISOString(),
-    ),
-  );
+  curatedProducts = curatedProducts.map((find) => {
+    let confirmed = byId.get(find.id) ?? find;
+    if (confirmed.retailEditionText !== find.retailEditionText) {
+      confirmed = resetPressingSoldEvidence(confirmed);
+      if (localIndex) confirmed = revalidateCandidateLocalSold(confirmed, localIndex, curatedAt);
+    }
+    return evaluateOpportunity(
+      { ...curateFind(confirmed), requiresRetailVerification: true }, {}, new Date().toISOString(),
+    );
+  });
 }
 curatedProducts = curatedProducts.filter((find) => cleanText(find.title));
 const recommendedIds = new Set(

@@ -126,11 +126,15 @@ export function buildActiveSearchProfile(find) {
   if (!title || isSkippableTitle(title)) return null;
 
   const edition = extractEditionIdentity(
-    shopifyVariantTitle
+    `${shopifyVariantTitle
       ? appendVariantIfMissing(profileSourceText, shopifyVariantTitle)
-      : rawSourceText,
+      : rawSourceText} ${find.retailEditionText ?? ""}`,
     `${artist} ${title}`,
   );
+  if (find.retailEditionText && !edition.colors.length && !edition.signals.length) {
+    edition.unresolved = true;
+    edition.key += `|unresolved=${String(find.retailEditionText).toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+  }
   // One broad release query finds listings whose sellers omit color, barcode,
   // format, or edition wording. The separate edition profile still gates every
   // returned listing before it contributes to exact supply or price evidence.
@@ -229,6 +233,7 @@ export function matchActiveListing(title, profile) {
   const listingEdition = extractEditionIdentity(listingTitle, `${profile.artist} ${profile.title}`);
   const editionResult = compareEditionIdentity(profile.edition, listingEdition);
   reasons.push(...editionResult.reasons);
+  if (profile.edition.unresolved) reasons.push("retail-edition-unresolved");
   const score = round(
     titleCoverage * 0.65 +
       artistCoverage * 0.2 +

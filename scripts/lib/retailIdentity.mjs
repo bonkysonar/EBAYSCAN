@@ -180,6 +180,7 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
   return {
     artist: explicitArtist ? artist : "Unknown Artist",
     title,
+    ...newburyPressingMetadata(product, variant, sourceId, tags, physicalFormatConfirmed),
     physicalFormatConfirmed,
     identityStatus: explicitArtist ? "resolved" : "unresolved",
     identitySource: taggedArtist
@@ -201,6 +202,25 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
             : "LP",
     preorder: /\bpre[ -]?order\b/i.test(`${rawTitle} ${variant.title ?? ""}`),
     releaseDate: product.release_date ?? null,
+  };
+}
+
+function newburyPressingMetadata(product, variant, sourceId, tags, isVinyl) {
+  if (sourceId !== "newbury-comics") return {};
+  const empty = { retailEditionText: null, retailCatalogNumber: null };
+  // Product-level tags cannot identify a color for a multi-variant product.
+  if (!isVinyl || product.variants?.length !== 1 ||
+      String(product.variants[0].id) !== String(variant.id)) return empty;
+  const tagged = name => {
+    const prefix = `fg_${name}_`;
+    const values = [...new Set(tags.map(clean).filter(tag => tag.startsWith(prefix)).map(tag => tag.slice(prefix.length).trim()).filter(Boolean))];
+    return values.length === 1 && values[0].length <= 160 ? values[0] : null;
+  };
+  const color = tagged("Vinyl Color");
+  const discs = tagged("Number of Discs");
+  return {
+    retailEditionText: color ? `${color} ${/^[2-9]$/.test(discs ?? "") ? discs : ""}LP`.trim() : null,
+    retailCatalogNumber: tagged("Catalog Number"),
   };
 }
 

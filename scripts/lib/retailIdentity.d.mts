@@ -15,6 +15,8 @@ export function shopifyIdentity(
   recordFormat: string;
   preorder: boolean;
   releaseDate: string | null;
+  retailEditionText?: string | null;
+  retailCatalogNumber?: string | null;
 };
 export function isVariantDescription(value: unknown): boolean;
 
