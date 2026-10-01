@@ -1,16 +1,14 @@
-import { deferredResearch } from "./lib/researchMemory.mjs";
+import { buildPersistentResearchQueue } from "./lib/persistentResearchQueue.mjs";
 import {
   existsSync,
   readFileSync,
   readdirSync,
   statSync,
   writeFileSync,
+  renameSync,
+  mkdirSync,
 } from "node:fs";
-import { basename, join, resolve } from "node:path";
-import {
-  buildProductResearchPlan,
-  researchCheckpointComplete,
-} from "./lib/productResearchCuration.mjs";
+import { basename, dirname, join, resolve } from "node:path";
 
 const WORKSPACE = process.cwd();
 const FINDS_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
@@ -33,55 +31,22 @@ const payload = JSON.parse(readFileSync(sourcePath, "utf8"));
 const checkpointArgument = process.argv.find((argument) =>
   argument.startsWith("--checkpoint="),
 );
-const checkpoint = checkpointArgument
-  ? JSON.parse(
-      readFileSync(resolve(WORKSPACE, checkpointArgument.slice(13)), "utf8"),
-    )
-  : {};
+const checkpointPath = checkpointArgument ? resolve(WORKSPACE, checkpointArgument.slice(13)) : join(dirname(sourcePath), `research-checkpoint-${payload.runId}.json`);
+const checkpoint = existsSync(checkpointPath) ? JSON.parse(readFileSync(checkpointPath, "utf8")) : {};
 if (checkpoint.runId && checkpoint.runId !== payload.runId)
   throw new Error("Checkpoint belongs to another scan");
-const pool = payload.researchCandidates ?? payload.finds ?? [];
-const allEntries = buildProductResearchPlan(pool, { maxEntries });
-const completed = new Set(
-  allEntries
-    .filter((plan) =>
-      researchCheckpointComplete(
-        plan,
-        (checkpoint.entries ?? []).find(
-          (entry) => entry.findId === plan.findId,
-        ),
-      ),
-    )
-    .map((entry) => entry.findId),
-);
-const memoryPath = join(FINDS_DIR, "research-memory.json");
-const memory = existsSync(memoryPath)
-  ? JSON.parse(readFileSync(memoryPath, "utf8"))
-  : {};
-const deferred = pool.flatMap((find) => {
-  const old = deferredResearch(find, memory);
-  return old
-    ? [
-        {
-          findId: find.id,
-          reason: "unchanged_successful_empty_search",
-          checkedAt: old.checkedAt,
-        },
-      ]
-    : [];
-});
-const deferredIds = new Set(deferred.map((entry) => entry.findId));
-const entries = buildProductResearchPlan(
-  pool.filter((find) => !deferredIds.has(find.id)),
-  { maxEntries },
-).filter((entry) => !completed.has(entry.findId));
+const captureArgument = process.argv.find(argument => argument.startsWith("--captures="));
+const capturePath = captureArgument ? resolve(captureArgument.slice(11)) : join(FINDS_DIR, "browser-product-research.json");
+const captures = existsSync(capturePath) ? JSON.parse(readFileSync(capturePath, "utf8")) : {};
+const statePath = join(FINDS_DIR, "research-queue-state.json");
+const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
+const queue = buildPersistentResearchQueue(payload, { captures, checkpoint, state, maxEntries });
+const entries = queue.plan.entries;
 const runId = payload.runId ?? payload.createdAt ?? new Date().toISOString();
 const plan = {
-  createdAt: new Date().toISOString(),
-  entries,
-  deferred,
+  ...queue.plan,
   runId,
-  checkpointedCount: completed.size,
+  checkpointedCount: new Set(queue.plan.completed.flatMap(task => task.findIds)).size,
   sourcePayload: sourcePath.startsWith(WORKSPACE)
     ? sourcePath.slice(WORKSPACE.length + 1)
     : sourcePath,
@@ -89,10 +54,14 @@ const plan = {
 };
 const outputName = `product-research-plan-${safeFilePart(runId)}.json`;
 const outputPath = join(FINDS_DIR, outputName);
-writeFileSync(outputPath, JSON.stringify(plan, null, 2));
+mkdirSync(FINDS_DIR, { recursive: true });
+for (const [path, value] of [[checkpointPath,queue.checkpoint],[statePath,queue.state],[outputPath,plan]]) {
+  writeFileSync(`${path}.tmp`, JSON.stringify(value, null, 2));
+  renameSync(`${path}.tmp`, path);
+}
 
 console.log(
-  JSON.stringify({ entries: entries.length, outputPath, sourcePath }, null, 2),
+  JSON.stringify({ entries: entries.length, outputPath, sourcePath, checkpointPath, queueSummary: plan.summary }, null, 2),
 );
 
 function latestRawScanPath() {

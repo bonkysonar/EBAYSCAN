@@ -68,11 +68,13 @@ describe("retailer update and review contracts", () => {
     await retailOperations(cwd, "POST", {
       runId: "test-research", startedAt: at, status: "partial", updatedSourceCount: 55,
       researchProgress: { planned: 240, completed: 0, validated: 0, noRows: 0, pending: 240, complete: true, status: "complete", title: "private listing", rows: ["raw content"] },
+      researchQueue: { distinctQueries: 140, reused: 60, repair: -5, pending: 80, query: "private listing", rows: ["raw content"] },
     }, "test-secret");
     const result = await retailOperations(cwd, "GET", null);
     expect(result).toMatchObject({ updatedSourceCount: 55, researchProgress: { planned: 240, completed: 0, validated: 0, pending: 240, complete: false, status: "incomplete" } });
     expect(JSON.stringify(result)).not.toContain("private listing");
     expect(JSON.stringify(result)).not.toContain("raw content");
+    expect(result).toMatchObject({ researchQueue: { distinctQueries: 140, reused: 60, repair: 0, pending: 80 } });
   });
 
   it("updates one retailer while retaining the other offer timestamp and broad-scan date", () => {

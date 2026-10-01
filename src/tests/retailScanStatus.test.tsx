@@ -23,7 +23,7 @@ describe("sold research progress visibility", () => {
     document.body.append(container);
     root = createRoot(container);
     await act(async () => root?.render(<RetailScanStatus payload={{ createdAt: "2026-09-05T01:00:00Z", finds: [] }} />));
-    expect(container.textContent).toContain("Latest attempt sold research: 0/240 searches completed");
+    expect(container.textContent).toContain("Latest attempt sold research: 0/240 offers researched");
     expect(container.textContent).toContain("240 pending; 0 failed; 12 deferred");
   });
   it("labels persisted publication counts when the latest attempt has no research data", async () => {
@@ -32,6 +32,13 @@ describe("sold research progress visibility", () => {
     document.body.append(container);
     root = createRoot(container);
     await act(async () => root?.render(<RetailScanStatus payload={{ createdAt: "2026-09-05T01:00:00Z", finds: [], researchProgress: { ...progress, planned: 10, completed: 2, validated: 1, noRows: 1, pending: 8, outsidePlan: 0 } }} />));
-    expect(container.textContent).toContain("Published scan sold research: 2/10 searches completed; 1 with matching sales; 1 without matching sales; 8 pending");
+    expect(container.textContent).toContain("Published scan sold research: 2/10 offers researched; 1 with matching sales; 1 without matching sales; 8 pending");
+  });
+  it("distinguishes reused query windows from offer coverage and repairs", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ status: "research", researchQueue: { offers: 12, distinctQueries: 8, tasks: 9, reused: 4, repair: 2, refresh: 1, pending: 2, scheduled: 4, retryLater: 1, deferred: 0, editionReviews: 3 } }) })));
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root?.render(<RetailScanStatus payload={{ createdAt: "2026-10-01T14:00:00Z", finds: [] }} />));
+    expect(container.textContent).toContain("8 distinct album searches across 12 offers. 4 date-window captures reused; 2 need capture repair");
+    expect(container.textContent).toContain("3 need edition identification");
   });
 });

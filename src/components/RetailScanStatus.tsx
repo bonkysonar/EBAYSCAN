@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ArbitrageImportPayload, ArbitrageResearchProgress } from "../lib/arbitrage/types";
+import type { ArbitrageImportPayload, ArbitrageResearchProgress, ArbitrageResearchQueue } from "../lib/arbitrage/types";
 type Attempt = {
   status: string;
   updatedAt?: string;
@@ -7,6 +7,7 @@ type Attempt = {
   sourceCount?: number;
   message?: string;
   researchProgress?: ArbitrageResearchProgress | null;
+  researchQueue?: ArbitrageResearchQueue | null;
 };
 const date = (value?: string | null) =>
   value ? new Date(value).toLocaleString() : "Not yet available";
@@ -41,6 +42,7 @@ export function RetailScanStatus({
     ["running", "research"].includes(attempt.status) &&
     Date.now() - Date.parse(attempt.updatedAt ?? "") > 3 * 3600000;
   const research = attempt?.researchProgress ?? payload?.researchProgress;
+  const queue = attempt?.researchQueue ?? payload?.researchQueue;
   return (
     <aside className="panel retail-scan-status" aria-label="Scanner freshness">
       <strong>
@@ -71,7 +73,12 @@ export function RetailScanStatus({
       {attempt?.message ? <p role="status">{attempt.message}</p> : null}
       {research ? (
         <p>
-          {attempt?.researchProgress ? "Latest attempt" : "Published scan"} sold research: {research.completed}/{research.planned} searches completed; {research.validated} with matching sales; {research.noRows} without matching sales; {research.pending} pending; {research.failed} failed; {research.outsidePlan} deferred beyond this run’s research limit.
+          {attempt?.researchProgress ? "Latest attempt" : "Published scan"} sold research: {research.completed}/{research.planned} offers researched; {research.validated} with matching sales; {research.noRows} without matching sales; {research.pending} pending; {research.failed} failed; {research.outsidePlan} deferred beyond this run’s research limit.
+        </p>
+      ) : null}
+      {queue ? (
+        <p aria-label="Research queue">
+          {queue.distinctQueries} distinct album searches across {queue.offers} offers. {queue.reused} date-window captures reused; {queue.repair} need capture repair; {queue.refresh} need fresh evidence; {queue.pending} await research. {queue.scheduled} searches queued now; {queue.retryLater} retry later; {queue.editionReviews} need edition identification.
         </p>
       ) : null}
     </aside>

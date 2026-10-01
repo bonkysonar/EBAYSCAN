@@ -170,11 +170,11 @@ try {
     if (draft.runId !== context.runId || draft.phase !== "scan") throw new Error("Workflow context does not identify this unpublished scan draft.");
     importBrowserResearch();
     const checkpointPath = args.has("research") ? argumentPath("research") : context.checkpointPath;
-    const checkpoint = checkpointPath && existsSync(checkpointPath) ? readCheckpoint(checkpointPath, draft.runId) : { runId: draft.runId, entries: [] };
     const research = checkpointPath && existsSync(checkpointPath) ? checkpointPath : "--pending";
     context.checkpointPath = checkpointPath;
-    context.researchProgress = researchProgress(draft, checkpoint);
     if (research !== "--pending") prepareResearchPlan();
+    const checkpoint = checkpointPath && existsSync(checkpointPath) ? readCheckpoint(checkpointPath, draft.runId) : { runId: draft.runId, entries: [] };
+    context.researchProgress = researchProgress(draft, checkpoint);
     await status("research");
     const result = run(
       ["scripts/curateRetailArbitrageRun.mjs", context.draftPath, research],
@@ -189,6 +189,7 @@ try {
     final.publicationMode = partial ? "source_updates" : "full";
     if (partial) final.sourceUpdateVersion = 1;
     final.researchProgress = context.researchProgress;
+    final.researchQueue = context.researchQueue;
     writeFileSync(curated.finalPath, JSON.stringify(final, null, 2));
     run([
       "scripts/uploadLatestArbitrageFinds.mjs",
@@ -237,10 +238,11 @@ function readCheckpoint(path, runId) {
   return checkpoint;
 }
 function importBrowserResearch() {
-  if (!args.has("browserResearch")) return;
+  const defaultCaptures = join(dir, "browser-product-research.json");
+  if (!args.has("browserResearch") && (!existsSync(defaultCaptures) || args.has("research"))) return;
   const standardCheckpoint = join(dirname(context.draftPath), `research-checkpoint-${context.runId}.json`);
   if (args.has("research") && argumentPath("research") !== standardCheckpoint) throw new Error("Browser research imports into the draft's own checkpoint; omit --research or supply that same checkpoint path.");
-  const capturePath = argumentPath("browserResearch");
+  const capturePath = args.has("browserResearch") ? argumentPath("browserResearch") : defaultCaptures;
   const result = run(["scripts/importBrowserSoldResearch.mjs", context.draftPath, capturePath], true);
   const imported = JSON.parse(result.stdout);
   context.checkpointPath = imported.checkpointPath;
@@ -248,8 +250,11 @@ function importBrowserResearch() {
   context.browserResearchImport = { accepted: imported.accepted?.length ?? 0, rejected: imported.rejected?.length ?? 0 };
 }
 function prepareResearchPlan() {
-  const result = run(["scripts/prepareArbitrageResearchPlan.mjs", context.draftPath, "--max=" + WORKFLOW_RESEARCH_LIMIT, "--checkpoint=" + context.checkpointPath], true);
-  context.planPath = JSON.parse(result.stdout).outputPath;
+  const command = ["scripts/prepareArbitrageResearchPlan.mjs", context.draftPath, "--max=" + WORKFLOW_RESEARCH_LIMIT, "--checkpoint=" + context.checkpointPath];
+  if (context.browserResearchPath) command.push("--captures=" + context.browserResearchPath);
+  const result = JSON.parse(run(command, true).stdout);
+  context.planPath = result.outputPath;
+  context.researchQueue = result.queueSummary;
 }
 function run(command, capture = false) {
   const result = spawnSync(process.execPath, command, {

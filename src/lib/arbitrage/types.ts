@@ -480,6 +480,12 @@ export type ArbitrageResearchProgress = {
   status: "not_needed" | "complete" | "incomplete";
 };
 
+export type ArbitrageResearchQueue = {
+  offers: number; distinctQueries: number; tasks: number; reused: number;
+  repair: number; refresh: number; pending: number; retryLater: number;
+  scheduled: number; deferred: number; editionReviews: number;
+};
+
 export type ArbitrageImportPayload = {
   discoveryAudit?: {
     status: string;
@@ -488,6 +494,7 @@ export type ArbitrageImportPayload = {
     newRetailerLeads: Array<{ url: string; title: string; status: string; capturedAt: string }>;
   };
   researchProgress?: ArbitrageResearchProgress;
+  researchQueue?: ArbitrageResearchQueue;
   publicationMode?: "full" | "source_updates" | "evidence_updates";
   evidenceUpdateVersion?: number;
   evidenceUpdates?: {

@@ -1,0 +1,1 @@
+export function buildPersistentResearchQueue(payload: Record<string, any>, options?: {captures?: Record<string, any>; checkpoint?: Record<string, any>; state?: Record<string, any>; now?: Date; maxEntries?: number}): {checkpoint: Record<string, any>; state: Record<string, any>; plan: Record<string, any>};
