@@ -44,7 +44,7 @@ export function consideration(find, now = Date.now()) {
     );
   if (!find.gates?.purchaseOffer)
     remainingChecks.push(
-      find.appliedSaleCampaignId
+      find.shippingScenario ? find.shippingScenario.condition : find.appliedSaleCampaignId
         ? "Confirm the campaign price for this exact variant at checkout."
         : "Confirm current stock and price for the exact retailer variant.",
     );
@@ -53,7 +53,8 @@ export function consideration(find, now = Date.now()) {
     (!find.gates?.demand || !find.gates?.supply || !find.gates?.matchConfidence)
   )
     return exclude("demand_supply_or_match_failed");
-  if (!["A", "B"].includes(find.candidateTier)) return exclude("ineligible_or_rejected");
+  // The evidence/economics gates above define this review list. A second
+  // heuristic tier cutoff hid otherwise qualified small, slower opportunities.
   if (remainingChecks.length > 1) return exclude("multiple_remaining_checks");
   return { qualifies: true, remainingChecks };
 }

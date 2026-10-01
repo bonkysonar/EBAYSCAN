@@ -1,6 +1,7 @@
 import { retailEligibility } from "../../../scripts/lib/retailIdentity.mjs";
+import { shippingOfferScenario } from "./shippingOffer.mjs";
 
-export const EVALUATION_VERSION = 10;
+export const EVALUATION_VERSION = 11;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -118,7 +119,17 @@ export function evaluateOpportunity(
     find.lowestActivePriceDestinationVerified === false
       ? null
       : finitePositive(find.lowestActivePrice);
-  const resalePrice = canonicalResalePrice(find);
+  const historicalResalePrice = canonicalResalePrice(find);
+  const activeAgeMs = Number(now) - Date.parse(active.capturedAt);
+  // Lower a historical estimate to compete with a fresh matching quote. This
+  // never creates sold evidence and never raises a price from asking listings.
+  const quotedActivePrice = active.matchConfidence >= settings.minBuyMatchConfidence &&
+    activeAgeMs >= -MAX_FUTURE_CLOCK_SKEW_MS && activeAgeMs <= 6 * 3600000
+      ? finitePositive(find.lowestActivePrice) : null;
+  const activeResaleCap = quotedActivePrice === null ? null : roundMoney(quotedActivePrice * .98);
+  const resalePrice = historicalResalePrice === null ? null :
+    Math.min(historicalResalePrice, activeResaleCap ?? historicalResalePrice);
+  const shippingScenario = shippingOfferScenario(find, now);
   const sourceCurrency =
     normalizeCurrency(find.sourceCurrency) ??
     defaultCurrencyForCountry(find.sourceCountry);
@@ -162,9 +173,14 @@ export function evaluateOpportunity(
   const costLedger = buildCostLedger(
     purchasePriceForLedger,
     currencyConversionRequired ? null : resalePrice,
-    find.costs,
+    shippingScenario ? { ...find.costs, inboundShipping: 0 } : find.costs,
     settings,
   );
+  if (shippingScenario) {
+    shippingScenario.singleRecordNetProfit = buildCostLedger(purchasePriceForLedger,
+      currencyConversionRequired ? null : resalePrice,
+      { ...find.costs, inboundShipping: shippingScenario.standardShipping }, settings).expectedNetProfit;
+  }
   const sellThroughRate =
     sold.units90 !== null && active.exactCount !== null
       ? ratio(
@@ -220,7 +236,7 @@ export function evaluateOpportunity(
   const offerAge = ageInDays(find.capturedAt, now);
   const offerFreshness =
     offerAge !== null && offerAge <= settings.maxOfferAgeDays;
-  const purchaseOfferVerified =
+  const purchaseOfferVerified = !shippingScenario &&
     ["direct_retailer", "official_api"].includes(
       String(find.purchaseOfferVerification ?? "")
         .trim()
@@ -295,7 +311,7 @@ export function evaluateOpportunity(
       ? null
       : maximumPurchasePriceForStrategies(
           resalePrice,
-          find.costs,
+          shippingScenario ? { ...find.costs, inboundShipping: 0 } : find.costs,
           settings,
           sourceMinNetProfit,
           sourceMinRoi,
@@ -375,6 +391,9 @@ export function evaluateOpportunity(
     soldEvidenceAge,
     strategyOptions,
   });
+  if (shippingScenario) reasons.push(shippingScenario.condition);
+  if (historicalResalePrice !== null && resalePrice < historicalResalePrice)
+    reasons.push(`Historical sold estimate ${money(historicalResalePrice)} is capped at ${money(resalePrice)}, 2% below the fresh matching active quote.`);
   const candidateAssessment = assessCandidateOpportunity({
     ...find,
     decision,
@@ -395,6 +414,9 @@ export function evaluateOpportunity(
     cashReturnPer30Days,
     ...candidateAssessment,
     conservativeResalePrice: resalePrice,
+    historicalResalePrice,
+    activeResaleCap,
+    shippingScenario,
     costLedger,
     combinedShipping: singleRecordLedger ? {
       orderRecords: settings.combinedOrderRecords,

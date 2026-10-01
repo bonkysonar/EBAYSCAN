@@ -39,7 +39,7 @@ const cadencePath = join(dir, "workflow-cadence.json");
 const cadence = existsSync(cadencePath)
   ? JSON.parse(readFileSync(cadencePath, "utf8"))
   : {};
-if (args.has("finish") && ["browserOnly", "browserObservations", "previousScan", "sources", "webDiscovery"].some((name) => args.has(name)))
+if (args.has("finish") && ["browserOnly", "browserObservations", "previousScan", "sources", "webDiscovery", "reviewedOffers"].some((name) => args.has(name)))
   throw new Error("Browser retailer recovery must start a new workflow; these scan options cannot change an existing draft.");
 if (args.has("previousScan") && !args.has("browserOnly")) throw new Error("--previousScan requires a new --browserOnly recovery workflow.");
 if (args.has("sources") && (args.has("full") || args.has("browserOnly"))) throw new Error("Explicit sources require a separate bounded refresh.");
@@ -119,6 +119,7 @@ try {
       writeFileSync(cadencePath, JSON.stringify(cadence, null, 2));
     }
     const scanArgs = recovery?.scanArgs ?? ["scripts/runRetailArbitrageScan.mjs", "--skipUpload"];
+    if (args.has("reviewedOffers")) scanArgs.push("--reviewedOffers=" + argumentPath("reviewedOffers"));
     if (args.has("webDiscovery")) scanArgs.push("--webDiscovery=" + argumentPath("webDiscovery"));
     if (browserObservationsPath) {
       context.browserObservationsPath = browserObservationsPath;

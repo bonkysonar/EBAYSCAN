@@ -1,6 +1,6 @@
 import { verifiedWindowSales, verifiedResearchWindow } from "./soldResearchWindow.mjs";
 import { retailEligibility } from "./retailIdentity.mjs";
-import { extractEditionIdentity, selfTitledReleaseMismatch } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
+import { extractEditionIdentity, selfTitledReleaseMismatch, sameDistinctiveVariant } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
 import {
   buildEbayProductResearchUrl,
   buildEbayPublicSoldUrl,
@@ -350,6 +350,7 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
   if (candidateColors.some((color) => !rowColors.includes(color)) ||
     rowColors.some((color) => !candidateColors.includes(color))) return 0;
   const pressingSignals = new Set(["signed", "splatter", "swirl", "marbled", "etched", "glow-in-the-dark", "picture-disc", "box-set", "deluxe", "translucent"]);
+  if (sameDistinctiveVariant(candidateEdition, rowEdition)) pressingSignals.delete("deluxe");
   if (candidateEdition.signals.some((signal) => pressingSignals.has(signal) && !rowEdition.signals.includes(signal)) ||
     rowEdition.signals.some((signal) => pressingSignals.has(signal) && !candidateEdition.signals.includes(signal))) return 0;
 
