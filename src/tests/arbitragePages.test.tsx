@@ -23,6 +23,24 @@ afterEach(() => {
 });
 
 describe("arbitrage pages", () => {
+  it("labels combined-shipping recommendations and shows the single-record profit", async () => {
+    localStorage.setItem("record-scanner-arbitrage-settings-v1", JSON.stringify({
+      combinedOrderRecords: 5, combinedOrderShipping: 7,
+    }));
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({
+      status: "available", fileName: "combined-shipping.json",
+      payload: { createdAt: now(), phase: "final", runId: "combined-test",
+        finds: [{ ...validatedBuyFind(), sourceCountry: "US" }], sourceReports: [] },
+    })));
+    await render(<RetailArbitrage />);
+    expect(container?.textContent).toContain("Combined-shipping scenario: 5 records");
+    expect(container?.textContent).toContain("Tax still applies");
+    await clickButton("Runtime Test Album");
+    expect(container?.textContent).toContain("$7.00 shipping ÷ 5 = $1.40 per record");
+    expect(container?.textContent).toContain("Bought alone, estimated net is $12.75");
+    expect(container?.textContent).toContain("with $5.00 inbound shipping");
+  });
+
   it("keeps cached buys hidden until the authoritative latest request resolves", async () => {
     localStorage.setItem(
       "record-scanner-arbitrage-finds-v1",

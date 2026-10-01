@@ -555,6 +555,13 @@ export function RetailArbitrage() {
 
       <section className="arbitrage-workbench">
         <section className="panel arbitrage-table-panel">
+          {scoredFinds.some((find) => find.combinedShipping) ? (
+            <p role="note">
+              Combined-shipping scenario: {settings.combinedOrderRecords} records
+              from the same US shop share {money(settings.combinedOrderShipping)} shipping.
+              Tax still applies. Quoted shipping stays unchanged; confirm the order total before buying.
+            </p>
+          ) : null}
           <div className="section-heading seller-table-heading">
             <div>
               <h2>{filterHeading(queueFilter)}</h2>
@@ -687,6 +694,7 @@ export function RetailArbitrage() {
                     <span className="arbitrage-title">
                       <strong>{displayRecordTitle(find)}</strong>
                       <small>{albumDemandLabel(find, true)}</small>
+                      {find.combinedShipping ? <small>Assumes combined shipping · {find.combinedShipping.orderRecords}-record order</small> : null}
                       <small>
                         {find.sourceListingTitle &&
                         find.sourceListingTitle !== find.title
@@ -886,12 +894,25 @@ export function RetailArbitrage() {
             onChange={(value) => updateSetting("sourceTaxRatePercent", value)}
           />
           <NumberSetting
-            label="Default inbound shipping $"
+            label="Single-record inbound shipping $"
             value={settings.defaultInboundShipping}
             step={0.5}
             onChange={(value) => updateSetting("defaultInboundShipping", value)}
           />
+          <NumberSetting
+            label="Records per combined order (1 disables)"
+            value={settings.combinedOrderRecords}
+            step={1}
+            onChange={(value) => updateSetting("combinedOrderRecords", value)}
+          />
+          <NumberSetting
+            label="Combined order total shipping $"
+            value={settings.combinedOrderShipping}
+            step={0.5}
+            onChange={(value) => updateSetting("combinedOrderShipping", value)}
+          />
         </div>
+        <p>Combined shipping divides one shop’s shipping charge across the records in that order. It does not assume buying several copies of one release. Single-record costs remain visible in the profit ledger.</p>
       </details>
     </section>
   );
@@ -1132,6 +1153,15 @@ function FindDetail({
 
       <section className="arbitrage-detail-section">
         <h3>Profit ledger</h3>
+        {find.combinedShipping ? (
+          <p role="note">
+            This estimate assumes {find.combinedShipping.orderRecords} records in one same-shop order:
+            {" "}{money(find.combinedShipping.orderShipping)} shipping ÷ {find.combinedShipping.orderRecords}
+            {" "}= {money(find.combinedShipping.perRecordShipping)} per record (rounded up).
+            {" "}Bought alone, estimated net is {nullableMoney(find.combinedShipping.singleRecordNetProfit)}
+            {" "}with {money(find.combinedShipping.singleRecordInboundShipping)} inbound shipping.
+          </p>
+        ) : null}
         {find.appliedSaleDiscountPercent ? (
           <div className="warning-box arbitrage-sale-price-warning">
             Using a verified {find.appliedSaleDiscountPercent}%{" "}

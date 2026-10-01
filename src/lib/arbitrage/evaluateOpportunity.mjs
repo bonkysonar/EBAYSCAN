@@ -1,6 +1,6 @@
 import { retailEligibility } from "../../../scripts/lib/retailIdentity.mjs";
 
-export const EVALUATION_VERSION = 9;
+export const EVALUATION_VERSION = 10;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -11,6 +11,8 @@ export const defaultArbitrageSettings = Object.freeze({
   defaultDuty: 0,
   defaultFxFees: 0,
   defaultInboundShipping: 5,
+  combinedOrderRecords: 1,
+  combinedOrderShipping: 5,
   defaultMarketplaceFeeFixed: 0.3,
   defaultMarketplaceFeeRate: 0.15,
   defaultOtherAcquisitionCosts: 0,
@@ -141,6 +143,22 @@ export function evaluateOpportunity(
     sourceCurrency && sourceCurrency !== "USD" && conversionFresh
       ? convertedPurchasePrice
       : find.purchasePrice;
+  // A combined order is a user-supplied scenario for domestic retailer orders.
+  // Preserve quoted per-record shipping (including free shipping) and never
+  // apply a domestic estimate to international or unknown-country offers.
+  const combinedOrder = find.sourceCountry === "US" &&
+    !/^ebay(?:-|$)/i.test(find.sourceId ?? "") &&
+    finiteNonNegative(find.costs?.inboundShipping) === null &&
+    Number.isInteger(settings.combinedOrderRecords) &&
+    settings.combinedOrderRecords >= 2 && settings.combinedOrderRecords <= 100 &&
+    Number.isFinite(settings.combinedOrderShipping) &&
+    settings.combinedOrderShipping >= 0 && settings.combinedOrderShipping <= 1000;
+  const singleRecordLedger = combinedOrder ? buildCostLedger(
+    purchasePriceForLedger, currencyConversionRequired ? null : resalePrice,
+    find.costs, settings,
+  ) : null;
+  if (combinedOrder) settings.defaultInboundShipping =
+    Math.ceil(settings.combinedOrderShipping * 100 / settings.combinedOrderRecords) / 100;
   const costLedger = buildCostLedger(
     purchasePriceForLedger,
     currencyConversionRequired ? null : resalePrice,
@@ -378,6 +396,13 @@ export function evaluateOpportunity(
     ...candidateAssessment,
     conservativeResalePrice: resalePrice,
     costLedger,
+    combinedShipping: singleRecordLedger ? {
+      orderRecords: settings.combinedOrderRecords,
+      orderShipping: settings.combinedOrderShipping,
+      perRecordShipping: costLedger.inboundShipping,
+      singleRecordInboundShipping: singleRecordLedger.inboundShipping,
+      singleRecordNetProfit: singleRecordLedger.expectedNetProfit,
+    } : null,
     currencyConversionRequired,
     daysSinceLastSale: sold.daysSinceLastSale,
     decision,

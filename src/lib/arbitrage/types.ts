@@ -127,6 +127,8 @@ export type ArbitrageSettings = {
   defaultDuty: number;
   defaultFxFees: number;
   defaultInboundShipping: number;
+  combinedOrderRecords: number;
+  combinedOrderShipping: number;
   defaultMarketplaceFeeFixed: number;
   defaultMarketplaceFeeRate: number;
   defaultOtherAcquisitionCosts: number;
@@ -398,6 +400,13 @@ export type ArbitrageFind = {
 };
 
 export type ArbitrageScoredFind = ArbitrageFind & {
+  combinedShipping?: {
+    orderRecords: number;
+    orderShipping: number;
+    perRecordShipping: number;
+    singleRecordInboundShipping: number;
+    singleRecordNetProfit: number | null;
+  } | null;
   allInCost: number;
   cashReturnPer30Days: number | null;
   candidateReasons: string[];
