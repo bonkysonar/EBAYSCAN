@@ -1,11 +1,14 @@
 import { retailEligibility } from "../../../scripts/lib/retailIdentity.mjs";
 import { shippingOfferScenario } from "./shippingOffer.mjs";
+import { checkoutBasketScenario } from "./checkoutBasket.mjs";
 
-export const EVALUATION_VERSION = 12;
+export const EVALUATION_VERSION = 13;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 export const defaultArbitrageSettings = Object.freeze({
+  considerationMinNetProfitDollars: 4,
+  considerationMinRoiRatio: 0.3,
   balancedMaxDaysToSell: 120,
   balancedMinNetProfitDollars: 7,
   balancedMinRoiRatio: 0.3,
@@ -130,7 +133,10 @@ export function evaluateOpportunity(
   const activeResaleCap = quotedActivePrice === null ? null : roundMoney(quotedActivePrice * .98);
   const resalePrice = historicalResalePrice === null ? null :
     Math.min(historicalResalePrice, activeResaleCap ?? historicalResalePrice);
-  const shippingScenario = shippingOfferScenario(find, now);
+  const verifiedCheckoutBasket = checkoutBasketScenario(find, now);
+  const shippingScenario = verifiedCheckoutBasket ? null : shippingOfferScenario(find, now);
+  const acquisitionCosts = verifiedCheckoutBasket ? { ...find.costs, inboundShipping: verifiedCheckoutBasket.perRecordShipping }
+    : shippingScenario ? { ...find.costs, inboundShipping: 0 } : find.costs;
   const sourceCurrency =
     normalizeCurrency(find.sourceCurrency) ??
     defaultCurrencyForCountry(find.sourceCountry);
@@ -158,7 +164,7 @@ export function evaluateOpportunity(
   // A combined order is a user-supplied scenario for domestic retailer orders.
   // Preserve quoted per-record shipping (including free shipping) and never
   // apply a domestic estimate to international or unknown-country offers.
-  const combinedOrder = find.sourceCountry === "US" &&
+  const combinedOrder = !verifiedCheckoutBasket && !shippingScenario && find.sourceCountry === "US" &&
     !/^ebay(?:-|$)/i.test(find.sourceId ?? "") &&
     finiteNonNegative(find.costs?.inboundShipping) === null &&
     Number.isInteger(settings.combinedOrderRecords) &&
@@ -174,7 +180,7 @@ export function evaluateOpportunity(
   const costLedger = buildCostLedger(
     purchasePriceForLedger,
     currencyConversionRequired ? null : resalePrice,
-    shippingScenario ? { ...find.costs, inboundShipping: 0 } : find.costs,
+    acquisitionCosts,
     settings,
   );
   if (shippingScenario) {
@@ -237,7 +243,7 @@ export function evaluateOpportunity(
   const offerAge = ageInDays(find.capturedAt, now);
   const offerFreshness =
     offerAge !== null && offerAge <= settings.maxOfferAgeDays;
-  const purchaseOfferVerified = !shippingScenario &&
+  const purchaseOfferVerified = !shippingScenario && (!find.checkoutQuote || Boolean(verifiedCheckoutBasket)) &&
     ["direct_retailer", "official_api"].includes(
       String(find.purchaseOfferVerification ?? "")
         .trim()
@@ -312,7 +318,7 @@ export function evaluateOpportunity(
       ? null
       : maximumPurchasePriceForStrategies(
           resalePrice,
-          shippingScenario ? { ...find.costs, inboundShipping: 0 } : find.costs,
+          acquisitionCosts,
           settings,
           sourceMinNetProfit,
           sourceMinRoi,
@@ -418,6 +424,8 @@ export function evaluateOpportunity(
     historicalResalePrice,
     activeResaleCap,
     shippingScenario,
+    verifiedCheckoutBasket: verifiedCheckoutBasket ? { ...verifiedCheckoutBasket,
+      modeledCashRequired: roundMoney(costLedger.landedCost * verifiedCheckoutBasket.quantity) } : null,
     costLedger,
     combinedShipping: singleRecordLedger ? {
       orderRecords: settings.combinedOrderRecords,
@@ -1474,8 +1482,8 @@ function buildStrategyOptions(context) {
       id: "fast_turn",
       label: "Fast turn / smaller margin",
       maxDaysToSell: settings.fastTurnMaxDaysToSell,
-      minNetProfitDollars: settings.fastTurnMinNetProfitDollars,
-      minRoiRatio: settings.fastTurnMinRoiRatio,
+      minNetProfitDollars: Math.max(settings.fastTurnMinNetProfitDollars, settings.considerationMinNetProfitDollars),
+      minRoiRatio: Math.max(settings.fastTurnMinRoiRatio, settings.considerationMinRoiRatio),
       partialDemand: false,
       thresholdReasons: [
         "The smallest margin floor is reserved for validated recent velocity, strong sell-through, and a short inventory horizon.",
@@ -1489,8 +1497,8 @@ function buildStrategyOptions(context) {
       id: "balanced",
       label: balancedEvergreenFlex ? "Evergreen balanced buy" : "Balanced buy",
       maxDaysToSell: settings.balancedMaxDaysToSell,
-      minNetProfitDollars: balancedMinNetProfitDollars,
-      minRoiRatio: balancedMinRoiRatio,
+      minNetProfitDollars: Math.max(balancedMinNetProfitDollars, settings.considerationMinNetProfitDollars),
+      minRoiRatio: Math.max(balancedMinRoiRatio, settings.considerationMinRoiRatio),
       partialDemand: false,
       thresholdReasons: balancedEvergreenFlex
         ? [
@@ -1509,8 +1517,8 @@ function buildStrategyOptions(context) {
       id: "high_margin",
       label: "Slower / higher margin",
       maxDaysToSell: settings.highMarginMaxDaysToSell,
-      minNetProfitDollars: highMarginMinNetProfitDollars,
-      minRoiRatio: highMarginMinRoiRatio,
+      minNetProfitDollars: Math.max(highMarginMinNetProfitDollars, settings.considerationMinNetProfitDollars),
+      minRoiRatio: Math.max(highMarginMinRoiRatio, settings.considerationMinRoiRatio),
       partialDemand: partialHighMarginDemand,
       thresholdReasons: highMarginThresholdReasons,
     }),
@@ -1824,6 +1832,9 @@ function maximumPurchasePrice(
 
 function normalizedSettings(settingsOverrides = {}) {
   const settings = { ...defaultArbitrageSettings, ...settingsOverrides };
+  for (const key of ["considerationMinNetProfitDollars", "considerationMinRoiRatio"]) {
+    if (!Number.isFinite(settings[key]) || settings[key] < 0) settings[key] = defaultArbitrageSettings[key];
+  }
   if (
     !Object.prototype.hasOwnProperty.call(
       settingsOverrides,

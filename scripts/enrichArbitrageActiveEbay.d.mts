@@ -1,7 +1,7 @@
 import type { ActiveSearchProfile } from "../src/lib/arbitrage/activeEbayMatching.mjs";
 import type { ArbitrageFind, ArbitrageMatchConfidence } from "../src/lib/arbitrage/types";
 
-export const ACTIVE_MATCHING_VERSION: 2;
+export const ACTIVE_MATCHING_VERSION: number;
 export function buildQueue(finds: ArbitrageFind[]): Array<{
   key: string;
   primary: string;
@@ -14,6 +14,8 @@ export type MatchedActiveListing = {
   condition?: string;
   currency: string;
   editionSignals?: string[];
+  editionDetailText?: string;
+  identitySource?: "official_item_detail";
   id: string;
   itemUrl?: string;
   matchConfidence?: ArbitrageMatchConfidence;

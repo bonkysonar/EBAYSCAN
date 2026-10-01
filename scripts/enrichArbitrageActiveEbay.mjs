@@ -6,6 +6,7 @@ import {
   buildActiveSearchProfile,
   isExcludedEbayActiveListing,
   matchActiveListing,
+  extractEditionIdentity,
 } from "../src/lib/arbitrage/activeEbayMatching.mjs";
 import { getEbayApplicationToken } from "./lib/ebayPurchaseDiscovery.mjs";
 
@@ -18,7 +19,7 @@ const DEFAULT_MAX_SEARCH_PAGES = 2;
 const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_MAX_QUERIES = 100;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
-export const ACTIVE_MATCHING_VERSION = 6;
+export const ACTIVE_MATCHING_VERSION = 7;
 
 const args = new Map(
   process.argv
@@ -281,6 +282,7 @@ export async function searchVariantPages(keyword, profile, options = {}) {
   let rawListingsInspected = 0;
   let untrustedMatchedListingCount = 0;
   let searchComplete = false;
+  let detailRequests = 0;
 
   for (let page = 0; page < pageCountLimit; page += 1) {
     const offset = page * pageLimit;
@@ -335,7 +337,25 @@ export async function searchVariantPages(keyword, profile, options = {}) {
         excludedSourceListingCount += 1;
         continue;
       }
-      const match = matchActiveListing(item.title ?? "", profile);
+      let match = matchActiveListing(item.title ?? "", profile);
+      let editionDetailText = null;
+      // Resolve omitted color on a few otherwise exact titles through the same
+      // item's official API detail. Never repair conflicting album/edition text.
+      if (!match.matched && match.reasons.length === 1 && match.reasons[0] === "edition-color-missing" &&
+          /^v1\|\d+\|\d+$/.test(item.itemId ?? "") && detailRequests < 3) {
+        detailRequests += 1;
+        try {
+          const detailResponse = await fetchWithTimeout(fetchImpl,
+            new URL(`/buy/browse/v1/item/${encodeURIComponent(item.itemId)}`, endpointRoot), { headers }, requestTimeoutMs);
+          if (detailResponse.ok) {
+            const detail = await detailResponse.json();
+            if (detail.itemId === item.itemId) {
+              editionDetailText = activeEditionDetailText(detail);
+              if (editionDetailText) match = matchActiveListing(`${item.title} ${editionDetailText}`, profile);
+            }
+          }
+        } catch { /* Unresolved identity remains excluded; no price is inferred. */ }
+      }
       if (!match.matched) continue;
       matchedListingIds.add(item.itemId ?? item.itemWebUrl ?? item.title);
       const listing = mapItem(item, {
@@ -353,6 +373,7 @@ export async function searchVariantPages(keyword, profile, options = {}) {
         matchConfidence: match.confidence,
         matchScore: match.score,
         matchedVariant: keyword,
+        ...(editionDetailText ? { editionDetailText, identitySource: "official_item_detail" } : {}),
       };
       const existing = listingsById.get(matchedListing.id);
       if (!existing || matchedListing.totalPrice < existing.totalPrice) listingsById.set(matchedListing.id, matchedListing);
@@ -378,6 +399,18 @@ export async function searchVariantPages(keyword, profile, options = {}) {
     shippingDestinationVerified: Boolean(deliveryPostalCode),
     untrustedMatchedListingCount,
   };
+}
+
+export function activeEditionDetailText(item) {
+  const aspects = (item.localizedAspects ?? []).filter(a => /^(?:color|colour)$/i.test(a.name ?? "") &&
+    typeof a.value === "string" && a.value.length <= 100).map(a => `${a.value} vinyl`);
+  const text = String(item.description ?? "").slice(0, 100000)
+    .replace(/<(?:script|style)\b[^>]*>[\s\S]*?<\/(?:script|style)>/gi, " ")
+    .replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/gi, " ").replace(/\s+/g, " ");
+  const sentences = text.split(/[.!?]/).map(s => s.trim()).filter(s => s.length <= 300 &&
+    /\bvinyl\s+pressing\b/i.test(s) && !/\b(?:not|no|original|previous|unlike|instead|other|formerly)\b/i.test(s) &&
+    extractEditionIdentity(s).colors.length > 0);
+  return [...new Set([...aspects, ...sentences])].join(" ") || null;
 }
 
 function mapItem(item, destination) {
