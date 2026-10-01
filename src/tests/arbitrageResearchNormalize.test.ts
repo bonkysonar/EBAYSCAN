@@ -8,6 +8,15 @@ import {
 } from "../lib/arbitrage/soldResearchLinks.mjs";
 
 describe("arbitrage research normalization", () => {
+  it("removes trailing color labels anchored to a record format, without deleting album words", () => {
+    for (const title of ["Ship To Shore 2LP - Color (Autographed)", "Ship To Shore 2LP (Color)", "Ship To Shore LP - Colour", "Ship To Shore 2xLP - Colored"]) {
+      expect(buildSoldResearchQueryVariants({ artist: "Richard Thompson", title })[0].query).toBe("Richard Thompson Ship To Shore");
+    }
+    for (const title of ["Color", "The Colour And The Shape", "Living Color LP"]) {
+      expect(buildSoldResearchQueryVariants({ artist: "Artist", title })[0].query).toBe(`Artist ${title.replace(/ LP$/, "")}`);
+    }
+  });
+
   it("removes retail and soundtrack noise from soundtrack listings", () => {
     expect(normalizeResearchTitle("Top Gun OST Original Motion Picture Soundtrack Music On Vinyl Was/EA")).toBe("Top Gun");
     expect(normalizeResearchTitle("$13.99 | Top Gun (Original Motion Picture Soundtrack) (Vinyl) at Amazon")).toBe("Top Gun");
