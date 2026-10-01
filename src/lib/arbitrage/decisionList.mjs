@@ -3,6 +3,22 @@ import {
   isVariantDescription,
 } from "../../../scripts/lib/retailIdentity.mjs";
 
+function verifiedAnnualUnits(find, now) {
+  const evidence = find.soldEvidence;
+  const window = evidence?.observedWindows?.[365];
+  const age = Number(now) - Date.parse(window?.capturedAt);
+  const duration = (Date.parse(window?.endDate) - Date.parse(window?.startDate)) / 86400000;
+  const units = evidence?.unitsSold365Days;
+  // The selected price window may be 90 days while a separate, complete annual
+  // observation establishes repeat demand. Never add overlapping window counts
+  // or use an unverified/stale annual number as recent sales velocity.
+  return evidence?.status === "validated" &&
+    evidence.source === "ebay-product-research" &&
+    evidence.velocityEvidence === "verified_window_totals" &&
+    duration === 365 && age >= -300000 && age <= 6 * 3600000 &&
+    Number.isInteger(units) && units >= 0 ? units : 0;
+}
+
 // This list has no fill quota. Aggregate demand may justify one timing check,
 // but cannot establish dated velocity or an automatic BUY.
 export function consideration(find, now = Date.now()) {
@@ -33,7 +49,7 @@ export function consideration(find, now = Date.now()) {
   const dated = find.gates?.soldEvidence && find.soldUnits90Days >= 3;
   const aggregate =
     find.ebayResearchStatus === "validated" &&
-    find.totalSoldCount >= 5 &&
+    Math.max(find.totalSoldCount ?? 0, verifiedAnnualUnits(find, now)) >= 5 &&
     ["high", "medium"].includes(find.ebaySoldMatchConfidence) &&
     Number.isFinite(find.daysSinceLastSale) &&
     find.daysSinceLastSale <= 90;
