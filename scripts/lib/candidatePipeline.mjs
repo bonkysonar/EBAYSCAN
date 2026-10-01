@@ -1359,7 +1359,15 @@ export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
   ));
   const exploration = sourceBalanced(unproven, explorationLimit);
   const explorationCount = exploration.length;
-  const selected = [...sourceBalanced(observed, requestedLimit - explorationCount), ...exploration];
+  const proven = sourceBalanced(observed, requestedLimit - explorationCount);
+  // A time-bounded browser session must reach new offers in its first few
+  // searches, not only after every familiar record has been researched.
+  const selected = [];
+  for (let index = 0; index < Math.max(proven.length, exploration.length); index++) {
+    for (const candidate of [proven[index], exploration[index]]) {
+      if (candidate) selected.push({ ...candidate, researchOrder: selected.length });
+    }
+  }
   const diagnostics = buildCandidateSelectionDiagnostics({
     dedupeExcluded: [],
     familyKey: candidateSourceFamily,
