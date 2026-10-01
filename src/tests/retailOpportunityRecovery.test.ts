@@ -18,6 +18,38 @@ const record = (): any => ({
 });
 
 describe("opportunity recovery without weaker purchase evidence", () => {
+  it("retains fresh verified annual repeat demand when the selected recent price window has one sale", () => {
+    const input = record();
+    input.activeEvidence.exactMatchedListingCount = 1;
+    input.soldEvidence.unitsSold90Days = 1;
+    input.soldEvidence.unitsSold365Days = 8;
+    input.soldEvidence.observedWindows = {365: {capturedAt: at, startDate: "2025-09-30", endDate: "2026-09-30"}};
+    input.totalSoldCount = 1;
+    input.ebayResearchStatus = "validated";
+    input.ebaySoldMatchConfidence = "high";
+    const result = evaluateOpportunity(input, {}, at);
+    expect(result.decision).not.toBe("BUY");
+    expect(result.soldUnits90Days).toBe(1);
+    expect(result.salesPerMonth).toBeCloseTo(1 / 3, 2);
+    expect(consideration(result, Date.parse(at))).toMatchObject({qualifies: true, remainingChecks: [
+      "Confirm recent sales pace; aggregate research does not establish turnover.",
+    ]});
+    for (const evidence of [
+      {...input.soldEvidence, observedWindows: undefined},
+      {...input.soldEvidence, unitsSold365Days: 4}, // Overlapping windows cannot be added.
+      {...input.soldEvidence, velocityEvidence: "aggregate_last_sale_only"},
+      {...input.soldEvidence, observedWindows: {365: {capturedAt: "2026-09-30T05:59:59Z", startDate: "2025-09-30", endDate: "2026-09-30"}}},
+      {...input.soldEvidence, observedWindows: {365: {capturedAt: at, startDate: "2026-07-02", endDate: "2026-09-30"}}},
+      {...input.soldEvidence, latestSaleDate: "2026-05-01"},
+    ]) {
+      expect(consideration(evaluateOpportunity({...input, soldEvidence: evidence}, {}, at), Date.parse(at)).qualifies).toBe(false);
+    }
+    const unverifiedPurchase = {...result, gates: {...result.gates, purchaseOffer: false}};
+    expect(consideration(unverifiedPurchase, Date.parse(at))).toMatchObject({
+      qualifies: false, exclusionReason: "multiple_remaining_checks",
+    });
+  });
+
   it("uses six observed 90-day sales as a lower bound for annual demand, without extrapolation", () => {
     const input = record(); input.activeEvidence.exactMatchedListingCount = 9;
     const result = evaluateOpportunity(input, {}, at);
