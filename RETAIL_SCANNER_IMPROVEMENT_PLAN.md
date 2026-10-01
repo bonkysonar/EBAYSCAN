@@ -53,7 +53,7 @@ Add a final read-only retailer/API verification step for shortlisted offers. It 
 
 Keep a broad internal discovery pool, but separate it from the user-visible list. Currently the scanner enriches roughly 240 products, reduces them to 80, and only then builds the sold-research plan. Preserve the pool through sold validation so later evidence can promote a better candidate.
 
-Use three discovery paths: newly discounted/campaign-eligible records; current offers for exact releases supported by David's own dated sales; and a small exploration allocation for unfamiliar records with strong product/price evidence. Own sales describe David's experience, not the entire market. Artist preferences remain inclusion/review context only and never determine value or economic rank.
+Use three discovery paths: newly discounted/campaign-eligible records; current offers for exact releases supported by David's own dated sales; and a protected half of the research budget for unfamiliar records with strong product/price evidence, sharing unused capacity between lanes. Own sales describe David's experience, not the entire market. Artist preferences remain inclusion/review context only and never determine value or economic rank.
 
 Resolve identity before marketplace queries. Use barcode/catalog and exact pressing searches, then a clearly labeled base-release fallback to discover possibilities. Broad fallback results cannot become exact-edition proof. Distinguish no results, bad identity, failed search, unavailable access, and unfinished research.
 

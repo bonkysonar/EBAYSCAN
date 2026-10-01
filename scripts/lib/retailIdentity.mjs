@@ -125,9 +125,13 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
     !splitArtist &&
     knownArtist &&
     (taggedArtist ||
+      // Newbury's vendor is the displayed artist heading. Colons and dashes
+      // in album subtitles (Act III: Life and Death) are not artist separators.
+      sourceId === "newbury-comics" ||
       !title ||
       variantOnly.test(title) ||
       vinylFormat.test(artist) ||
+      /^(?:soundtrack|ost)$/i.test(artist) ||
       (endsInVariant && parts.length === 2) ||
       artist === "Unknown Artist" ||
       rawTitle.toLowerCase().startsWith(knownArtist.toLowerCase()))
@@ -137,7 +141,7 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
       .toLowerCase()
       .startsWith(`${knownArtist.toLowerCase()} - `)
       ? rawTitle.slice(knownArtist.length + 3)
-      : rawTitle;
+      : rawTitle.replace(/^(?:soundtrack|ost)\s+[-–—]\s+/i, "");
     title =
       clean(
         withoutArtist

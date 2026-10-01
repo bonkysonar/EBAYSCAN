@@ -1303,7 +1303,10 @@ function clamp(value, minimum, maximum) {
 }
 import { isMarketplaceNonRecordTitle } from "../../src/lib/arbitrage/marketplaceProductClassification.mjs";
 
-/** Research observed album demand first; unproven sale items have a hard exploration budget. */
+/** Spend a bounded research budget on both observed demand and new deals.
+ * A research slot is not a recommendation. Never require our own inventory
+ * history before asking whether the broader market buys a record.
+ */
 export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
   const requestedLimit = Number.isFinite(limit)
     ? Math.max(0, Math.floor(limit))
@@ -1349,26 +1352,14 @@ export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
   });
   const observed = unique.filter(candidate => candidate.researchDemand.observed);
   const unproven = unique.filter(candidate => !candidate.researchDemand.observed);
-  explorationLimit = observed.length === 0 ? Math.min(1, requestedLimit) :
-    Math.min(Math.floor(requestedLimit * 0.1), Math.floor(observed.length / 9));
-  // Reserve the existing ten-percent allowance BEFORE the observed pool fills
-  // the cap. Round-robin sources so one high-volume feed cannot take it all.
-  const lanes = new Map();
-  for (const candidate of unproven) {
-    const key = candidateSourceId(candidate);
-    if (!lanes.has(key)) lanes.set(key, []);
-    lanes.get(key).push(candidate);
-  }
-  const exploration = [];
-  while (exploration.length < explorationLimit && lanes.size) {
-    for (const [key, lane] of lanes) {
-      if (exploration.length >= explorationLimit) break;
-      exploration.push(lane.shift());
-      if (!lane.length) lanes.delete(key);
-    }
-  }
+  // Reserve half for discovery; lend unused observed-demand capacity back to
+  // discovery instead of silently leaving 239 of 240 research slots unused.
+  explorationLimit = Math.min(unproven.length, Math.max(
+    Math.floor(requestedLimit / 2), requestedLimit - observed.length,
+  ));
+  const exploration = sourceBalanced(unproven, explorationLimit);
   const explorationCount = exploration.length;
-  const selected = [...observed.slice(0, requestedLimit - explorationCount), ...exploration];
+  const selected = [...sourceBalanced(observed, requestedLimit - explorationCount), ...exploration];
   const diagnostics = buildCandidateSelectionDiagnostics({
     dedupeExcluded: [],
     familyKey: candidateSourceFamily,
@@ -1389,6 +1380,7 @@ export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
     selected,
     diagnostics: {
       ...diagnostics,
+      researchAllocationVersion: 2,
       observedDemandCandidateCount: ranked.filter(
         (candidate) => candidate.researchDemand.observed,
       ).length,
@@ -1408,4 +1400,22 @@ export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
       ),
     },
   };
+}
+
+function sourceBalanced(candidates, limit) {
+  const lanes = new Map();
+  for (const candidate of candidates) {
+    const key = candidateSourceId(candidate);
+    if (!lanes.has(key)) lanes.set(key, []);
+    lanes.get(key).push(candidate);
+  }
+  const selected = [];
+  while (selected.length < limit && lanes.size) {
+    for (const [key, lane] of lanes) {
+      if (selected.length >= limit) break;
+      selected.push(lane.shift());
+      if (!lane.length) lanes.delete(key);
+    }
+  }
+  return selected;
 }

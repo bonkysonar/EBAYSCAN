@@ -94,6 +94,9 @@ export function normalizeResearchArtist(rawArtist = "") {
 /** Remove merchandising suffixes while preserving words that can be album names. */
 export function normalizeResearchTitle(rawTitle = "") {
   let title = decodeEntities(String(rawTitle))
+    .replace(/^\s*(?:soundtrack|ost)\s+[-–—]\s+/i, "")
+    .replace(/\s*\((?:with\s+)?(?:autograph(?:ed)?|signed)(?:\s+(?:postcard|card|jacket|insert))?\)\s*$/i, " ")
+    .replace(/\s+(?:with\s+(?:autographed|signed)\s+(?:postcard|card|jacket|insert)|[-–—]\s*(?:autographed|signed))\s*$/i, " ")
     .replace(/\b[1-9]\s*[x×-]?\s*lps?\b/gi, " ")
     .replace(/\$\s*[0-9.,]+/g, " ")
     .replace(/\bmusic\s*(?:&|and)\s*performance\b.*$/gi, " ")

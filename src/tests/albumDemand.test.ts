@@ -255,31 +255,31 @@ describe("demand-first research selection", () => {
       { limit: 20 },
     );
     expect(result.selected[0].id).toBe("known");
-    expect(result.selected).toHaveLength(1);
+    expect(result.selected).toHaveLength(20);
     expect(result.diagnostics).toMatchObject({
       observedDemandSelectedCount: 1,
-      explorationLimit: 0,
-      explorationSelectedCount: 0,
-      unprovenDeferredCount: 100,
-      unusedResearchCapacity: 19,
+      explorationLimit: 19,
+      explorationSelectedCount: 19,
+      unprovenDeferredCount: 81,
+      unusedResearchCapacity: 0,
       inputCandidateCount: 101,
     });
   });
 
-  it("leaves unused capacity instead of silently refilling the queue with unproven campaigns", () => {
+  it("researches new campaigns within the bounded budget even without own-sales history", () => {
     const result = selectResearchCandidates(
       Array.from({ length: 100 }, (_, i) =>
         candidate(`no-demand-${i}`, { appliedSaleCampaignId: "sale" }),
       ),
       { limit: 20 },
     );
-    expect(result.selected).toHaveLength(1);
+    expect(result.selected).toHaveLength(20);
     expect(
       result.selected.every(
         (row) => row.researchPriority === "unproven_exploration",
       ),
     ).toBe(true);
-    expect(result.diagnostics.unusedResearchCapacity).toBe(19);
+    expect(result.diagnostics.unusedResearchCapacity).toBe(0);
   });
 
   it("lets observed demand fill the research budget and does not reserve an unproven quota", () => {

@@ -1,6 +1,6 @@
 import { retailEligibility } from "../../../scripts/lib/retailIdentity.mjs";
 
-export const EVALUATION_VERSION = 8;
+export const EVALUATION_VERSION = 9;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -1330,8 +1330,9 @@ function buildStrategyOptions(context) {
     estimatedDaysToSell <= settings.balancedMaxDaysToSell;
   const highMarginDemand =
     sold.velocityValidated &&
-    sold.units365 !== null &&
-    sold.units365 >= Math.max(6, settings.minSoldUnits90Days * 2) &&
+    // Six observed sales in 90 days also prove at least six in 365 days.
+    // Do not require a second research window or invent an annualized count.
+    Math.max(sold.units365 ?? 0, sold.units90 ?? 0) >= Math.max(6, settings.minSoldUnits90Days * 2) &&
     sold.daysSinceLastSale !== null &&
     sold.daysSinceLastSale <= Math.max(120, settings.maxDaysSinceLastSale) &&
     (estimatedDaysToSell !== null
