@@ -1,4 +1,4 @@
-import { retailEligibility } from "./retailIdentity.mjs";
+import { retailEligibility, hasResearchableRetailIdentity } from "./retailIdentity.mjs";
 import { researchDemand } from "./albumDemand.mjs";
 
 const NAVIGATION_LABEL =
@@ -221,7 +221,8 @@ export function candidateQualityScore(candidate) {
 
 export function isHighSignalProductFind(find) {
   if (!retailEligibility(find).eligible) return false;
-  if (find.identityStatus === "unresolved") return false;
+  // This predicate selects work for research, not purchase recommendations.
+  if (find.identityStatus === "unresolved" && !hasResearchableRetailIdentity(find)) return false;
   // Homepage drops deserve a bounded research slot even without prior sales.
   // This is discovery eligibility, not physical-format, stock or value proof.
   if (find.sourceId === "vinyl-price-drop" && find.discoveryHomepage === true &&
@@ -1316,8 +1317,7 @@ export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
     .filter(
       (candidate) =>
         retailEligibility(candidate).eligible &&
-        candidate.identityStatus !== "unresolved" &&
-        !/^unknown artist$/i.test(cleanText(candidate.artist)),
+        hasResearchableRetailIdentity(candidate),
     )
     .map((candidate) => {
       const demand = researchDemand(candidate);
@@ -1365,7 +1365,10 @@ export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
   const selected = [];
   for (let index = 0; index < Math.max(proven.length, exploration.length); index++) {
     for (const candidate of [proven[index], exploration[index]]) {
-      if (candidate) selected.push({ ...candidate, researchOrder: selected.length });
+      if (candidate) {
+        candidate.researchOrder = selected.length;
+        selected.push(candidate);
+      }
     }
   }
   const diagnostics = buildCandidateSelectionDiagnostics({

@@ -60,6 +60,9 @@ function splitRetailArtistTitle(value) {
   const quoted = source.match(/^(.{2,100}?)\s+["“]([^"”]{2,})["”](?:\s|$)/);
   if (quoted) return { artist: quoted[1], title: quoted[2] };
 
+  const selfTitled = source.match(/^(.{2,100}?)\s+(?:s\s*\/\s*t|self[- ]titled)(?=\s|$|\()/i);
+  if (selfTitled) return { artist: selfTitled[1], title: selfTitled[1] };
+
   const colon = source.match(/^([^:]{2,80}):\s+(.{2,})$/);
   if (colon) return { artist: colon[1], title: colon[2] };
 

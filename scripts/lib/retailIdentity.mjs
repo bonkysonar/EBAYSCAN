@@ -205,6 +205,20 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
   };
 }
 
+/** A precise retailer title may justify investigation before its artist is resolved.
+ * This never resolves identity or supplies valuation evidence.
+ */
+export function hasResearchableRetailIdentity(find = {}) {
+  if (find.identityStatus !== "unresolved" &&
+      clean(find.artist) && !/^unknown artist$/i.test(clean(find.artist))) return true;
+  if (find.physicalFormatConfirmed !== true || !retailEligibility(find).eligible) return false;
+  const title = clean(find.sourceListingTitle || find.title);
+  const words = title.toLowerCase()
+    .replace(/\b(?:vinyl|records?|lps?|album|limited|edition|exclusive|new|sealed|remastered|sale|clearance|black|white|red|blue|green|colored|colour|color|set)\b/g, " ")
+    .match(/[\p{L}][\p{L}'’]+/gu) ?? [];
+  return title.length <= 240 && new Set(words).size >= 3;
+}
+
 function newburyPressingMetadata(product, variant, sourceId, tags, isVinyl) {
   if (sourceId !== "newbury-comics") return {};
   const empty = { retailEditionText: null, retailCatalogNumber: null };

@@ -124,6 +124,13 @@ function source(source: RetailArbitrageSource): RetailArbitrageSource {
 
 export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
   source({
+    id: "real-gone-music", displayName: "Real Gone Music", domain: "realgonemusic.com",
+    baseUrl: "https://realgonemusic.com", country: "US", sourceType: "label_direct",
+    crawlType: "shopify-store", priority: 1, saleLikelihood: "high", ...labelSourceRules,
+    group: "Indie labels", salePathHints: ["/collections/sale"],
+    notes: "Label-direct clearance. Match the selected vinyl color and disc count; do not transfer pricing or availability between variants. Shipping is calculated at checkout.",
+  }),
+  source({
     id: "best-buy", displayName: "Best Buy", domain: "bestbuy.com",
     baseUrl: "https://www.bestbuy.com/site/music/all-music/pcmcat1754074717277.c?id=pcmcat1754074717277",
     country: "US", sourceType: "us_retailer", crawlType: "retailer", priority: 1,
