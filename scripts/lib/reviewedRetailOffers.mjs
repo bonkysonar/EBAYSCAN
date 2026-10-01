@@ -59,3 +59,19 @@ export function refreshReviewedRetailOffer(find, now = new Date().toISOString())
       retailVerification: { status: "needs_confirmation", checkedAt: now, reason: "reviewed_primary_page_needs_refresh" } };
   }
 }
+
+/** Publication rechecks the primary page instead of trusting derived offer fields. */
+export function reviewedRetailOfferIsCurrent(find, report, now = new Date().toISOString()) {
+  try {
+    if (find.retailObservationMethod !== "public_page_reader" ||
+        report?.evidenceScope !== "observed_public_pages_only" ||
+        report?.scanComplete !== false || report?.id !== find.sourceId ||
+        !report.resolvedUrls?.includes(find.sourceUrl)) return false;
+    const [verified] = reviewedRetailOffers({ version: 1, captureMethod: "public_page_reader", pages: [find.reviewedRetailEvidence] }, now);
+    const keys = ["id", "sourceId", "sourceUrl", "artist", "title", "retailEditionText", "condition",
+      "available", "purchasePrice", "sourceCurrency", "sourceCountry", "capturedAt", "retailObservedAt"];
+    return keys.every(key => verified[key] === find[key]) &&
+      verified.costs.inboundShipping === find.costs?.inboundShipping &&
+      JSON.stringify(verified.shippingOffer) === JSON.stringify(find.shippingOffer);
+  } catch { return false; }
+}
