@@ -18,6 +18,12 @@ const find = {
 };
 
 describe("generic Product Research curation", () => {
+  it("does not use another album's sales for a self-titled record", () => {
+    const self = { ...find, artist: "Nothing, Nowhere.", title: "The Nothing, Nowhere. Exclusive LP", sourceListingTitle: "The Nothing, Nowhere. Exclusive LP" };
+    for (const other of ["nothing,nowhere. - Trauma Factory - 2021 New Sealed Vinyl", "Nothing Nowhere Reaper X Ruiner Vinyl LP", "nothing,nowhere. Dark Magic Vinyl LP"]) expect(productResearchRowMatchScore(self, other)).toBe(0);
+    expect(productResearchRowMatchScore(self, "Nothing Nowhere The Nothing Nowhere New Vinyl LP")).toBeGreaterThan(.68);
+    expect(productResearchRowMatchScore({ ...self, artist: "Paramore", title: "Paramore", sourceListingTitle: "Paramore LP" }, "Paramore After Laughter New LP")).toBe(0);
+  });
   it("builds a stable find-id research plan without a title allowlist", () => {
     const [entry] = buildProductResearchPlan([find]);
 

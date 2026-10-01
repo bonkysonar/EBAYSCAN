@@ -25,6 +25,12 @@ function findFor(title: string): ArbitrageFind {
 }
 
 describe("active eBay edition matching", () => {
+  it("requires the self-titled album, not just its artist name", () => {
+    const profile = buildActiveSearchProfile({ ...findFor("The Nothing, Nowhere. Exclusive LP"), artist: "Nothing, Nowhere.", title: "The Nothing, Nowhere. Exclusive LP", identityStatus: "resolved" })!;
+    expect(matchActiveListing("nothing,nowhere. Dark Magic Vinyl LP New", profile).matched).toBe(false);
+    expect(matchActiveListing("Nothing Nowhere - Trauma Factory - New Sealed Vinyl", profile).matched).toBe(false);
+    expect(matchActiveListing("Nothing Nowhere The Nothing Nowhere Vinyl LP New", profile).matched).toBe(true);
+  });
   it("uses one artist and album search while validating pressing details on results", () => {
     const profile = buildActiveSearchProfile({
       ...findFor("Artist - Great Escape (Sea Blue Smoke Vinyl 2LP)"),
