@@ -316,6 +316,13 @@ export function parseProductResearchRow(row) {
   };
 }
 
+/** Recheck the saved rows; old prices and quantities describe the old edition. */
+export function resetPressingSoldEvidence(find) {
+  return { ...find, averageSoldPrice: null, averageSoldShipping: null, totalSoldCount: null,
+    conservativeResalePrice: null, ebayResearchRows: [], productResearchRows: [],
+    soldEvidence: { source: "retail_identity_changed", status: "pending", condition: "new_sealed", matchConfidence: "unknown" } };
+}
+
 export function productResearchRowMatchScore(find, rowTitleValue) {
   const rowTitle = cleanText(rowTitleValue);
   if (selfTitledReleaseMismatch(find.artist, find.title, rowTitle)) return 0;
@@ -327,15 +334,16 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
     return 0;
 
   const originalCandidateText = cleanText(
-    `${find.artist ?? ""} ${find.title ?? ""} ${find.sourceListingTitle ?? ""} ${find.shopifyVariantTitle || find.variantTitle || ""}`,
+    `${find.artist ?? ""} ${find.title ?? ""} ${find.sourceListingTitle ?? ""} ${find.shopifyVariantTitle || find.variantTitle || ""} ${find.retailEditionText ?? ""}`,
   );
   if (hasIncompatibleRecordFormat(originalCandidateText, rowTitle)) return 0;
   if (hasUnconfirmedPressing(originalCandidateText, rowTitle)) return 0;
   const releaseName = `${find.artist ?? ""} ${normalizeCanonicalResearchTitle(find.title ?? "")}`;
   const candidateEdition = extractEditionIdentity(
-    `${find.sourceListingTitle || releaseName} ${find.shopifyVariantTitle || find.variantTitle || ""}`, releaseName,
+    `${find.sourceListingTitle || releaseName} ${find.shopifyVariantTitle || find.variantTitle || ""} ${find.retailEditionText ?? ""}`, releaseName,
   );
   const rowEdition = extractEditionIdentity(rowTitle, releaseName);
+  if (find.retailEditionText && !candidateEdition.colors.length && !candidateEdition.signals.length) return 0;
   const candidateColors = candidateEdition.colors.filter((color) => color !== "black");
   const rowColors = rowEdition.colors.filter((color) => color !== "black");
   if (!rowColors.length && /\bcolou?red\s+vinyl\b/i.test(rowTitle)) return 0;

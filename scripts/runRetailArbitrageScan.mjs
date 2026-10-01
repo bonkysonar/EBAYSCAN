@@ -1902,6 +1902,7 @@ async function scanShopifySource(source) {
           const identity = shopifyIdentity(
             item.product,
             {
+              id: item.variantId,
               title: item.variantTitle,
             },
             source,
