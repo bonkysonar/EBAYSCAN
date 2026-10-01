@@ -1,5 +1,6 @@
 import type { ArbitrageImportPayload } from "../lib/arbitrage/types";
 import { retailEligibility } from "../../scripts/lib/retailIdentity.mjs";
+import { reviewedRetailOfferIsCurrent } from "../../scripts/lib/reviewedRetailOffers.mjs";
 
 const error = (message: string) =>
   Object.assign(new Error(message), { statusCode: 422 });
@@ -56,6 +57,8 @@ export function mergeVerifiedSourceUpdates(
     Date.parse(date) >= started - 300000 &&
     Date.parse(date) <= now + 300000;
   const freshProduct = (find: ArbitrageImportPayload["finds"][number]) => {
+    if (find.retailObservationMethod === "public_page_reader")
+      return reviewedRetailOfferIsCurrent(find, reports.find((entry) => entry.id === find.sourceId), new Date(now).toISOString());
     if (!find.retailObservationMethod && !find.retailObservedAt && !find.retailObservationUrl)
       return fresh(find.capturedAt);
     if (!["visible_browser", "visible_browser_catalog"].includes(find.retailObservationMethod ?? ""))
@@ -107,6 +110,8 @@ export function mergeVerifiedSourceUpdates(
   const mergedReports = authoritativeIds.map((id) => {
     const current = reports.find((r) => r.id === id);
     const prior = oldReports.get(id);
+    const reviewedDates = newProducts.filter((find) => find.sourceId === id &&
+      find.retailObservationMethod === "public_page_reader").map((find) => Date.parse(find.capturedAt));
     // A bounded sale-page check has no new evidence about the catalog. Keep the
     // previous catalog result and its verification time, while reporting the
     // new sale-page result (including failures) and the latest attempt time.
@@ -123,7 +128,7 @@ export function mergeVerifiedSourceUpdates(
             ? "partial" : current.status,
           lastAttemptAt: incoming.createdAt,
           verifiedAt: products.has(id)
-            ? (current.browserCatalogCoverage === "bounded_visible_pages" &&
+            ? (reviewedDates.length ? new Date(Math.max(...reviewedDates)).toISOString() : current.browserCatalogCoverage === "bounded_visible_pages" &&
                 Number.isFinite(Date.parse(String(current.browserObservedAt)))
                 ? current.browserObservedAt : incoming.createdAt)
             : (prior?.verifiedAt ?? previous?.createdAt ?? null),
