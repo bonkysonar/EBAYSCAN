@@ -31,6 +31,7 @@ export function learningIdentity(find) {
       find.barcode,
       find.appliedSaleCampaignId,
       find.learningEvidenceRevision ?? null,
+      ...(find.retailEditionText ? [find.retailEditionText, find.retailCatalogNumber ?? null] : []),
     ]),
   };
 }
