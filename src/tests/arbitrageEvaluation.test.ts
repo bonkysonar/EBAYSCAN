@@ -58,6 +58,28 @@ function validatedFind(overrides: Partial<ArbitrageFind> = {}): ArbitrageFind {
 }
 
 describe("canonical arbitrage evaluation", () => {
+  it("offsets buyer-paid postage once and charges fees on withheld buyer tax", () => {
+    // Synthetic $30 item + $4.39 shipping, with an exact $2.58 buyer-tax quote.
+    const ledger = buildCostLedger(0, 34.39, {
+      inboundShipping: 0, taxAmount: 0, buyerSalesTaxAmount: 2.58,
+      outboundShipping: 4.39, packaging: 0, promotedListingRate: 0,
+      returnsReserveRate: 0,
+    });
+    expect(ledger.marketplaceFeeBase).toBe(36.97);
+    expect(ledger.marketplaceFee).toBe(5.10);
+    expect(ledger.expectedNetProfit).toBe(24.90);
+    expect(ledger.expectedResalePrice).toBe(34.39);
+  });
+
+  it("includes buyer tax in promoted fees without treating the tax as earnings", () => {
+    const ledger = buildCostLedger(0, 50, {
+      inboundShipping: 0, taxAmount: 0, buyerSalesTaxRatePercent: 10,
+      outboundShipping: 0, packaging: 0, returnsReserveRate: 0,
+    });
+    expect(ledger.buyerSalesTax).toBe(5);
+    expect(ledger.promotedListingFee).toBe(3.30);
+    expect(ledger.expectedNetProfit).toBe(39.31);
+  });
   it("allocates a same-shop order while retaining tax and the single-record comparison", () => {
     const find = validatedFind({ costs: {}, sourceCountry: "US" });
     const single = evaluateOpportunity(find, {}, NOW);
@@ -128,8 +150,8 @@ describe("canonical arbitrage evaluation", () => {
       soldEvidence: true,
       supply: true,
     });
-    expect(result.expectedNetProfit).toBe(13.75);
-    expect(result.roiRatio).toBeCloseTo(1.2557, 4);
+    expect(result.expectedNetProfit).toBe(13.87);
+    expect(result.roiRatio).toBeCloseTo(1.2667, 4);
     expect(result.sellThroughRate).toBe(0.8);
     expect(result.activeSupplyMonths).toBe(0.75);
     expect(result.status).toBe("BUY");
@@ -250,7 +272,7 @@ describe("canonical arbitrage evaluation", () => {
     expect(result.decision).toBe("BUY");
     expect(result.gates.demand).toBe(true);
     expect(result.gates.economics).toBe(true);
-    expect(result.expectedNetProfit).toBe(5.75);
+    expect(result.expectedNetProfit).toBe(6.22);
     expect(result.recommendedStrategy).toBe("fast_turn");
     expect(
       result.strategyOptions.find((option) => option.id === "fast_turn"),
@@ -275,8 +297,8 @@ describe("canonical arbitrage evaluation", () => {
       NOW,
     );
 
-    expect(result.expectedNetProfit).toBe(13.75);
-    expect(result.roiRatio).toBeCloseTo(1.2557, 4);
+    expect(result.expectedNetProfit).toBe(13.87);
+    expect(result.roiRatio).toBeCloseTo(1.2667, 4);
     expect(result.gates.economics).toBe(true);
     expect(result.decision).toBe("BUY");
     expect(
@@ -320,7 +342,7 @@ describe("canonical arbitrage evaluation", () => {
       economicsQualified: false,
       minNetProfitDollars: 15,
       minRoiRatio: 0.6,
-      netProfitGapDollars: 1.25,
+      netProfitGapDollars: 1.13,
       watchQualified: true,
     });
   });
@@ -744,7 +766,7 @@ describe("canonical arbitrage evaluation", () => {
     const balanced = result.strategyOptions.find(
       (option) => option.id === "balanced",
     );
-    expect(result.expectedNetProfit).toBe(5.75);
+    expect(result.expectedNetProfit).toBe(6.22);
     expect(result.decision).toBe("REVIEW");
     expect(result.candidateTier).toBe("B");
     expect(result.recommendedStrategy).toBe("balanced");
@@ -767,10 +789,10 @@ describe("canonical arbitrage evaluation", () => {
   it("keeps a fast mover near the smaller-margin floor as a price-target WATCH", () => {
     const result = evaluateOpportunity(
       validatedFind({
-        conservativeResalePrice: 27.5,
+        conservativeResalePrice: 26.8,
         soldEvidence: {
           ...validatedFind().soldEvidence,
-          conservativeResalePrice: 27.5,
+          conservativeResalePrice: 26.8,
         },
       }),
       defaultArbitrageSettings,
@@ -780,7 +802,7 @@ describe("canonical arbitrage evaluation", () => {
     const fastTurn = result.strategyOptions.find(
       (option) => option.id === "fast_turn",
     );
-    expect(result.expectedNetProfit).toBe(3.74);
+    expect(result.expectedNetProfit).toBe(3.77);
     expect(result.decision).toBe("WATCH");
     expect(result.reasonCodes).toContain("PRICE_TARGET_WATCH");
     expect(result.recommendedMaxPurchasePrice).toBeLessThan(
@@ -789,7 +811,7 @@ describe("canonical arbitrage evaluation", () => {
     expect(fastTurn).toMatchObject({
       demandSupport: "qualified",
       economicsQualified: false,
-      netProfitGapDollars: 0.26,
+      netProfitGapDollars: 0.23,
       watchQualified: true,
     });
   });
@@ -1178,6 +1200,7 @@ describe("canonical arbitrage evaluation", () => {
       60,
       {
         duty: 2,
+        buyerSalesTaxRatePercent: 0,
         fxFees: 1,
         inboundShipping: 4,
         marketplaceFeeFixed: 0.4,

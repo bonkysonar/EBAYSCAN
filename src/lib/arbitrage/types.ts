@@ -38,6 +38,8 @@ export type ArbitragePriorityBreakdown = {
 };
 
 export type ArbitrageCostInputs = {
+  buyerSalesTaxAmount?: number | null;
+  buyerSalesTaxRatePercent?: number | null;
   duty?: number | null;
   fxFees?: number | null;
   inboundShipping?: number | null;
@@ -55,6 +57,9 @@ export type ArbitrageCostInputs = {
 };
 
 export type ArbitrageCostLedger = {
+  buyerSalesTax?: number;
+  buyerSalesTaxRatePercent?: number;
+  marketplaceFeeBase?: number | null;
   duty: number;
   expectedNetProfit: number | null;
   expectedResalePrice: number | null;
@@ -124,6 +129,7 @@ export type ArbitrageActiveEvidence = {
 };
 
 export type ArbitrageSettings = {
+  defaultBuyerSalesTaxRatePercent: number;
   defaultDuty: number;
   defaultFxFees: number;
   defaultInboundShipping: number;

@@ -39,3 +39,13 @@ series and pressing conflicts continue to fail. Generic editions still require
 their distinguishing metadata. “Worth considering” uses its explicit evidence,
 profit, demand and supply gates without a duplicate heuristic tier cutoff;
 automatic BUY strategy thresholds remain unchanged.
+
+Resale comparisons use delivered prices, including buyer-paid shipping. Deduct
+the actual label cost once; do not add a second shipping revenue credit. The
+editable default model uses 12.7% plus $0.40 marketplace fees, $4.39 postage,
+6% promotion, $1 packaging and a 3% returns reserve. Percentage marketplace
+and advertising fees also apply to estimated buyer sales tax (9.5% by default),
+which is withheld rather than earned. Packaging, reserves and future buyer tax
+remain assumptions. Heavier parcels and international orders may cost more.
+An exact known buyer-tax amount can override the estimate in a cost ledger.
+Private order details used to calibrate costs must remain outside Git.

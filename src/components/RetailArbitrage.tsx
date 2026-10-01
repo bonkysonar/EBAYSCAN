@@ -914,6 +914,16 @@ export function RetailArbitrage() {
           />
         </div>
         <p>Combined shipping divides one shop’s shipping charge across the records in that order. It does not assume buying several copies of one release. Single-record costs remain visible in the profit ledger.</p>
+        <h3>Resale costs</h3>
+        <p>Resale estimates include what the buyer pays for shipping. The label cost is deducted once. Buyer sales tax is withheld by eBay; it increases the fee basis, not your revenue. Larger packages and international sales may cost more.</p>
+        <div className="arbitrage-settings-grid">
+          <NumberSetting label="Postage per sale $" value={settings.defaultOutboundShipping} step={0.01} onChange={(value) => updateSetting("defaultOutboundShipping", value)} />
+          <NumberSetting label="eBay percentage fee %" value={settings.defaultMarketplaceFeeRate * 100} step={0.1} onChange={(value) => updateSetting("defaultMarketplaceFeeRate", value / 100)} />
+          <NumberSetting label="eBay fixed fee $" value={settings.defaultMarketplaceFeeFixed} step={0.1} onChange={(value) => updateSetting("defaultMarketplaceFeeFixed", value)} />
+          <NumberSetting label="Estimated buyer sales tax %" value={settings.defaultBuyerSalesTaxRatePercent} step={0.1} onChange={(value) => updateSetting("defaultBuyerSalesTaxRatePercent", value)} />
+          <NumberSetting label="Promotion allowance %" value={settings.defaultPromotedListingRate * 100} step={0.1} onChange={(value) => updateSetting("defaultPromotedListingRate", value / 100)} />
+          <NumberSetting label="Packaging per sale $" value={settings.defaultPackaging} step={0.1} onChange={(value) => updateSetting("defaultPackaging", value)} />
+        </div>
       </details>
     </section>
   );
@@ -1237,8 +1247,12 @@ function FindDetail({
             />
             <Metric label="Total cost" value={money(ledger.totalCost)} />
             <Metric
-              label="Conservative resale"
+              label="Delivered resale (includes buyer shipping)"
               value={nullableMoney(ledger.expectedResalePrice)}
+            />
+            <Metric
+              label="Fee basis (includes estimated buyer tax)"
+              value={nullableMoney(ledger.marketplaceFeeBase ?? ledger.expectedResalePrice)}
             />
             <Metric
               label="Expected net"
