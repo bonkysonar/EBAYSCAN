@@ -12,6 +12,8 @@ VinylPriceDrop checks all unique homepage cards, its sitewide list, and up to `-
 
 The September 30 investigation and implemented corrections are documented in `RETAIL_OPPORTUNITY_AUDIT.md`. The empty decision list reports one first blocker per published product, distinguishing missing evidence from inadequate margins. The high-margin strategy accepts six verified sales in 90 days as proof of at least six sales in the year, without inventing an annualized count.
 
+Research plans alternate observed-demand and unfamiliar candidates using a preserved research order, independent of result/display ranking. Follow that generated order within the scheduled research budget so an unfinished session still spends time on both lanes. Legacy drafts without an explicit order keep their existing sequence.
+
 For a manual bounded refresh, use `npm run arbitrage:daily -- --sources=<comma-separated-ids>` with fresh browser captures. It returns a new context/draft/checkpoint/plan and can publish only source updates. Do not combine it with `--full`, `--browserOnly` or `--finish`. Svart Records is browser-observation-only: absent captures remain unknown, markdown bands are not sitewide offers, and mixed CD/LP From prices cannot price an LP. EUR, FX and international shipping remain unknown until evidenced.
 
 ## Purpose

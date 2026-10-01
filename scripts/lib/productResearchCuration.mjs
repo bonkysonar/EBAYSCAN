@@ -80,6 +80,11 @@ export function buildProductResearchPlan(finds, options = {}) {
         find.identityStatus !== "unresolved",
     )
     .filter(isResearchableFind)
+    // Evaluation and display ranking are independent of the browser-work order.
+    // Restore the source-balanced, interleaved queue after those sorts.
+    .sort((left, right) =>
+      (Number.isInteger(left.researchOrder) ? left.researchOrder : Number.MAX_SAFE_INTEGER) -
+      (Number.isInteger(right.researchOrder) ? right.researchOrder : Number.MAX_SAFE_INTEGER))
     .map((find) => {
       const variants = researchVariantDetails(find);
       return {
@@ -87,6 +92,8 @@ export function buildProductResearchPlan(finds, options = {}) {
         capturedAt: find.capturedAt,
         findId: find.id,
         sourceId: find.sourceId,
+        discoveryLane: find.discoveryLane,
+        researchPriority: find.researchPriority,
         sourceListingTitle: find.sourceListingTitle,
         title: find.title,
         variants: variants.map((variant) => ({

@@ -4,6 +4,7 @@ import { webSaleDiscovery, publicDiscoveryUrl } from "../../scripts/lib/webSaleD
 import { isHighSignalProductFind, selectResearchCandidates } from "../../scripts/lib/candidatePipeline.mjs";
 import { extractRetailCampaigns } from "../../scripts/lib/campaignOffers.mjs";
 import { buildSoldResearchQueryVariants } from "../lib/arbitrage/soldResearchLinks.mjs";
+import { buildProductResearchPlan } from "../../scripts/lib/productResearchCuration.mjs";
 
 const origin = "https://vinylpricedrop.com";
 const cards = (ids: number[]) => ids.map(id => `<a class="card" href="/deals/album-${id}"><h2 class="title">Artist ${id} – Album ${id}</h2></a>`).join("");
@@ -69,6 +70,20 @@ describe("new-deal research allowance", () => {
     expect(result.selected).toHaveLength(20);
     expect(result.diagnostics).toMatchObject({observedDemandSelectedCount:10, explorationSelectedCount:10});
     expect([...new Set(result.selected.filter((row:any)=>row.researchPriority === "unproven_exploration").map((row:any)=>row.sourceId))].sort()).toEqual(["large-feed","vinyl-price-drop"]);
+  });
+  it("keeps unfamiliar offers in the first research batch after evaluation reorders the pool", () => {
+    const input = [...Array.from({length:30}, (_,i)=>make(`known-${i}`,"known-shop",true)),
+      ...Array.from({length:30}, (_,i)=>make(`new-${i}`,i % 2 ? "new-shop-a" : "new-shop-b"))];
+    const selected = selectResearchCandidates(input,{limit:40}).selected;
+    // Reproduce the scanner's separate result ranking before plan generation.
+    const reranked = [...selected].sort((a,b)=>Number(b.researchDemand.observed)-Number(a.researchDemand.observed));
+    const prefix = buildProductResearchPlan(reranked,{maxEntries:8});
+    expect(prefix.map((entry:any)=>entry.researchPriority)).toEqual([
+      "observed_album_demand", "unproven_exploration", "observed_album_demand", "unproven_exploration",
+      "observed_album_demand", "unproven_exploration", "observed_album_demand", "unproven_exploration",
+    ]);
+    expect(new Set(prefix.map((entry:any)=>entry.sourceId))).toEqual(new Set(["known-shop","new-shop-a","new-shop-b"]));
+    expect(buildProductResearchPlan(input.slice(0,3)).map((entry:any)=>entry.findId)).toEqual(input.slice(0,3).map(f=>f.id));
   });
   it("admits affordable homepage drops only as research, rejecting unavailable and CD items", () => {
     const lead = {...make("vpd","vinyl-price-drop"), discoveryHomepage:true, discoveryUrl:origin+"/deals/album",purchaseOfferVerification:"discovery_lead"};
