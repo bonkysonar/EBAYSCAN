@@ -1,3 +1,4 @@
+import { observedSoldRowIdentities } from "./observedSoldRowIdentity.mjs";
 const DAY = 86_400_000;
 
 // Seller Hub can display an applied filter without retaining its URL parameter.
@@ -15,10 +16,8 @@ export function verifiedWindowSales(rows, run, now = new Date()) {
   const verified = verifiedResearchWindow(run, now);
   if (!verified || !rows.length) return null;
   const { start, end, duration, observedWindow } = verified;
-  const allRows = run.rows ?? [];
-  const ids = allRows.map((row) => String(row.itemUrl ?? row.href ?? row.url ?? "")
-    .match(/^https:\/\/(?:www\.)?ebay\.com\/itm\/(?:[^/]+\/)?(\d{9,15})(?:[/?#]|$)/)?.[1]);
-  if (ids.some((id) => !id) || new Set(ids).size !== ids.length) return null;
+  const identities = observedSoldRowIdentities(run, verified);
+  if (identities.missing || identities.duplicate) return null;
   if (rows.some((row) => !Number.isInteger(row.totalSold) || row.totalSold <= 0 ||
       !row.dateLastSold || !Number.isFinite(Date.parse(row.dateLastSold)) || Date.parse(row.dateLastSold) < start || Date.parse(row.dateLastSold) > end)) return null;
   const units = rows.reduce((sum, row) => sum + row.totalSold, 0);
