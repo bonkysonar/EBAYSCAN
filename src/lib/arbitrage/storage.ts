@@ -26,6 +26,17 @@ export function loadArbitrageSettings(): ArbitrageSettings {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return defaultArbitrageSettings;
     const parsed = JSON.parse(raw) as Partial<ArbitrageSettings>;
+    // Earlier versions silently saved these unexposed cost defaults. Migrate
+    // only the old defaults; preserve explicit non-default cost assumptions.
+    if (parsed.defaultBuyerSalesTaxRatePercent === undefined) {
+      const legacyCosts = {
+        defaultMarketplaceFeeFixed: 0.3, defaultMarketplaceFeeRate: 0.15,
+        defaultOutboundShipping: 6, defaultPromotedListingRate: 0.02,
+      } as const;
+      for (const key of Object.keys(legacyCosts) as (keyof typeof legacyCosts)[]) {
+        if (parsed[key] === legacyCosts[key]) parsed[key] = defaultArbitrageSettings[key];
+      }
+    }
     const migrated = {
       ...parsed,
       balancedMinNetProfitDollars:

@@ -1,7 +1,7 @@
 import { retailEligibility } from "../../../scripts/lib/retailIdentity.mjs";
 import { shippingOfferScenario } from "./shippingOffer.mjs";
 
-export const EVALUATION_VERSION = 11;
+export const EVALUATION_VERSION = 12;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -14,13 +14,14 @@ export const defaultArbitrageSettings = Object.freeze({
   defaultInboundShipping: 5,
   combinedOrderRecords: 1,
   combinedOrderShipping: 5,
-  defaultMarketplaceFeeFixed: 0.3,
-  defaultMarketplaceFeeRate: 0.15,
+  defaultMarketplaceFeeFixed: 0.4,
+  defaultMarketplaceFeeRate: 0.127,
+  defaultBuyerSalesTaxRatePercent: 9.5,
   defaultOtherAcquisitionCosts: 0,
   defaultOtherSellingCosts: 0,
-  defaultOutboundShipping: 6,
+  defaultOutboundShipping: 4.39,
   defaultPackaging: 1,
-  defaultPromotedListingRate: 0.02,
+  defaultPromotedListingRate: 0.06,
   defaultReturnsReserveAmount: 0,
   defaultReturnsReserveRate: 0.03,
   fastTurnMaxDaysToSell: 45,
@@ -772,12 +773,20 @@ export function buildCostLedger(
   const landedCost = roundMoney(
     price + salesTax + inboundShipping + duty + fxFees + otherAcquisitionCosts,
   );
+  // Sold/active comparisons already include buyer-paid shipping. Subtract the
+  // label once from that delivered revenue; do not add shipping revenue again.
+  // Buyer tax is withheld, but eBay charges percentage fees on it as well.
+  const buyerSalesTaxRatePercent = Math.min(100,
+    finiteNonNegative(costs?.buyerSalesTaxRatePercent) ?? settings.defaultBuyerSalesTaxRatePercent);
+  const buyerSalesTax = resale === null ? 0 :
+    amount(costs?.buyerSalesTaxAmount, resale * buyerSalesTaxRatePercent / 100);
+  const marketplaceFeeBase = resale === null ? null : roundMoney(resale + buyerSalesTax);
   const marketplaceFee =
     resale === null
       ? 0
-      : roundMoney(resale * marketplaceFeeRate + marketplaceFeeFixed);
+      : roundMoney(roundMoney(marketplaceFeeBase * marketplaceFeeRate) + marketplaceFeeFixed);
   const promotedListingFee =
-    resale === null ? 0 : roundMoney(resale * promotedListingRate);
+    resale === null ? 0 : roundMoney(marketplaceFeeBase * promotedListingRate);
   const returnsReserve =
     resale === null
       ? returnsReserveAmount
@@ -803,6 +812,8 @@ export function buildCostLedger(
       : round(expectedNetProfit / resale, 4);
 
   return {
+    buyerSalesTax,
+    buyerSalesTaxRatePercent,
     duty,
     expectedNetProfit,
     expectedResalePrice: resale,
@@ -810,6 +821,7 @@ export function buildCostLedger(
     inboundShipping,
     landedCost,
     marketplaceFee,
+    marketplaceFeeBase,
     marketplaceFeeFixed,
     marketplaceFeeRate,
     marginRatio,
