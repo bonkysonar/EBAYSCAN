@@ -193,6 +193,12 @@ export type ArbitrageFind = {
   shippingScenario?: { quantity: number; minimumSubtotal: number; subtotal: number; additionalSpend: number; standardShipping: number; sourceUrl: string; condition: string; singleRecordNetProfit?: number | null } | null;
   historicalResalePrice?: number | null;
   activeResaleCap?: number | null;
+  resalePricingScenario?: {
+    basis: "sold_and_active_lower_quartile" | "lowest_active_undercut";
+    activeResaleCap: number | null; resalePrice: number | null; lowestActivePrice: number | null;
+    quoteCount: number; lowestPriceNetProfit: number | null; lowestPriceRoiRatio: number | null;
+    doubleLpShippingAllowance: number | null;
+  };
   albumDemand?: AlbumDemand;
   albumPriceBenchmark?: AlbumPriceBenchmark;
   basketScenario?: {

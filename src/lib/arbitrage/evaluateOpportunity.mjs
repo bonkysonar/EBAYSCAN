@@ -1,8 +1,9 @@
 import { retailEligibility } from "../../../scripts/lib/retailIdentity.mjs";
 import { shippingOfferScenario } from "./shippingOffer.mjs";
 import { checkoutBasketScenario } from "./checkoutBasket.mjs";
+import { resalePricing, sellingCostsForFormat } from "./resalePricing.mjs";
 
-export const EVALUATION_VERSION = 13;
+export const EVALUATION_VERSION = 14;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -124,19 +125,13 @@ export function evaluateOpportunity(
       ? null
       : finitePositive(find.lowestActivePrice);
   const historicalResalePrice = canonicalResalePrice(find);
-  const activeAgeMs = Number(now) - Date.parse(active.capturedAt);
-  // Lower a historical estimate to compete with a fresh matching quote. This
-  // never creates sold evidence and never raises a price from asking listings.
-  const quotedActivePrice = active.matchConfidence >= settings.minBuyMatchConfidence &&
-    activeAgeMs >= -MAX_FUTURE_CLOCK_SKEW_MS && activeAgeMs <= 6 * 3600000
-      ? finitePositive(find.lowestActivePrice) : null;
-  const activeResaleCap = quotedActivePrice === null ? null : roundMoney(quotedActivePrice * .98);
-  const resalePrice = historicalResalePrice === null ? null :
-    Math.min(historicalResalePrice, activeResaleCap ?? historicalResalePrice);
+  const pricing = resalePricing(find, sold, active, historicalResalePrice, now, settings.minBuyMatchConfidence);
+  const { activeResaleCap, resalePrice } = pricing;
+  const formatCosts = sellingCostsForFormat(find, settings);
   const verifiedCheckoutBasket = checkoutBasketScenario(find, now);
   const shippingScenario = verifiedCheckoutBasket ? null : shippingOfferScenario(find, now);
-  const acquisitionCosts = verifiedCheckoutBasket ? { ...find.costs, inboundShipping: verifiedCheckoutBasket.perRecordShipping }
-    : shippingScenario ? { ...find.costs, inboundShipping: 0 } : find.costs;
+  const acquisitionCosts = verifiedCheckoutBasket ? { ...formatCosts, inboundShipping: verifiedCheckoutBasket.perRecordShipping }
+    : shippingScenario ? { ...formatCosts, inboundShipping: 0 } : formatCosts;
   const sourceCurrency =
     normalizeCurrency(find.sourceCurrency) ??
     defaultCurrencyForCountry(find.sourceCountry);
@@ -173,7 +168,7 @@ export function evaluateOpportunity(
     settings.combinedOrderShipping >= 0 && settings.combinedOrderShipping <= 1000;
   const singleRecordLedger = combinedOrder ? buildCostLedger(
     purchasePriceForLedger, currencyConversionRequired ? null : resalePrice,
-    find.costs, settings,
+    formatCosts, settings,
   ) : null;
   if (combinedOrder) settings.defaultInboundShipping =
     Math.ceil(settings.combinedOrderShipping * 100 / settings.combinedOrderRecords) / 100;
@@ -183,10 +178,19 @@ export function evaluateOpportunity(
     acquisitionCosts,
     settings,
   );
+  const lowestPriceLedger = pricing.lowestActivePrice !== null && resalePrice !== null &&
+    pricing.lowestActivePrice < resalePrice && !currencyConversionRequired
+      ? buildCostLedger(purchasePriceForLedger, pricing.lowestActivePrice, acquisitionCosts, settings) : null;
+  const resalePricingScenario = {
+    ...pricing,
+    lowestPriceNetProfit: lowestPriceLedger?.expectedNetProfit ?? null,
+    lowestPriceRoiRatio: lowestPriceLedger?.roiRatio ?? null,
+    doubleLpShippingAllowance: formatCosts !== find.costs ? formatCosts.outboundShipping : null,
+  };
   if (shippingScenario) {
     shippingScenario.singleRecordNetProfit = buildCostLedger(purchasePriceForLedger,
       currencyConversionRequired ? null : resalePrice,
-      { ...find.costs, inboundShipping: shippingScenario.standardShipping }, settings).expectedNetProfit;
+      { ...formatCosts, inboundShipping: shippingScenario.standardShipping }, settings).expectedNetProfit;
   }
   const sellThroughRate =
     sold.units90 !== null && active.exactCount !== null
@@ -362,6 +366,11 @@ export function evaluateOpportunity(
     supply,
   });
   const eligibility = retailEligibility(find);
+  if (lowestPriceLedger && (lowestPriceLedger.expectedNetProfit < settings.considerationMinNetProfitDollars ||
+      lowestPriceLedger.roiRatio < settings.considerationMinRoiRatio)) {
+    if (decision === "BUY") decision = "REVIEW";
+    reasonCodes.push("LOWEST_ACTIVE_PRICE_BELOW_RETURN_TARGET");
+  }
   if (!eligibility.eligible) {
     decision = "REJECT";
     reasonCodes = ["RETAIL_PRODUCT_INELIGIBLE", eligibility.reason];
@@ -400,7 +409,8 @@ export function evaluateOpportunity(
   });
   if (shippingScenario) reasons.push(shippingScenario.condition);
   if (historicalResalePrice !== null && resalePrice < historicalResalePrice)
-    reasons.push(`Historical sold estimate ${money(historicalResalePrice)} is capped at ${money(resalePrice)}, 2% below the fresh matching active quote.`);
+    reasons.push(`Historical sold estimate ${money(historicalResalePrice)} is capped at ${money(resalePrice)} using ${pricing.basis === "sold_and_active_lower_quartile" ? "the lower quarter of fresh matching active quotes" : "a 2% undercut of the fresh matching active quote"}.`);
+  if (lowestPriceLedger) reasons.push(`At the cheapest matching quote (${money(pricing.lowestActivePrice)} delivered), net would be ${money(lowestPriceLedger.expectedNetProfit)} and ROI ${percentText(lowestPriceLedger.roiRatio)}. The resale target requires selling above that quote.`);
   const candidateAssessment = assessCandidateOpportunity({
     ...find,
     decision,
@@ -423,6 +433,7 @@ export function evaluateOpportunity(
     conservativeResalePrice: resalePrice,
     historicalResalePrice,
     activeResaleCap,
+    resalePricingScenario,
     shippingScenario,
     verifiedCheckoutBasket: verifiedCheckoutBasket ? { ...verifiedCheckoutBasket,
       modeledCashRequired: roundMoney(costLedger.landedCost * verifiedCheckoutBasket.quantity) } : null,
