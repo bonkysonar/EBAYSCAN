@@ -58,6 +58,48 @@ function validatedFind(overrides: Partial<ArbitrageFind> = {}): ArbitrageFind {
 }
 
 describe("canonical arbitrage evaluation", () => {
+  it("allocates a same-shop order while retaining tax and the single-record comparison", () => {
+    const find = validatedFind({ costs: {}, sourceCountry: "US" });
+    const single = evaluateOpportunity(find, {}, NOW);
+    const combined = evaluateOpportunity(find, { combinedOrderRecords: 3, combinedOrderShipping: 7 }, NOW);
+    expect(combined.costLedger.inboundShipping).toBe(2.34);
+    expect(combined.costLedger.salesTax).toBe(single.costLedger.salesTax);
+    expect(combined.expectedNetProfit).toBeCloseTo(single.expectedNetProfit! + 2.66, 2);
+    expect(combined.combinedShipping).toEqual({ orderRecords: 3, orderShipping: 7,
+      perRecordShipping: 2.34, singleRecordInboundShipping: 5, singleRecordNetProfit: single.expectedNetProfit });
+    expect(combined.recommendedMaxPurchasePrice).toBeGreaterThan(single.recommendedMaxPurchasePrice!);
+    expect(combined.soldUnits90Days).toBe(single.soldUnits90Days);
+  });
+
+  it("does not replace quoted shipping, eBay offers, or international shipping with the combined estimate", () => {
+    const settings = { combinedOrderRecords: 5, combinedOrderShipping: 7 };
+    for (const overrides of [
+      { costs: { inboundShipping: 0 }, sourceCountry: "US" },
+      { costs: { inboundShipping: 9 }, sourceCountry: "US" },
+      { costs: {}, sourceCountry: "UK" },
+      { costs: {}, sourceCountry: undefined },
+      { costs: {}, sourceCountry: "US", sourceId: "ebay" },
+    ]) {
+      const find = validatedFind(overrides);
+      const combined = evaluateOpportunity(find, settings, NOW);
+      expect(combined.costLedger).toEqual(evaluateOpportunity(find, {}, NOW).costLedger);
+      expect(combined.combinedShipping).toBeNull();
+    }
+  });
+
+  it("ignores invalid combined-order assumptions and never upgrades missing sales evidence", () => {
+    const find = validatedFind({ costs: {}, sourceCountry: "US" });
+    for (const settings of [
+      { combinedOrderRecords: 0 }, { combinedOrderRecords: 2.5 },
+      { combinedOrderRecords: 101 }, { combinedOrderRecords: 3, combinedOrderShipping: -1 },
+      { combinedOrderRecords: 3, combinedOrderShipping: Number.NaN },
+    ]) expect(evaluateOpportunity(find, settings, NOW).costLedger.inboundShipping).toBe(5);
+    const noEvidence = evaluateOpportunity({ ...find, soldEvidence: undefined, conservativeResalePrice: undefined },
+      { combinedOrderRecords: 5, combinedOrderShipping: 7 }, NOW);
+    expect(noEvidence.gates.soldEvidence).toBe(false);
+    expect(noEvidence.decision).not.toBe("BUY");
+  });
+
   it("returns the same result through the Node scanner API and the typed React wrapper", () => {
     expect(
       evaluateTypedOpportunity(validatedFind(), defaultArbitrageSettings, NOW),
