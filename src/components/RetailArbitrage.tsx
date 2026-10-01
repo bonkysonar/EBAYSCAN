@@ -699,6 +699,7 @@ export function RetailArbitrage() {
                       {find.combinedShipping ? <small>Assumes combined shipping · {find.combinedShipping.orderRecords}-record order</small> : null}
                       {find.shippingScenario ? <small>Conditional: qualifying ${find.shippingScenario.minimumSubtotal} same-shop order</small> : null}
                       {find.verifiedCheckoutBasket ? <small>Requires {find.verifiedCheckoutBasket.quantity} copies · {money(find.verifiedCheckoutBasket.modeledCashRequired)} modeled cash outlay</small> : null}
+                      {find.resalePricingScenario?.lowestPriceNetProfit != null ? <small>Target {nullableMoney(find.conservativeResalePrice ?? null)} delivered · cheapest-price net {money(find.resalePricingScenario.lowestPriceNetProfit)} / {((find.resalePricingScenario.lowestPriceRoiRatio ?? 0) * 100).toFixed(1)}% ROI</small> : null}
                       <small>
                         {find.sourceListingTitle &&
                         find.sourceListingTitle !== find.title
@@ -1196,7 +1197,13 @@ function FindDetail({
           </p>
         ) : null}
         {find.historicalResalePrice != null && find.activeResaleCap != null && find.activeResaleCap < find.historicalResalePrice ? (
-          <p>Historical sold estimate {money(find.historicalResalePrice)}; current resale plan {nullableMoney(find.conservativeResalePrice ?? null)} includes a 2% undercut of the matching active quote.</p>
+          <p>Historical sold estimate {money(find.historicalResalePrice)}; current delivered resale plan {nullableMoney(find.conservativeResalePrice ?? null)} uses {find.resalePricingScenario?.basis === "sold_and_active_lower_quartile" ? `the lower quarter of ${find.resalePricingScenario.quoteCount} matching active quotes` : "a 2% undercut of the matching active quote"}.</p>
+        ) : null}
+        {find.resalePricingScenario?.lowestPriceNetProfit != null ? (
+          <p role="note">Lowest-price downside: selling at {nullableMoney(find.resalePricingScenario.lowestActivePrice)} delivered leaves {money(find.resalePricingScenario.lowestPriceNetProfit)} net and {((find.resalePricingScenario.lowestPriceRoiRatio ?? 0) * 100).toFixed(1)}% return. The target price is higher than this competitor; allow for slower sales.</p>
+        ) : null}
+        {find.resalePricingScenario?.doubleLpShippingAllowance != null ? (
+          <p>Double-LP outbound postage allowance: {money(find.resalePricingScenario.doubleLpShippingAllowance)}. Confirm packed weight before listing.</p>
         ) : null}
         {find.combinedShipping ? (
           <p role="note">
