@@ -37,6 +37,29 @@ function ebayItem(id: string, title: string, price: number) {
 }
 
 describe("active eBay enrichment", () => {
+  it("uses same-item official details to resolve an omitted color, never an explicit conflict", async () => {
+    const profile=buildActiveSearchProfile({...sourceFind(),sourceListingTitle:"Artist Great Escape Red Vinyl LP"})!;
+    const items=[ebayItem("v1|111111111111|0","Artist Great Escape Colored Vinyl LP",15),
+      ebayItem("v1|222222222222|0","Artist Great Escape Blue Vinyl LP",10)];
+    const fetchImpl=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({itemSummaries:items,total:2})))
+      .mockResolvedValueOnce(new Response(JSON.stringify({itemId:items[0].itemId,description:"<p>Red vinyl pressing housed inside a gatefold jacket.</p>"})));
+    const result=await searchVariantPages(profile.primary,profile,{fetchImpl,token:"test",env:{EBAY_MARKETPLACE_ID:"EBAY_US"}});
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(result.listings.map(l=>l.id)).toEqual([items[0].itemId]);
+    expect(result.listings[0].totalPrice).toBe(20);
+  });
+  it.each([
+    {itemId:"v1|999999999999|0",description:"Red vinyl pressing."},
+    {itemId:"v1|111111111111|0",description:"Not the red vinyl pressing."},
+    {itemId:"v1|111111111111|0",description:"Blue vinyl pressing."},
+    {itemId:"v1|111111111111|0",description:"<style>.red { color: red }</style> Vinyl LP"},
+  ])("leaves missing color unresolved when detail proof conflicts or belongs to another item",async detail=>{
+    const profile=buildActiveSearchProfile({...sourceFind(),sourceListingTitle:"Artist Great Escape Red Vinyl LP"})!;
+    const item=ebayItem("v1|111111111111|0","Artist Great Escape Colored Vinyl LP",15);
+    const fetchImpl=vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({itemSummaries:[item],total:1})))
+      .mockResolvedValueOnce(new Response(JSON.stringify(detail)));
+    expect((await searchVariantPages(profile.primary,profile,{fetchImpl,token:"test",env:{EBAY_MARKETPLACE_ID:"EBAY_US"}})).listings).toHaveLength(0);
+  });
   it("rechecks completed searches when their matching version or pressing identity changes", () => {
     const find = sourceFind();
     const profile = buildActiveSearchProfile(find)!;

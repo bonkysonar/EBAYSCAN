@@ -129,6 +129,8 @@ export type ArbitrageActiveEvidence = {
 };
 
 export type ArbitrageSettings = {
+  considerationMinNetProfitDollars: number;
+  considerationMinRoiRatio: number;
   defaultBuyerSalesTaxRatePercent: number;
   defaultDuty: number;
   defaultFxFees: number;
@@ -178,6 +180,15 @@ export type ArbitrageSettings = {
 };
 
 export type ArbitrageFind = {
+  checkoutQuote?: {
+    captureMethod: "visible_browser"; capturedAt: string; productUrl: string; variantId: string;
+    currency: "USD"; quantity: number; unitPrice: number; subtotal: number; shipping: number; tax: number; total: number;
+    productTitle: string; variantTitle: string; productLineText: string; costSummaryText: string;
+  };
+  verifiedCheckoutBasket?: {
+    quantity: number; subtotal: number; orderShipping: number; perRecordShipping: number;
+    observedTax: number; observedTotal: number; capturedAt: string; sourceUrl: string; modeledCashRequired: number;
+  } | null;
   shippingOffer?: { sourceUrl: string; capturedAt: string; minimumSubtotal: number; currency: string; standardShipping: number };
   shippingScenario?: { quantity: number; minimumSubtotal: number; subtotal: number; additionalSpend: number; standardShipping: number; sourceUrl: string; condition: string; singleRecordNetProfit?: number | null } | null;
   historicalResalePrice?: number | null;

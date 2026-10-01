@@ -176,7 +176,21 @@ export function activeSearchKey(find) {
 }
 
 /** Artist words alone cannot identify an eponymous album among that artist's catalog. */
+function explicitSelfTitledIdentity(artist, title, listingTitle) {
+  const words = value => String(value ?? "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/^(?:the|a|an)\s+/, "");
+  const name = words(artist);
+  if (!name || words(normalizeResearchTitle(title)) !== name) return false;
+  const listing = words(listingTitle);
+  if (!listing.startsWith(`${name} `)) return false;
+  const release = listing.slice(name.length).trim().replace(/^the\s+/, "");
+  // Require an explicit album identity immediately after the leading artist.
+  // Once established, trailing musician names or packaging text are harmless.
+  return /^(?:self titled|s t|st)(?:\s|$)/.test(release) ||
+    release === name || release.startsWith(`${name} `);
+}
+
 export function selfTitledReleaseMismatch(artist, title, listingTitle) {
+  if (explicitSelfTitledIdentity(artist, title, listingTitle)) return false;
   const tokens = value => String(value ?? "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/).filter(Boolean);
   const articles = new Set(["a", "an", "the"]);
   const artistTokens = new Set(tokens(artist).filter(token => !articles.has(token)));
@@ -209,7 +223,9 @@ export function matchActiveListing(title, profile) {
   const listingArtistTokens = new Set(searchTokens(listingTitle));
   const expectedTitleTokens = searchTokens(profile.title, { preserveTitleWords: true });
   const expectedArtistTokens = searchTokens(profile.artist);
-  const matchedTitleTokens = expectedTitleTokens.filter((token) => listingTokens.has(token)).length;
+  const matchedTitleTokens = explicitSelfTitledIdentity(profile.artist, profile.title, listingTitle)
+    ? expectedTitleTokens.length
+    : expectedTitleTokens.filter((token) => listingTokens.has(token)).length;
   const matchedArtistTokens = expectedArtistTokens.filter((token) => listingArtistTokens.has(token)).length;
   const titleCoverage = expectedTitleTokens.length === 0 ? 0 : matchedTitleTokens / expectedTitleTokens.length;
   const artistCoverage = expectedArtistTokens.length === 0 ? 1 : matchedArtistTokens / expectedArtistTokens.length;

@@ -25,6 +25,22 @@ function findFor(title: string): ArbitrageFind {
 }
 
 describe("active eBay edition matching", () => {
+  it("accepts explicit self-titled identity without treating promotional suffixes as an album", () => {
+    const profile = buildActiveSearchProfile({ ...findFor("Unruly Child - S/T Red 2-LP Set"), artist: "Unruly Child", title: "Unruly Child", identityStatus: "resolved" })!;
+    for (const listing of [
+      "Unruly Child - Self-titled - New 2 LP Red Vinyl",
+      "Unruly Child - S/T (Limited Edition RED 2-LP) Mark Free - King Kobra - Hurricane",
+      "UNRULY CHILD Unruly Child 2-LP RED Vinyl Gatefold 2023 NEW Signal Stone Fury",
+    ]) expect(matchActiveListing(listing, profile).matched).toBe(true);
+    for (const listing of [
+      "Unruly Child Worlds Collide Red 2-LP Vinyl",
+      "Unruly Child Worlds Collide with self-titled bonus Red 2-LP Vinyl",
+      "Unruly Child S/T Blue 2-LP Vinyl",
+      "Unruly Child S/T Red Vinyl LP",
+      "Unruly Child S/T Colored Vinyl 2LP",
+      "Other Band S/T Unruly Child Red 2LP Vinyl",
+    ]) expect(matchActiveListing(listing, profile).matched).toBe(false);
+  });
   it("requires the self-titled album, not just its artist name", () => {
     const profile = buildActiveSearchProfile({ ...findFor("The Nothing, Nowhere. Exclusive LP"), artist: "Nothing, Nowhere.", title: "The Nothing, Nowhere. Exclusive LP", identityStatus: "resolved" })!;
     expect(matchActiveListing("nothing,nowhere. Dark Magic Vinyl LP New", profile).matched).toBe(false);

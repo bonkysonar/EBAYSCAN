@@ -2,6 +2,15 @@ import {
   retailEligibility,
   isVariantDescription,
 } from "../../../scripts/lib/retailIdentity.mjs";
+import { defaultArbitrageSettings } from "./evaluateOpportunity.mjs";
+
+function meetsConsiderationMargin(find, settings) {
+  const minimum = key => Number.isFinite(settings[key]) && settings[key] >= 0
+    ? settings[key] : defaultArbitrageSettings[key];
+  return find.expectedNetProfit != null && find.roiRatio != null &&
+    find.expectedNetProfit >= minimum("considerationMinNetProfitDollars") &&
+    find.roiRatio >= minimum("considerationMinRoiRatio");
+}
 
 function verifiedAnnualUnits(find, now) {
   const evidence = find.soldEvidence;
@@ -21,7 +30,7 @@ function verifiedAnnualUnits(find, now) {
 
 // This list has no fill quota. Aggregate demand may justify one timing check,
 // but cannot establish dated velocity or an automatic BUY.
-export function consideration(find, now = Date.now()) {
+export function consideration(find, now = Date.now(), settings = {}) {
   const remainingChecks = [];
   const exclude = (exclusionReason) => ({ qualifies: false, remainingChecks, exclusionReason });
   const age = (Number(now) - Date.parse(find.capturedAt)) / 86400000;
@@ -35,10 +44,10 @@ export function consideration(find, now = Date.now()) {
   )
     return exclude("ineligible_or_rejected");
   if (!(age >= -0.004 && age <= 1)) return exclude("offer_needs_refresh");
-  if (find.decision === "BUY") return { qualifies: true, remainingChecks };
   if (find.currencyConversionRequired) return exclude("currency_unverified");
   if (find.expectedNetProfit == null || find.roiRatio == null) return exclude("resale_evidence_missing");
-  if (!(find.expectedNetProfit >= 7 && find.roiRatio >= 0.3)) return exclude("margin_too_thin");
+  if (!meetsConsiderationMargin(find, settings)) return exclude("margin_too_thin");
+  if (find.decision === "BUY") return { qualifies: true, remainingChecks };
   if (
     !find.gates?.evidenceFreshness ||
     !find.gates?.activeEvidence ||
@@ -88,12 +97,12 @@ export const decisionListBlockerLabels = {
 };
 
 /** One first blocker per product; counts reconcile rather than double counting. */
-export function decisionListDiagnostics(finds, now = Date.now()) {
+export function decisionListDiagnostics(finds, now = Date.now(), settings = {}) {
   const products = finds.filter(f => f.opportunityType !== "sitewide_sale");
   const blockers = {};
   let qualified = 0;
   for (const find of products) {
-    const result = consideration(find, now);
+    const result = consideration(find, now, settings);
     if (result.qualifies) qualified++;
     else blockers[result.exclusionReason] = (blockers[result.exclusionReason] ?? 0) + 1;
   }
@@ -113,11 +122,11 @@ export function releaseGroupKey(find) {
 
 export function selectDecisionList(
   finds,
-  { limit = 15, now = Date.now() } = {},
+  { limit = 15, now = Date.now(), settings = {} } = {},
 ) {
   const groups = new Set();
   return finds
-    .filter((find) => consideration(find, now).qualifies)
+    .filter((find) => consideration(find, now, settings).qualifies)
     .sort(
       (a, b) =>
         Number(b.decision === "BUY") - Number(a.decision === "BUY") ||
@@ -133,12 +142,12 @@ export function selectDecisionList(
     .slice(0, limit);
 }
 
-export function scannerFunnel(finds, reports = [], now = Date.now()) {
+export function scannerFunnel(finds, reports = [], now = Date.now(), settings = {}) {
   const products = finds.filter(
     (find) => find.opportunityType !== "sitewide_sale",
   );
   const displayed = new Set(
-    selectDecisionList(products, { now }).map((find) => find.id),
+    selectDecisionList(products, { now, settings }).map((find) => find.id),
   );
   const summarize = (rows) => ({
     eligible: rows.filter((f) => retailEligibility(f).eligible).length,
@@ -151,7 +160,7 @@ export function scannerFunnel(finds, reports = [], now = Date.now()) {
       (f) => f.ebayResearchStatus === "validated" || f.gates?.soldEvidence,
     ).length,
     economicallyQualified: rows.filter(
-      (f) => f.expectedNetProfit >= 7 && f.roiRatio >= 0.3,
+      (f) => meetsConsiderationMargin(f, settings),
     ).length,
     displayed: rows.filter((f) => displayed.has(f.id)).length,
     retained: rows.length,
@@ -160,7 +169,7 @@ export function scannerFunnel(finds, reports = [], now = Date.now()) {
     version: 1,
     measuredAt: new Date(now).toISOString(),
     ...summarize(products),
-    decisionList: decisionListDiagnostics(products, now),
+    decisionList: decisionListDiagnostics(products, now, settings),
     bySource: reports.map((report) => ({
       sourceId: report.id,
       discovered: report.candidateCount ?? 0,

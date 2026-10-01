@@ -776,7 +776,7 @@ describe("canonical arbitrage evaluation", () => {
       eligible: true,
       label: "Evergreen balanced buy",
       minNetProfitDollars: 5.6,
-      minRoiRatio: 0.24,
+      minRoiRatio: 0.3,
     });
     expect(balanced?.thresholdReasons).toContainEqual(
       expect.stringContaining("lowered the balanced floor by 20%"),

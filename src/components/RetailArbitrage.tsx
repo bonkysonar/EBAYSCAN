@@ -217,15 +217,16 @@ export function RetailArbitrage() {
         sourceFilter,
         sortKey,
         sortDirection,
+        settings,
       ),
-    [feedback, queueFilter, scoredFinds, sortDirection, sortKey, sourceFilter],
+    [feedback, queueFilter, scoredFinds, sortDirection, sortKey, sourceFilter, settings],
   );
   const selectedFind =
     visibleFinds.find((find) => find.id === selectedId) ??
     visibleFinds[0] ??
     null;
   const stats = summarizeFinds(scoredFinds, feedback);
-  const decisionDiagnostics = decisionListDiagnostics(scoredFinds, evaluationNow);
+  const decisionDiagnostics = decisionListDiagnostics(scoredFinds, evaluationNow, settings);
   const coverage = summarizeCoverage(latestPayload);
   const runQuality = latestPayload?.runQuality;
   const selectionDiagnostics = latestPayload?.selectionDiagnostics;
@@ -407,6 +408,7 @@ export function RetailArbitrage() {
             evidence. Each has passed verification or has one clearly stated
             remaining check. Broader leads live in Research candidates.
           </p>
+          <p>Minimum: {money(settings.considerationMinNetProfitDollars)} net profit and {percent(settings.considerationMinRoiRatio)} return on landed purchase cost. Both must pass after selling costs.</p>
         </div>
         <div className="seller-actions">
           <button
@@ -696,6 +698,7 @@ export function RetailArbitrage() {
                       <small>{albumDemandLabel(find, true)}</small>
                       {find.combinedShipping ? <small>Assumes combined shipping · {find.combinedShipping.orderRecords}-record order</small> : null}
                       {find.shippingScenario ? <small>Conditional: qualifying ${find.shippingScenario.minimumSubtotal} same-shop order</small> : null}
+                      {find.verifiedCheckoutBasket ? <small>Requires {find.verifiedCheckoutBasket.quantity} copies · {money(find.verifiedCheckoutBasket.modeledCashRequired)} modeled cash outlay</small> : null}
                       <small>
                         {find.sourceListingTitle &&
                         find.sourceListingTitle !== find.title
@@ -737,6 +740,7 @@ export function RetailArbitrage() {
           {selectedFind ? (
             <FindDetail
               find={selectedFind}
+              settings={settings}
               outcome={recordOutcomeForFind(feedback, selectedFind)}
               onDismiss={() => dismissFind(selectedFind.id)}
               onOutcome={(outcome) => recordOutcome(selectedFind.id, outcome)}
@@ -766,6 +770,12 @@ export function RetailArbitrage() {
           <span>Advanced</span>
         </summary>
         <div className="arbitrage-profile-settings">
+          <ProfileSettings label="Purchase minimums" description="BUY and Worth considering must both meet these floors: profit after all costs and return on landed purchase cost. Evidence requirements still apply.">
+            <NumberSetting label="Minimum net profit $" value={settings.considerationMinNetProfitDollars} step={1}
+              onChange={(value) => updateSetting("considerationMinNetProfitDollars", value)} />
+            <NumberSetting label="Minimum return %" value={settings.considerationMinRoiRatio * 100} step={5}
+              onChange={(value) => updateSetting("considerationMinRoiRatio", value / 100)} />
+          </ProfileSettings>
           <ProfileSettings
             description="Accepts a smaller dollar return when exact evidence supports a quick sale."
             label="Fast turn"
@@ -1008,12 +1018,14 @@ function AlbumBenchmarkDetail({ find }: { find: ArbitrageScoredFind }) {
 
 function FindDetail({
   find,
+  settings,
   onDismiss,
   onOutcome,
   onRestore,
   outcome,
 }: {
   find: ArbitrageScoredFind;
+  settings: ArbitrageSettings;
   onDismiss: () => void;
   onOutcome: (outcome: RecordOutcome | null) => void;
   onRestore: () => void;
@@ -1066,7 +1078,7 @@ function FindDetail({
             : ""}
           .
         </p>
-        {consideration(find).remainingChecks.map((check) => (
+        {consideration(find, Date.now(), settings).remainingChecks.map((check) => (
           <p key={check} className="warning-box">
             Remaining check: {check}
           </p>
@@ -1164,6 +1176,16 @@ function FindDetail({
 
       <section className="arbitrage-detail-section">
         <h3>Profit ledger</h3>
+        {find.verifiedCheckoutBasket ? (
+          <p role="note">
+            These per-record economics require {find.verifiedCheckoutBasket.quantity} copies in one order.
+            {" "}Checkout showed {money(find.verifiedCheckoutBasket.subtotal)} merchandise + {money(find.verifiedCheckoutBasket.orderShipping)} shipping
+            {" "}+ {money(find.verifiedCheckoutBasket.observedTax)} estimated tax = {money(find.verifiedCheckoutBasket.observedTotal)} total.
+            {" "}The model allocates {money(find.verifiedCheckoutBasket.perRecordShipping)} shipping per copy and uses your tax setting,
+            {" "}for {money(find.verifiedCheckoutBasket.modeledCashRequired)} total modeled cash required.
+            {" "}Quote checked {new Date(find.verifiedCheckoutBasket.capturedAt).toLocaleString()}; valid for six hours. All copies must sell to realize the full order profit.
+          </p>
+        ) : null}
         {find.shippingScenario ? (
           <p role="note">
             {find.shippingScenario.condition}{" "}
@@ -1738,6 +1760,7 @@ function filterAndSortFinds(
   sourceFilter: string,
   sortKey: SortKey,
   sortDirection: SortDirection,
+  settings: ArbitrageSettings,
 ): ArbitrageScoredFind[] {
   const filtered = finds
     .filter((find) => {
@@ -1765,7 +1788,7 @@ function filterAndSortFinds(
       return find.candidateTier === queueFilter;
     })
     .sort((left, right) => compareFinds(left, right, sortKey, sortDirection));
-  return queueFilter === "WORTH" ? selectDecisionList(filtered) : filtered;
+  return queueFilter === "WORTH" ? selectDecisionList(filtered, {settings}) : filtered;
 }
 
 function compareFinds(

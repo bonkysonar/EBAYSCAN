@@ -5,6 +5,13 @@ const key = "record-scanner-arbitrage-settings-v1";
 afterEach(() => localStorage.clear());
 
 describe("arbitrage cost settings migration", () => {
+  it("adds the owner's two purchase floors to existing preferences and preserves subsequent edits", () => {
+    localStorage.setItem(key, JSON.stringify({ combinedOrderRecords: 5 }));
+    const settings=loadArbitrageSettings();
+    expect(settings).toMatchObject({considerationMinNetProfitDollars:4,considerationMinRoiRatio:.3,combinedOrderRecords:5});
+    saveArbitrageSettings({...settings,considerationMinNetProfitDollars:6,considerationMinRoiRatio:.4});
+    expect(loadArbitrageSettings()).toMatchObject({considerationMinNetProfitDollars:6,considerationMinRoiRatio:.4});
+  });
   it("replaces saved legacy defaults while preserving purchase assumptions", () => {
     localStorage.setItem(key, JSON.stringify({
       defaultMarketplaceFeeFixed: 0.3, defaultMarketplaceFeeRate: 0.15,

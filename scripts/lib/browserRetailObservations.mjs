@@ -1,3 +1,4 @@
+import { validatedCheckoutQuote } from "../../src/lib/arbitrage/checkoutBasket.mjs";
 const MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const host = (value) =>
   new URL(value).hostname.toLowerCase().replace(/^www\./, "");
@@ -90,6 +91,8 @@ export function validateBrowserRetailObservations(
       })
       .map((link) => ({ url: link.url, text: link.text.slice(0, 3000) }));
     const productEvidence = validateProductEvidence(page);
+    const checkoutQuote = productEvidence && validatedCheckoutQuote(page.checkoutQuote, { ...productEvidence, url: page.url, visibleText: page.visibleText }, now);
+    if (age <= MAX_AGE_MS && page.checkoutQuote && !checkoutQuote) throw new Error("Checkout quote does not verify this exact product, quantity and costs");
     const selectedVariantEvidence = validateSelectedVariantEvidence(page);
     const catalogProducts = (page.catalogProducts ?? [])
       .map((card) => validateCatalogProduct(card, page))
@@ -106,6 +109,7 @@ export function validateBrowserRetailObservations(
       ...(typeof page.currencyEvidence === "string" && page.visibleText.includes(page.currencyEvidence) ? {currencyEvidence:page.currencyEvidence} : {}),
       ...(page.role === "discovery" && source.group === "Discovery sources" ? {role:"discovery"} : {}),
       ...(productEvidence ? { productEvidence } : {}),
+      ...(checkoutQuote ? { checkoutQuote } : {}),
       ...(selectedVariantEvidence ? {selectedVariantEvidence} : {}),
       ...(catalogProducts.length ? { catalogProducts, role: "catalog" } : {}),
     };
@@ -278,6 +282,7 @@ export function browserProductCandidates(pages, source, stableId) {
         shopifyVariantId: evidence.variantId,
         shopifyVariantTitle: evidence.format,
         quantityAvailable: evidence.quantityAvailable,
+        ...(page.checkoutQuote ? { checkoutQuote: page.checkoutQuote } : {}),
         capturedAt: page.capturedAt,
         retailObservedAt: page.capturedAt,
         retailObservationUrl: page.url,

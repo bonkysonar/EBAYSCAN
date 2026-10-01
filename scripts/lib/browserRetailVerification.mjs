@@ -1,5 +1,6 @@
 import { normalizeResearchArtist, normalizeResearchTitle } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 import { retailEligibility } from "./retailIdentity.mjs";
+import { validatedCheckoutQuote } from "../../src/lib/arbitrage/checkoutBasket.mjs";
 
 const key = (value) => String(value ?? "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]/g, "");
 const isRoughTrade = (url) => /^(?:www\.)?roughtrade\.com$/.test(url.hostname);
@@ -72,6 +73,7 @@ export function browserVerifiedRetailOffer(find, captures, now = new Date()) {
       sourceDiscountPercent:p.originalPrice > price && displayedPrices.includes(Number(p.originalPrice)) ? Math.round((1-price/p.originalPrice)*100) : null,
       appliedSaleCampaignId:null,appliedSaleCode:null,appliedSaleDiscountPercent:null,appliedCampaign:undefined,
       capturedAt:page.capturedAt,
+      checkoutQuote: validatedCheckoutQuote(page.checkoutQuote, { ...p, url: page.url, visibleText: page.visibleText }, page.capturedAt) ?? undefined,
       purchaseOfferVerification:"direct_retailer",
       requiresRetailVerification:true,
       retailVerification:{status:"verified",checkedAt:page.capturedAt,reason:"exact_offer_observed_in_browser",captureMethod:"visible_browser",advertisedPrice:price,currency:p.currency,availabilityEvidence:p.availabilityEvidence,
