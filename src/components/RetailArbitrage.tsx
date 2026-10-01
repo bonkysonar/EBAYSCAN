@@ -2,6 +2,8 @@ import {
   consideration,
   selectDecisionList,
   releaseGroupKey,
+  decisionListDiagnostics,
+  decisionListBlockerLabels,
 } from "../lib/arbitrage/decisionList.mjs";
 import { RetailScanStatus } from "./RetailScanStatus";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -223,6 +225,7 @@ export function RetailArbitrage() {
     visibleFinds[0] ??
     null;
   const stats = summarizeFinds(scoredFinds, feedback);
+  const decisionDiagnostics = decisionListDiagnostics(scoredFinds, evaluationNow);
   const coverage = summarizeCoverage(latestPayload);
   const runQuality = latestPayload?.runQuality;
   const selectionDiagnostics = latestPayload?.selectionDiagnostics;
@@ -617,6 +620,16 @@ export function RetailArbitrage() {
                       ? "No quota to fill. Research candidates are available in the queue menu; prices and evidence must qualify before records appear here."
                       : "Choose another queue or source."}
               </p>
+              {queueFilter === "WORTH" && hasAuthoritativeLatest && decisionDiagnostics.products > 0 ? (
+                <div aria-label="Decision-list blockers">
+                  <p>{decisionDiagnostics.products} published products checked; {decisionDiagnostics.qualified} qualify before grouping and your filters. First blocker per excluded product:</p>
+                  <ul>
+                    {Object.entries(decisionDiagnostics.blockers).sort((a, b) => b[1] - a[1]).map(([reason, count]) => (
+                      <li key={reason}>{count} — {decisionListBlockerLabels[reason]}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               {(queueFilter === "A" || queueFilter === "AUTOMATIC_BUY") &&
               stats.B + stats.C > 0 ? (
                 <button

@@ -7,28 +7,29 @@ import {
 // but cannot establish dated velocity or an automatic BUY.
 export function consideration(find, now = Date.now()) {
   const remainingChecks = [];
+  const exclude = (exclusionReason) => ({ qualifies: false, remainingChecks, exclusionReason });
   const age = (Number(now) - Date.parse(find.capturedAt)) / 86400000;
   if (
     find.opportunityType === "sitewide_sale" ||
     !retailEligibility(find).eligible ||
     find.identityStatus === "unresolved" ||
     /unknown artist/i.test(find.artist ?? "") ||
-    !(age >= -0.004 && age <= 1) ||
     find.learningSuppressed ||
-    !["A", "B"].includes(find.candidateTier) ||
-    find.decision === "REJECT"
+    (find.decision === "REJECT" && !find.reasonCodes?.includes("ECONOMICS_HARD_FAIL"))
   )
-    return { qualifies: false, remainingChecks };
+    return exclude("ineligible_or_rejected");
+  if (!(age >= -0.004 && age <= 1)) return exclude("offer_needs_refresh");
   if (find.decision === "BUY") return { qualifies: true, remainingChecks };
+  if (find.currencyConversionRequired) return exclude("currency_unverified");
+  if (find.expectedNetProfit == null || find.roiRatio == null) return exclude("resale_evidence_missing");
+  if (!(find.expectedNetProfit >= 7 && find.roiRatio >= 0.3)) return exclude("margin_too_thin");
   if (
-    !(find.expectedNetProfit >= 7 && find.roiRatio >= 0.3) ||
     !find.gates?.evidenceFreshness ||
     !find.gates?.activeEvidence ||
-    find.currencyConversionRequired ||
     find.retailVerification?.status === "failed" ||
     find.retailVerification?.status === "unavailable"
   )
-    return { qualifies: false, remainingChecks };
+    return exclude("verification_incomplete");
   const dated = find.gates?.soldEvidence && find.soldUnits90Days >= 3;
   const aggregate =
     find.ebayResearchStatus === "validated" &&
@@ -36,7 +37,7 @@ export function consideration(find, now = Date.now()) {
     ["high", "medium"].includes(find.ebaySoldMatchConfidence) &&
     Number.isFinite(find.daysSinceLastSale) &&
     find.daysSinceLastSale <= 90;
-  if (!dated && !aggregate) return { qualifies: false, remainingChecks };
+  if (!dated && !aggregate) return exclude("insufficient_recent_demand");
   if (!dated)
     remainingChecks.push(
       "Confirm recent sales pace; aggregate research does not establish turnover.",
@@ -51,8 +52,35 @@ export function consideration(find, now = Date.now()) {
     dated &&
     (!find.gates?.demand || !find.gates?.supply || !find.gates?.matchConfidence)
   )
-    return { qualifies: false, remainingChecks };
-  return { qualifies: remainingChecks.length <= 1, remainingChecks };
+    return exclude("demand_supply_or_match_failed");
+  if (!["A", "B"].includes(find.candidateTier)) return exclude("ineligible_or_rejected");
+  if (remainingChecks.length > 1) return exclude("multiple_remaining_checks");
+  return { qualifies: true, remainingChecks };
+}
+
+export const decisionListBlockerLabels = {
+  ineligible_or_rejected: "ineligible or rejected by verified evidence",
+  offer_needs_refresh: "retailer offer needs a fresh check",
+  currency_unverified: "currency conversion unverified",
+  resale_evidence_missing: "no usable sold-price evidence",
+  margin_too_thin: "profit or ROI below the consideration floor",
+  verification_incomplete: "market or retailer verification incomplete",
+  insufficient_recent_demand: "insufficient recent sold demand",
+  demand_supply_or_match_failed: "demand, competition, or pressing match fails",
+  multiple_remaining_checks: "more than one unresolved check",
+};
+
+/** One first blocker per product; counts reconcile rather than double counting. */
+export function decisionListDiagnostics(finds, now = Date.now()) {
+  const products = finds.filter(f => f.opportunityType !== "sitewide_sale");
+  const blockers = {};
+  let qualified = 0;
+  for (const find of products) {
+    const result = consideration(find, now);
+    if (result.qualifies) qualified++;
+    else blockers[result.exclusionReason] = (blockers[result.exclusionReason] ?? 0) + 1;
+  }
+  return { products: products.length, qualified, blockers };
 }
 
 export function releaseGroupKey(find) {
@@ -115,6 +143,7 @@ export function scannerFunnel(finds, reports = [], now = Date.now()) {
     version: 1,
     measuredAt: new Date(now).toISOString(),
     ...summarize(products),
+    decisionList: decisionListDiagnostics(products, now),
     bySource: reports.map((report) => ({
       sourceId: report.id,
       discovered: report.candidateCount ?? 0,

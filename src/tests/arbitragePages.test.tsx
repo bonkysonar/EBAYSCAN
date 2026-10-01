@@ -594,6 +594,8 @@ describe("arbitrage pages", () => {
     expect(container?.textContent).toContain(
       "No records currently meet the decision-list requirements",
     );
+    expect(container?.querySelector('[aria-label="Decision-list blockers"]')?.textContent).toContain("1 published products checked; 0 qualify");
+    expect(container?.textContent).toContain("retailer offer needs a fresh check");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(4 * 60_000);

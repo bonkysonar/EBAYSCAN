@@ -64,11 +64,11 @@ describe("new-deal research allowance", () => {
   });
   const make = (id: string, sourceId = "shop", observed = false): any => ({id, sourceId, artist:`Artist ${id}`, title:`Album ${id}`, sourceListingTitle:`Artist ${id} - Album ${id} LP`, sourceUrl:`https://example.com/products/${id}`, purchasePrice:12,
     ...(observed ? {soldEvidence:{source:"local-own-sales-history",status:"validated",artistMatchConfirmed:true,albumMatchConfirmed:true,editionMatchConfirmed:true,matchConfidence:1,unitsSold90Days:1}} : {})});
-  it("reserves at most 10 percent even when prior-demand records fill the entire cap", () => {
+  it("reserves half the research budget for new deals across sources", () => {
     const result = selectResearchCandidates([...Array.from({length:30}, (_, i) => make(`known-${i}`,"shop",true)), ...Array.from({length:10}, (_,i)=>make(`new-${i}`,"large-feed")), make("new-vpd","vinyl-price-drop")], {limit:20});
     expect(result.selected).toHaveLength(20);
-    expect(result.diagnostics).toMatchObject({observedDemandSelectedCount:18, explorationSelectedCount:2});
-    expect(result.selected.filter((row:any)=>row.researchPriority === "unproven_exploration").map((row:any)=>row.sourceId).sort()).toEqual(["large-feed","vinyl-price-drop"]);
+    expect(result.diagnostics).toMatchObject({observedDemandSelectedCount:10, explorationSelectedCount:10});
+    expect([...new Set(result.selected.filter((row:any)=>row.researchPriority === "unproven_exploration").map((row:any)=>row.sourceId))].sort()).toEqual(["large-feed","vinyl-price-drop"]);
   });
   it("admits affordable homepage drops only as research, rejecting unavailable and CD items", () => {
     const lead = {...make("vpd","vinyl-price-drop"), discoveryHomepage:true, discoveryUrl:origin+"/deals/album",purchaseOfferVerification:"discovery_lead"};
