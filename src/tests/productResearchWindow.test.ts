@@ -39,6 +39,24 @@ describe("observed sold research windows", () => {
     expect(result).toMatchObject({status:"validated",velocityStatus:"verified_window_totals",sales90Days:9,sales30Days:null,sales365Days:null});
     expect(mergeResearchSoldEvidence(null,result,now.toISOString())).toMatchObject({unitsSold90Days:9,unitsSold30Days:null,unitsSold365Days:null,unitsSold1095Days:null,transactionCount:null,velocityEvidence:"verified_window_totals"});
   });
+  it.each([
+    ["2026-10-01T12:49:22.981Z", "2026-07-02", "2026-09-30"],
+    ["2026-10-02T06:59:00Z", "2026-07-02", "2026-09-30"],
+    ["2026-11-02T13:49:00Z", "2026-08-03", "2026-11-01"],
+  ])("keeps yesterday's observed sales in the research timezone at %s", (capturedAt, startDate, endDate) => {
+    const capture = { ...run, capturedAt, url: `${run.url}&tz=America%2FLos_Angeles`, observedWindow: { startDate, endDate } };
+    const result = curateResearchForFind(find, { entries: [{ findId: find.id, runs: [capture] }] }, new Date(capturedAt));
+    expect(result).toMatchObject({ status: "validated", velocityStatus: "verified_window_totals", sales90Days: 9, sales30Days: null, sales365Days: null });
+  });
+  it.each([
+    { capturedAt: "2026-10-02T07:00:00Z" }, // Two calendar days after the displayed end.
+    { capturedAt: "2026-09-30T06:59:00Z" }, // Displayed end is still in the local future.
+    { url: `${run.url}&tz=Invalid%2FZone` },
+    { observedWindow: { startDate: "2026-07-02", endDate: "2026-09-31" } },
+  ])("does not rescue stale or invalid calendar windows %j", (change) => {
+    const capture = { ...run, capturedAt: "2026-10-01T12:49:00Z", url: `${run.url}&tz=America%2FLos_Angeles`, observedWindow: { startDate: "2026-07-02", endDate: "2026-09-30" }, ...change };
+    expect(verifiedWindowSales([row], capture, new Date(capture.capturedAt))).toBeNull();
+  });
   it("retains individual 90-day observations even without annual coverage", () => {
     const result = curateResearchForFind(find,{entries:[{findId:find.id,runs:[{...run,observedWindow:undefined,rows:[{...row,totalSold:1}]}]}]},now);
     expect(mergeResearchSoldEvidence(null,result,now.toISOString())).toMatchObject({unitsSold90Days:1,unitsSold365Days:null,velocityEvidence:"dated_transactions"});

@@ -7,19 +7,29 @@ export function verifiedWindowSales(rows, run, now = new Date()) {
   const window = run?.observedWindow;
   if (!window || run.complete !== true || run.condition !== "New" ||
       run.category !== "Vinyl Records" || !rows.length) return null;
-  const start = Date.parse(window.startDate);
-  const end = Date.parse(window.endDate);
+  const start = calendarDay(window.startDate);
+  const end = calendarDay(window.endDate);
   const captured = Date.parse(run.capturedAt);
   const duration = (end - start) / DAY;
   if (![30, 90, 365].includes(duration) || !Number.isFinite(captured) ||
-      captured < end || captured - end > 1.5 * DAY ||
       Number(now) < captured - 300000 || Number(now) - captured > 7 * DAY) return null;
   try {
     const url = new URL(run.url);
-    if (url.hostname !== "www.ebay.com" || url.pathname !== "/sh/research" ||
+    if (url.protocol !== "https:" || url.hostname !== "www.ebay.com" || url.pathname !== "/sh/research" ||
         url.searchParams.get("categoryId") !== "176985" ||
         url.searchParams.get("conditionId") !== "1000" ||
         url.searchParams.get("tabName") !== "SOLD") return null;
+    // Seller Hub reports calendar dates, not instants at midnight UTC. A morning
+    // Pacific capture of yesterday's results can be >36 hours after that UTC
+    // midnight. Compare dates in the research timezone, including DST changes.
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: url.searchParams.get("tz") || "UTC",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date(captured));
+    const date = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+    const capturedDay = calendarDay(`${date.year}-${date.month}-${date.day}`);
+    const endAgeDays = (capturedDay - end) / DAY;
+    if (endAgeDays < 0 || endAgeDays > 1) return null;
   } catch { return null; }
   const allRows = run.rows ?? [];
   const ids = allRows.map((row) => String(row.itemUrl ?? row.href ?? row.url ?? "")
@@ -34,6 +44,13 @@ export function verifiedWindowSales(rows, run, now = new Date()) {
     sales365Days: duration === 365 ? units : null,
     observedWindow: {startDate: window.startDate, endDate: window.endDate},
   };
+}
+
+function calendarDay(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return NaN;
+  const parsed = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value
+    ? parsed : NaN;
 }
 
 export function mergeResearchSoldEvidence(existing, research, capturedAt) {
