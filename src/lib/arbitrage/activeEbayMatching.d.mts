@@ -27,6 +27,7 @@ export type ActiveListingMatch = {
 };
 
 export function activeSearchKey(find: ArbitrageFind): string | null;
+export function selfTitledReleaseMismatch(artist: string, title: string, listingTitle: string): boolean;
 export function buildActiveSearchProfile(find: ArbitrageFind): ActiveSearchProfile | null;
 export function cleanActiveSearchText(value: unknown): string;
 export function ebayItemIdentityTokens(...values: unknown[]): string[];

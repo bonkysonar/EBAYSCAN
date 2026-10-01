@@ -1,6 +1,6 @@
 import { verifiedWindowSales, verifiedResearchWindow } from "./soldResearchWindow.mjs";
 import { retailEligibility } from "./retailIdentity.mjs";
-import { extractEditionIdentity } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
+import { extractEditionIdentity, selfTitledReleaseMismatch } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
 import {
   buildEbayProductResearchUrl,
   buildEbayPublicSoldUrl,
@@ -318,6 +318,7 @@ export function parseProductResearchRow(row) {
 
 export function productResearchRowMatchScore(find, rowTitleValue) {
   const rowTitle = cleanText(rowTitleValue);
+  if (selfTitledReleaseMismatch(find.artist, find.title, rowTitle)) return 0;
   if (
     !rowTitle ||
     NON_RECORD_PATTERN.test(rowTitle) ||

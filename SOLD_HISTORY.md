@@ -70,6 +70,8 @@ Everything else stays `unknown` so the automation can treat it cautiously.
 
 Research priority uses actual retained purchases of the same artist and full album title, including older or different-edition sales. This album demand summary supplies no resale price and no exact-pressing velocity. Artist aggregates, a popular band name, retailer badges, and large unverified counts cannot promote an unproven album. Exact local comps additionally require matching edition and New/Sealed condition. A fuzzy match to a similarly named album or an unconfirmed older pressing cannot supply prices. Curation revalidates older draft metadata against these rules without refreshing retailer observation times.
 
+For self-titled releases, matching artist words cannot also prove the album. Sold and active matchers reject listing titles containing another substantive album name, even when artist/title token overlap would otherwise score highly. Review unknown extra title text instead of borrowing prices from the artist's other releases.
+
 ## Signed-in sold research checkpoint
 
 Use only artist plus album name in Seller Hub's keyword field. Keep Vinyl Records, New, Sold, and the date range in filters. Check pressing, format, and condition on returned rows. Prefer a visibly confirmed 90-day window; complete rows from that exact window can establish its sold-unit count. A three-year total with a latest-sale date cannot supply 30/90/365-day velocity.

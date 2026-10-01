@@ -171,6 +171,17 @@ export function activeSearchKey(find) {
   return buildActiveSearchProfile(find)?.key ?? null;
 }
 
+/** Artist words alone cannot identify an eponymous album among that artist's catalog. */
+export function selfTitledReleaseMismatch(artist, title, listingTitle) {
+  const tokens = value => String(value ?? "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/).filter(Boolean);
+  const articles = new Set(["a", "an", "the"]);
+  const artistTokens = new Set(tokens(artist).filter(token => !articles.has(token)));
+  const titleTokens = tokens(normalizeResearchTitle(title)).filter(token => !articles.has(token));
+  if (!artistTokens.size || !titleTokens.length || !titleTokens.every(token => artistTokens.has(token)) || ![...artistTokens].every(token => titleTokens.includes(token))) return false;
+  const metadata = new Set([...articles, ...COLORS.flatMap(tokens), "lp", "lps", "vinyl", "record", "records", "album", "new", "brand", "sealed", "factory", "mint", "nm", "self", "titled", "st", "s", "t", "color", "colored", "coloured", "limited", "edition", "exclusive", "ltd", "ed", "reissue", "remastered", "remaster", "stereo", "mono", "splatter", "swirl", "with", "w", "gram", "grams", "g"]);
+  return tokens(listingTitle).some(token => !artistTokens.has(token) && !metadata.has(token) && !/^\d+(?:x?lp|g)?$/.test(token));
+}
+
 export function matchActiveListing(title, profile) {
   const listingTitle = cleanActiveSearchText(title);
   if (
@@ -205,6 +216,8 @@ export function matchActiveListing(title, profile) {
   const requiredNumbers = expectedTitleTokens.filter((token) => /^\d+$/.test(token));
   const hasRequiredNumbers = requiredNumbers.every((token) => listingTokens.has(token));
   const reasons = [];
+
+  if (selfTitledReleaseMismatch(profile.artist, profile.title, listingTitle)) reasons.push("release-title-mismatch");
 
   if (matchedTitleTokens < requiredTitleMatches || !hasRequiredNumbers) reasons.push("release-title-mismatch");
   // A one-word album named Blue/Red cannot borrow a color suffix from another
