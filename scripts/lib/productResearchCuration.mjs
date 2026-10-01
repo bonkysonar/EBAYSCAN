@@ -1,5 +1,6 @@
 import { verifiedWindowSales, verifiedResearchWindow } from "./soldResearchWindow.mjs";
-import { retailEligibility } from "./retailIdentity.mjs";
+import { retailEligibility, hasResearchableRetailIdentity } from "./retailIdentity.mjs";
+import { verifiedSoldItemIdentity } from "./soldItemIdentity.mjs";
 import { extractEditionIdentity, selfTitledReleaseMismatch, sameDistinctiveVariant } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
 import {
   buildEbayProductResearchUrl,
@@ -77,7 +78,7 @@ export function buildProductResearchPlan(finds, options = {}) {
     .filter(
       (find) =>
         retailEligibility(find).eligible &&
-        find.identityStatus !== "unresolved",
+        hasResearchableRetailIdentity(find),
     )
     .filter(isResearchableFind)
     // Evaluation and display ranking are independent of the browser-work order.
@@ -89,6 +90,8 @@ export function buildProductResearchPlan(finds, options = {}) {
       const variants = researchVariantDetails(find);
       return {
         artist: find.artist,
+        identityStatus: find.identityStatus,
+        requiresIdentityConfirmation: find.identityStatus === "unresolved" || /^unknown artist$/i.test(find.artist ?? ""),
         capturedAt: find.capturedAt,
         findId: find.id,
         sourceId: find.sourceId,
@@ -187,10 +190,15 @@ export function bestEvidenceForEntry(
     const rows = (queryFailed || hasUnresolvedSeriesIdentity(find, run.rows ?? []) ? [] : (run.rows ?? []))
       .map(parseProductResearchRow)
       .filter((row) => row.totalSold > 0 && row.avgSoldPrice !== null)
-      .map((row) => ({
-        ...row,
-        matchScore: productResearchRowMatchScore(matchFind, row.title),
-      }))
+      .map((row) => {
+        const identity = verifiedSoldItemIdentity(row, now);
+        // Keep the actual sold title, price, quantity and date intact. Appending
+        // observed details cannot erase explicit color/format/damage conflicts.
+        const matchText = identity ? `${row.title} ${identity.editionText}` : row.title;
+        const { itemIdentityEvidence, ...sale } = row;
+        return { ...sale, ...(identity ? { verifiedItemIdentity: identity } : {}),
+          matchScore: productResearchRowMatchScore(matchFind, matchText) };
+      })
       .filter((row) => row.matchScore >= 0.68);
 
     const windowSales = exactEntry ? verifiedWindowSales(rows, run, now) : null;
@@ -311,6 +319,7 @@ export function parseProductResearchRow(row) {
     dateLastSold: isoDate(row?.dateLastSold ?? cells[7]),
     itemUrl: cleanText(row?.itemUrl ?? row?.href ?? row?.url),
     itemSales: money(row?.itemSales ?? cells[5]),
+    ...(row?.itemIdentityEvidence ? { itemIdentityEvidence: row.itemIdentityEvidence } : {}),
     title: rowTitle(row),
     totalSold: wholeNumber(row?.totalSold ?? cells[4]),
   };

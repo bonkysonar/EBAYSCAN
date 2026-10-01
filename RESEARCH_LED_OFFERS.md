@@ -40,6 +40,33 @@ their distinguishing metadata. “Worth considering” uses its explicit evidenc
 profit, demand and supply gates without a duplicate heuristic tier cutoff;
 automatic BUY strategy thresholds remain unchanged.
 
+When a sold title omits pressing details, open its own linked eBay item and
+inspect the visible item specifics or description. A raw research row can carry
+`itemIdentityEvidence` with `captureMethod: "visible_browser"`, the actual
+`capturedAt`, `url`, `listingTitle`, bounded `visibleText`, and an exact
+`editionText` excerpt from that text. The URL must identify the same item as the
+sold row, the title must agree, and the observation expires after six hours.
+These details only supplement pressing matching; they cannot change the sold
+price, shipping, quantity or date, establish velocity, or erase a conflicting
+color, format, signature or damage warning. Keep captures in ignored exports.
+
+Real Gone Music is included as a label-direct Shopify source. Its variant
+prices, stock and sale collection are scanned through the existing adapter.
+Check current shipping separately; a sale price does not imply free delivery.
+
+A specific physical-record title may enter research even if the retailer omits
+the artist/album separator. The plan marks `requiresIdentityConfirmation`;
+purchase recommendations remain blocked until identity is resolved. Generic
+merchandising titles, unavailable stock and non-record formats are excluded.
+Explicit `S/T` or `Self-Titled` markers resolve the artist and self-titled album.
+Research allocation diagnostics count selected candidates by their original
+queue identity, so cloned display records cannot report false exclusions.
+
+Use demand-first discovery alongside clearance feeds: start with repeated
+completed sales (including authorized own-store history), then search the exact
+release and UPC across retailers. Recheck live stock, sale eligibility and
+shipping. Label-wide research is a lead source, not exact-edition sale evidence.
+
 Resale comparisons use delivered prices, including buyer-paid shipping. Deduct
 the actual label cost once; do not add a second shipping revenue credit. The
 editable default model uses 12.7% plus $0.40 marketplace fees, $4.39 postage,

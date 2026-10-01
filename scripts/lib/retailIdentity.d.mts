@@ -19,6 +19,7 @@ export function shopifyIdentity(
   retailCatalogNumber?: string | null;
 };
 export function isVariantDescription(value: unknown): boolean;
+export function hasResearchableRetailIdentity(find?: Record<string, any>): boolean;
 
 export function retailerArtistConflict(
   artist: unknown,
