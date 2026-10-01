@@ -4,6 +4,7 @@ import { discoverVinylPriceDrop } from "./lib/vinylPriceDropDiscovery.mjs";
 import { webSaleDiscovery } from "./lib/webSaleDiscovery.mjs";
 import { createAlbumDemandIndex } from "./lib/albumDemand.mjs";
 import { createMarketplaceAlbumDemandIndex } from "./lib/marketplaceAlbumDemand.mjs";
+import { createCapturedSoldIndex } from "./lib/capturedSoldIndex.mjs";
 import { buildSoldResearchQueryVariants } from "../src/lib/arbitrage/soldResearchLinks.mjs";
 import {
   extractRetailCampaigns,
@@ -313,6 +314,7 @@ const soldIndex = existsSync(SOLD_INDEX_PATH)
 const capturedAt = new Date().toISOString();
 const albumDemandIndex = createAlbumDemandIndex(soldIndex ?? {}, { now: capturedAt });
 const marketplaceResearchPath = resolve("exports/arbitrage-finds/browser-product-research.json");
+const capturedSoldIndex = createCapturedSoldIndex(existsSync(marketplaceResearchPath) ? JSON.parse(readFileSync(marketplaceResearchPath, "utf8")) : {}, capturedAt);
 const marketplaceAlbumDemandIndex = createMarketplaceAlbumDemandIndex(
   existsSync(marketplaceResearchPath) ? JSON.parse(readFileSync(marketplaceResearchPath, "utf8")) : {},
   capturedAt,
@@ -473,7 +475,7 @@ const saleAdjustedCandidates = applyCampaignOffers(
 );
 const enrichedProducts = applyRetailLearning(
   saleAdjustedCandidates.map((candidate) => {
-    const enriched = enrichCandidate(candidate, soldIndex);
+    const enriched = capturedSoldIndex.enrich(enrichCandidate(candidate, soldIndex));
     return {
       ...enriched,
       requiresRetailVerification: true,

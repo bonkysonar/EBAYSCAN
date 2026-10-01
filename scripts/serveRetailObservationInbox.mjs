@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
+import { assessSoldCapture, mergeSoldCaptures } from "./lib/soldCaptureQuality.mjs";
 
 const port = Number(
   process.argv.find((arg) => arg.startsWith("--port="))?.split("=")[1] ?? 4319,
@@ -58,7 +59,7 @@ createServer(async (req, res) => {
     const previous = existsSync(targetPath)
       ? JSON.parse(readFileSync(targetPath, "utf8")).pages
       : [];
-    const pages = [
+    const pages = research ? mergeSoldCaptures(previous, incoming) : [
       ...new Map(
         [...previous, ...incoming].map((entry) => [
           `${entry.sourceId ?? entry.query}:${entry.url}`,
@@ -75,10 +76,15 @@ createServer(async (req, res) => {
         2,
       ),
     );
+    const escape = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+    const quality = research ? incoming.map(entry => {
+      const result = assessSoldCapture(entry);
+      return `<li>${escape(entry.query)}: ${result.status === "complete" ? "Complete verified capture" : "Saved for repair"}${result.repairs.length ? `<ul>${result.repairs.map(text => `<li>${escape(text)}</li>`).join("")}</ul>` : ""}</li>`;
+    }).join("") : "";
     res
       .writeHead(200, { "content-type": "text/html; charset=utf-8" })
       .end(
-        `<h1>Saved ${incoming.length} observations</h1><p>${pages.length} total pages</p><a href="/">Capture more</a>`,
+        `<h1>Saved ${incoming.length} observations</h1><p>${pages.length} total pages</p>${quality ? `<ul>${quality}</ul>` : ""}<a href="${research ? "/research" : "/"}">Capture more</a>`,
       );
   } catch (error) {
     res

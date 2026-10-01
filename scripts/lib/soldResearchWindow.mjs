@@ -1,24 +1,50 @@
 const DAY = 86_400_000;
 
+// Seller Hub can display an applied filter without retaining its URL parameter.
+// Explicit visible-control observations may fill missing parameters, never
+// override a conflicting URL filter (or an Active result tab).
+export function verifiedResearchFilters(run, url) {
+  return [["categoryId", "176985"], ["conditionId", "1000"], ["tabName", "SOLD"]]
+    .every(([key, expected]) => (url.searchParams.get(key) ?? run.observedFilters?.[key]) === expected);
+}
+
 // A displayed 90-day total is evidence for that window. A three-year total plus
 // a latest-sale date is not. Require the observed results header and filters,
 // complete pagination, and distinct listing identities before using quantities.
 export function verifiedWindowSales(rows, run, now = new Date()) {
+  const verified = verifiedResearchWindow(run, now);
+  if (!verified || !rows.length) return null;
+  const { start, end, duration, observedWindow } = verified;
+  const allRows = run.rows ?? [];
+  const ids = allRows.map((row) => String(row.itemUrl ?? row.href ?? row.url ?? "")
+    .match(/^https:\/\/(?:www\.)?ebay\.com\/itm\/(?:[^/]+\/)?(\d{9,15})(?:[/?#]|$)/)?.[1]);
+  if (ids.some((id) => !id) || new Set(ids).size !== ids.length) return null;
+  if (rows.some((row) => !Number.isInteger(row.totalSold) || row.totalSold <= 0 ||
+      !row.dateLastSold || !Number.isFinite(Date.parse(row.dateLastSold)) || Date.parse(row.dateLastSold) < start || Date.parse(row.dateLastSold) > end)) return null;
+  const units = rows.reduce((sum, row) => sum + row.totalSold, 0);
+  return {
+    sales30Days: duration === 30 ? units : null,
+    sales90Days: duration === 90 ? units : null,
+    sales365Days: duration === 365 ? units : null,
+    observedWindow,
+  };
+}
+
+/** Shared metadata validation also works for an explicitly completed empty search. */
+export function verifiedResearchWindow(run, now = new Date(), allowedPeriods = [30, 90, 365]) {
   const window = run?.observedWindow;
-  if (!window || run.complete !== true || run.condition !== "New" ||
-      run.category !== "Vinyl Records" || !rows.length) return null;
+  if (!window || run.complete !== true || run.completePagination === false || run.condition !== "New" ||
+      run.category !== "Vinyl Records") return null;
   const start = calendarDay(window.startDate);
   const end = calendarDay(window.endDate);
   const captured = Date.parse(run.capturedAt);
   const duration = (end - start) / DAY;
-  if (![30, 90, 365].includes(duration) || !Number.isFinite(captured) ||
+  if (!allowedPeriods.includes(duration) || !Number.isFinite(captured) ||
       Number(now) < captured - 300000 || Number(now) - captured > 7 * DAY) return null;
   try {
     const url = new URL(run.url);
     if (url.protocol !== "https:" || url.hostname !== "www.ebay.com" || url.pathname !== "/sh/research" ||
-        url.searchParams.get("categoryId") !== "176985" ||
-        url.searchParams.get("conditionId") !== "1000" ||
-        url.searchParams.get("tabName") !== "SOLD") return null;
+        !verifiedResearchFilters(run, url)) return null;
     // Seller Hub reports calendar dates, not instants at midnight UTC. A morning
     // Pacific capture of yesterday's results can be >36 hours after that UTC
     // midnight. Compare dates in the research timezone, including DST changes.
@@ -31,17 +57,8 @@ export function verifiedWindowSales(rows, run, now = new Date()) {
     const endAgeDays = (capturedDay - end) / DAY;
     if (endAgeDays < 0 || endAgeDays > 1) return null;
   } catch { return null; }
-  const allRows = run.rows ?? [];
-  const ids = allRows.map((row) => String(row.itemUrl ?? row.href ?? row.url ?? "")
-    .match(/^https:\/\/(?:www\.)?ebay\.com\/itm\/(?:[^/]+\/)?(\d{9,15})(?:[/?#]|$)/)?.[1]);
-  if (ids.some((id) => !id) || new Set(ids).size !== ids.length) return null;
-  if (rows.some((row) => !Number.isInteger(row.totalSold) || row.totalSold <= 0 ||
-      !row.dateLastSold || !Number.isFinite(Date.parse(row.dateLastSold)) || Date.parse(row.dateLastSold) < start || Date.parse(row.dateLastSold) > end)) return null;
-  const units = rows.reduce((sum, row) => sum + row.totalSold, 0);
   return {
-    sales30Days: duration === 30 ? units : null,
-    sales90Days: duration === 90 ? units : null,
-    sales365Days: duration === 365 ? units : null,
+    start, end, duration,
     observedWindow: {startDate: window.startDate, endDate: window.endDate},
   };
 }
@@ -79,6 +96,7 @@ export function mergeResearchSoldEvidence(existing, research, capturedAt) {
     unitsSold365Days: recent ? research.sales365Days : null,
     unitsSold1095Days: research.aggregatePeriodDays >= 1095 ? research.aggregateUnitsSold : null,
     observedWindow: research.observedWindow ?? null,
+    observedWindows: research.observedWindows ?? null,
     velocityEvidence: research.velocityStatus === "verified_window_totals"
       ? "verified_window_totals" : recent ? "dated_transactions" : "aggregate_last_sale_only",
   };

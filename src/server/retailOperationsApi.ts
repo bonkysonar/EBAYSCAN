@@ -126,6 +126,7 @@ export async function retailOperations(
     sourceCount: bounded(input.sourceCount),
     updatedSourceCount: bounded(input.updatedSourceCount),
     researchProgress: boundedResearchProgress(input.researchProgress),
+    researchQueue: boundedResearchQueue(input.researchQueue),
     lastPublishedAt: ["published", "partial"].includes(String(input.status))
       ? new Date().toISOString()
       : (previous?.lastPublishedAt ?? null),
@@ -187,6 +188,11 @@ function boundedResearchProgress(value: unknown) {
   const outsidePlan = bounded(input.outsidePlan);
   const complete = planned > 0 && completed === planned && validated + noRows === planned && failed === 0 && pending === 0 && outsidePlan === 0;
   return { planned, completed, validated, noRows, failed, pending: Math.min(planned, pending), researchedRows: bounded(input.researchedRows), limit: 240, outsidePlan, complete, status: planned === 0 ? "not_needed" : complete ? "complete" : "incomplete" };
+}
+function boundedResearchQueue(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  return Object.fromEntries(["offers", "distinctQueries", "tasks", "reused", "repair", "refresh", "pending", "retryLater", "scheduled", "deferred", "editionReviews"].map(key => [key, bounded(input[key])]));
 }
 async function read(
   cwd: string,

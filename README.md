@@ -2,6 +2,8 @@
 
 Local-first record triage MVP for deciding whether vinyl records are probably below a resale processing threshold, worth keeping for manual processing, or ambiguous enough to inspect manually.
 
+Retail sold research resumes across scans: the planner reuses fresh captures, groups duplicate album searches across retailer offers, and gives failed or incomplete captures specific repair tasks. See [SOLD_HISTORY.md](SOLD_HISTORY.md) for the evidence contract. Run `node scripts/prepareArbitrageResearchPlan.mjs <exact-draft>` after each research batch; the saved plan also contains edition-review tasks, justified annual searches, and acquisition-price targets. The normal daily workflow imports saved captures automatically.
+
 ## Local Setup
 
 ```powershell

@@ -1,4 +1,4 @@
-import { verifiedWindowSales } from "./soldResearchWindow.mjs";
+import { verifiedWindowSales, verifiedResearchWindow } from "./soldResearchWindow.mjs";
 import { retailEligibility } from "./retailIdentity.mjs";
 import { extractEditionIdentity } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
 import {
@@ -161,8 +161,21 @@ export function bestEvidenceForEntry(
   const variants = entry.runs.map((run) => run.query).filter(Boolean);
   const exactEntry = options.exactEntry === true;
   let best = null;
+  const verifiedPeriods = [];
+  const newestWindows = new Map();
+  for (const run of entry.runs) {
+    if (run.error || ["failed", "unavailable", "blocked"].includes(run.status)) continue;
+    const window = verifiedResearchWindow(run, now);
+    if (!window || !Array.isArray(run.rows)) continue;
+    const parsed = run.rows.map(parseProductResearchRow);
+    if (parsed.length && !verifiedWindowSales(parsed, run, now)) continue;
+    const prior = newestWindows.get(window.duration);
+    if (!prior || window.end > prior.end || (window.end === prior.end && Date.parse(run.capturedAt) > Date.parse(prior.run.capturedAt))) newestWindows.set(window.duration, { ...window, run });
+  }
 
   for (const run of entry.runs) {
+    const metadata = verifiedResearchWindow(run, now);
+    if (metadata && newestWindows.has(metadata.duration) && newestWindows.get(metadata.duration).run !== run) continue;
     const matchFind = {
       ...find,
       researchQuery: find.researchQuery || run.query,
@@ -232,6 +245,7 @@ export function bestEvidenceForEntry(
         ? "dated_single_unit_rows"
         : "unknown_from_aggregate_rows",
     };
+    if (windowSales) verifiedPeriods.push(evidence);
 
     if (
       !best ||
@@ -244,6 +258,17 @@ export function bestEvidenceForEntry(
     }
   }
 
+  if (best && verifiedPeriods.length) {
+    const windows = {};
+    for (const [field, days] of [["sales30Days",30],["sales90Days",90],["sales365Days",365]]) {
+      const observed = verifiedPeriods.filter(evidence => evidence[field] !== null)
+        .sort((a,b) => Date.parse(b.capturedAt) - Date.parse(a.capturedAt))[0];
+      if (!observed) continue;
+      best[field] = observed[field];
+      windows[days] = { capturedAt: observed.capturedAt, ...observed.observedWindow };
+    }
+    best.observedWindows = windows;
+  }
   return (
     best ?? {
       aggregatePeriodDays: null,

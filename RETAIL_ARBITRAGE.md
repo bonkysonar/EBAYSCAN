@@ -208,7 +208,7 @@ node scripts/prepareArbitrageResearchPlan.mjs
 node scripts/prepareArbitrageResearchPlan.mjs exports\arbitrage-finds\<scan-file>.json --max=40
 ```
 
-The workflow plans at most 240 retained candidates and reports any researchable rows outside that bound. The standalone planner can use an explicit smaller `--max`. Each entry contains the exact draft find ID, one artist/album query, source identity, and Seller Hub/public sold links. Curation rejects bundles, merch, damaged copies, used copies, and conflicting editions, then stores usable evidence by find ID. There is no title-by-title allowlist.
+The workflow retains at most 240 research candidates and schedules at most 240 distinct query/window tasks. The standalone planner accepts a smaller `--max`. Each task contains one artist/album query, all exact draft find IDs and their retailer editions, capture status and specific repair instructions. Fresh saved captures and the current checkpoint are reused automatically. Regenerate the plan after a research batch to see remaining work and any justified 365-day follow-ups. Curation rejects bundles, merch, damaged copies, used copies, and conflicting editions, then stores usable evidence by find ID. There is no title-by-title allowlist.
 
 Use the same normalized artist/album query for every record, including soundtracks. Pending, failed, blocked, successful-empty, and validated searches remain distinct states.
 

@@ -224,6 +224,11 @@ Release verification, September 4, 2026: the fresh broad run attempted 127 sourc
 
 ## Signed-in research and resumable workflow regression
 
+- Run `npx vitest run src/tests/persistentResearchQueue.test.ts src/tests/browserSoldResearch.test.ts src/tests/productResearchWindow.test.ts src/tests/retailScanStatus.test.tsx src/tests/retailOperations.test.ts`, then `npm test` and `npm run build`.
+- Reuse one fresh query across a new run and multiple shops; verify each edition is matched separately and only one query/window needs collection. Resume with only the run checkpoint. Persist unfinished task identity without titles, queries, prices, URLs or raw item IDs in queue state.
+- Save a failed or incomplete capture after a usable capture of the same URL. Verify the usable result survives, failure reasons are actionable, access failures back off, and stale captures require refreshing. Verify annual follow-up is limited to plausible thin-sample opportunities and independently measured 90/365-day counts are not added together. A newer complete window replaces an older overlapping count.
+- Verify fresh exact captured sales can admit a normally priced retailer offer before discovery filtering. Conflicting editions remain unpriced and appear as edition-review tasks. Production status must distinguish offer coverage from distinct query/window reuse and repair counts.
+
 - Run `npx vitest run src/tests/albumDemand.test.ts src/tests/localSoldEvidence.test.ts src/tests/retailWorkflow.test.ts src/tests/retailOperations.test.ts src/tests/productResearchWindow.test.ts`.
 - Verify an album with observed purchases precedes cheaper unproven campaigns; unproven rows occupy at most 10% of actual selections, with at most one bootstrap lead if no observed album exists. Exact pricing must never borrow another album, condition, or pressing.
 - Capture a real Seller Hub page through the normal signed-in browser and save it at `http://127.0.0.1:4319/research`. Import to the exact new draft. Confirm checkpoint find IDs match the draft and the importer rejects stale, incomplete, or wrong-query captures.

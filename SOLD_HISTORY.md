@@ -78,6 +78,8 @@ Start `node scripts/serveRetailObservationInbox.mjs` and save visible Seller Hub
 
 Displayed date-window endpoints are calendar dates in the research URL's `tz`, not midnight UTC timestamps. A capture may describe results ending on the same or previous local calendar day. Compare those dates in that timezone (UTC only for legacy URLs without `tz`), while independently enforcing capture freshness. Invalid timezones, future end dates, older windows, incomplete pagination, duplicate rows, and incompatible editions cannot establish window totals.
 
+Seller Hub sometimes omits applied filters from its URL. After visibly confirming New, Vinyl Records and the selected Sold tab, captures may include `observedFilters: {conditionId: "1000", categoryId: "176985", tabName: "SOLD"}`. These explicit control observations fill missing URL parameters only; a conflicting URL condition, category or Active tab still fails. Do not infer these fields from a desired search or from result titles.
+
 Import with `node scripts/importBrowserSoldResearch.mjs <scan-draft> <browser-captures>`. The importer matches artist/album queries to exact find IDs in that draft and merges into `research-checkpoint-<runId>.json`; a checkpoint from another run is rejected. Alternatively finish the saved workflow with `--browserResearch=<browser-captures>`, which imports before curation. Omitting `--research` resumes the workflow's existing checkpoint. An empty or failed checkpoint never becomes completed research.
 
 ## Provisional album price comparisons
@@ -92,7 +94,7 @@ The October 1 audit found 19,532 retained own-sales records and 916 visible-brow
 
 A read-only replay against the same 77 offers found that the old 36-hour UTC-midnight check discarded otherwise verified 90-day quantities for 22 offers captured during the scheduled Pacific morning session. Calendar-aware validation recovered these counts without changing prices, dates, rows, edition matching, or buy thresholds: verified-window coverage increased from 31 to 53 offers. Nine retained only aggregate evidence, 14 were pending, and one had no compatible rows. This replay is not a new production publication or proof of a profitable buy.
 
-The next improvements should prioritize usable evidence per distinct release:
+The persistent research queue now implements these priorities for usable evidence per distinct release:
 
 1. Validate the displayed Sold/New/Vinyl filters, actual date header, item identities, and pagination while capturing. Save each result immediately; retry failed captures rather than recording them as successful zero-sales searches.
 2. Deduplicate work by artist/album query, then match each retailer's edition separately. Resume unfinished evidence tasks across scans using stable release identity, while retaining original capture dates and existing freshness/display limits. Never sum overlapping captures as additional sales.
@@ -102,3 +104,9 @@ The next improvements should prioritize usable evidence per distinct release:
 6. Measure distinct queries attempted/completed, exact-edition matches, fresh price coverage, verified-window coverage, and explicit rejection reasons. Refresh stale high-priority evidence before spending the research budget on repeated captures or new sources.
 
 eBay Product Research remains the available marketplace-wide research surface. A licensed marketplace sold-data API may improve throughput if access is confirmed; ordinary seller-history sync only covers the authorized seller's own sales. No unconfirmed third-party feed or active asking price should be presented as sold evidence.
+
+`prepareArbitrageResearchPlan.mjs` automatically imports fresh saved captures into the exact draft checkpoint. It groups retailer offers by normalized artist/album query and emits one task per required date window, with all edition-specific targets attached. Rebuilding a plan after each research batch removes completed work. Tasks report `pending`, `repair`, `refresh`, or `complete`; access failures get a bounded retry delay. A newer failed or incomplete capture cannot replace a usable verified capture. Complete empty searches are reusable too, without becoming positive demand.
+
+The plan's `editionReviews` identifies captured searches with no confirmed retail-edition match. Its `sourcing` list provides evaluator-derived acquisition ceilings for verified exact sales. The scanner also consults fresh exact captured sales before filtering retailer offers, allowing documented demand to admit records without a sale badge. Annual follow-up is scheduled only for a thin positive recent sample with at least $12 estimated net and 50% ROI; the estimate is a research priority, not a buy recommendation. Separately observed 90-day and 365-day quantities are retained without adding overlapping periods.
+
+The ignored local `research-queue-state.json` preserves opaque task hashes, timestamps, attempt counters and reason codes across scans. It contains no queries, retailer/eBay titles, prices, images, URLs, sellers, descriptions or raw item IDs; raw captures and working plans remain separate ignored evidence artifacts. Untouched task state expires after 30 days. Capture reuse remains limited to seven days, and the six-hour eBay display window is unchanged. Operational status distinguishes distinct query windows from the number of offers covered and reports repair, refresh, pending, retry and edition-review counts.
