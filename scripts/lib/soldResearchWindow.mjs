@@ -16,8 +16,12 @@ export function verifiedWindowSales(rows, run, now = new Date()) {
   const verified = verifiedResearchWindow(run, now);
   if (!verified || !rows.length) return null;
   const { start, end, duration, observedWindow } = verified;
-  const identities = observedSoldRowIdentities(run, verified);
-  if (identities.missing || identities.duplicate) return null;
+  const captureIdentities = observedSoldRowIdentities(run, verified);
+  const identities = observedSoldRowIdentities({ ...run, rows }, verified);
+  // An unrelated edition with a missing link cannot invalidate linked exact
+  // matches. Every row actually counted still needs its own observed identity.
+  // Keep a lower-bound label whenever the complete table includes unknown rows.
+  if (identities.missing || identities.duplicate || captureIdentities.duplicate) return null;
   if (rows.some((row) => !Number.isInteger(row.totalSold) || row.totalSold <= 0 ||
       !row.dateLastSold || !Number.isFinite(Date.parse(row.dateLastSold)) || Date.parse(row.dateLastSold) < start || Date.parse(row.dateLastSold) > end)) return null;
   const units = rows.reduce((sum, row) => sum + row.totalSold, 0);
@@ -26,6 +30,7 @@ export function verifiedWindowSales(rows, run, now = new Date()) {
     sales90Days: duration === 90 ? units : null,
     sales365Days: duration === 365 ? units : null,
     observedWindow,
+    windowCountIsLowerBound: captureIdentities.missing,
   };
 }
 
@@ -96,6 +101,7 @@ export function mergeResearchSoldEvidence(existing, research, capturedAt) {
     unitsSold1095Days: research.aggregatePeriodDays >= 1095 ? research.aggregateUnitsSold : null,
     observedWindow: research.observedWindow ?? null,
     observedWindows: research.observedWindows ?? null,
+    windowCountIsLowerBound: research.windowCountIsLowerBound === true,
     velocityEvidence: research.velocityStatus === "verified_window_totals"
       ? "verified_window_totals" : recent ? "dated_transactions" : "aggregate_last_sale_only",
   };

@@ -6,5 +6,5 @@ export function verifyRetailOffer<T>(
 export function verifyRetailOffers<T>(
   finds: T[],
   fetchJson: (url: string) => Promise<any>,
-  options?: { concurrency?: number; now?: string },
+  options?: { concurrency?: number; now?: string; readPage?: (url:string, init?:any) => Promise<{html:string;url?:string}> },
 ): Promise<T[]>;

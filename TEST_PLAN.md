@@ -1,5 +1,13 @@
 ﻿# Test Plan
 
+## Research reliability and source recovery
+
+Run `npm test` and `npm run build`. Verify a cohort larger than 240 completes across batches, and a rollover with only the prior checkpoint preserves fresh observed searches without refreshing timestamps. Pending query windows must prevent daily publication. Confirm visible-report coverage differs correctly from a zero-product partial attempt.
+
+Exercise exact variant prices for mixed CD/vinyl stores, public Buy Button responses, unavailable variants, changed album identity, changed barcodes, different currencies and redirects. Keep malformed/blocked responses unknown. Double/Triple LP types and incidental mailer or hype-sticker language must not exclude actual records; accessory listings and explicit damaged stock must remain excluded.
+
+Inspect Seller Hub New/Vinyl/Sold controls, date windows and pagination in the signed-in browser. Inspect the separate catalog, opportunity-source, research-completion and validated-sales counters. A union of recovery probes cannot serve as a fresh broad-scan result.
+
 ## Retail discovery refresh regression
 
 Run `npx vitest run src/tests/retailDiscoveryRefresh.test.ts src/tests/retailDiscoveryStatus.test.tsx src/tests/albumDemand.test.ts src/tests/retailScannerRegressions.test.ts`, then `npm test` and `npm run build`. Verify >30 homepage cards all receive outcomes, duplicate URLs are not rechecked, failed details remain unknown, and empty parsing cannot mean complete. Confirm the 10% exploration reserve survives a full prior-demand queue and is source-diverse. Google observations expire, reject private/credentialed URLs, avoid prices from snippets, seed only known same-host sale pages, and expose unknown domains as unverified leads. Inspect Site-wide Sales after publication for homepage fractions, search dates and coverage limitations. Signed markdown bands remain collection-scoped/already marked. Research queries strip `(2xLP)` but preserve album identity.

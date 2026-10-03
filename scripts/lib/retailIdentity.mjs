@@ -9,11 +9,11 @@ const clean = (value) =>
     .replace(/\s+/g, " ")
     .trim();
 const damaged =
-  /\b(?:damaged|dented|b-stock|defective|warped|jacket\s+damage|sleeve\s+damage|scratch\s+and\s+dent|shopworn|open[ -]box)\b/i;
+  /\b(?:damaged\s+(?:stock|jacket|sleeve|cover|record|vinyl)|dented|b-stock|defective|warped|(?:jacket|sleeve|slv|cover|pkg)\s+(?:damaged?|dmg|flaw)|bent\s+(?:cover|jacket|sleeve)|scratch\s+and\s+dent|shopworn|open[ -]box)\b/i;
 const digital =
   /\b(?:digital(?:[ -]album|[ -]download)?|download|mp3|flac|wav)\b/i;
 const accessory =
-  /\b(?:funko|figurines?|vinyl\s+figures?|pop!|record\s+bowl|coasters?|slipmats?)\b/i;
+  /\b(?:funko|figurines?|vinyl\s+figures?|pop!|record\s+bowl|coasters?|slipmats?|washer\s+(?:replacement\s+)?filters?|(?:record|vinyl)\s+(?:cleaning\s+(?:kits?|brushes|fluid|solution)|storage\s+(?:crates?|cases?)|inner\s+sleeves|outer\s+sleeves))\b/i;
 const vinyl = /\b(?:(?:\d[ x-]?)?lp|vinyl|12[ -]inch)\b/i;
 const vinylFormat =
   /\b(?:vinyl\b|(?:[1-9]\s*[x-]?\s*)?lps?\b|phonograph\s+record\b|record\s+album\b|(?:7|10|12)\s*(?:[ -]?inch\b|in\.?\b|["”]))/i;
@@ -43,7 +43,7 @@ export function retailEligibility(find = {}) {
     return { eligible: false, reason: "physical_record_format_unconfirmed" };
   if (accessory.test(text))
     return { eligible: false, reason: "record_accessory" };
-  if (damaged.test(text)) return { eligible: false, reason: "damaged_stock" };
+  if (damaged.test(text) || /\/\s*BUMP\s*\//i.test(text)) return { eligible: false, reason: "damaged_stock" };
   if (
     digital.test(variant) ||
     (digital.test(title) &&
@@ -80,7 +80,13 @@ export function retailRecordFormat(find = {}) {
 }
 
 export function shopifyIdentity(product, variant = {}, source = {}) {
-  const rawTitle = clean(product.title);
+  const sourceId = source.sourceId ?? source.id;
+  // Carpark prefixes its display title with its own catalog identifier.
+  // It is release metadata, not part of the artist name.
+  const rawTitle = clean(product.title).replace(
+    sourceId === "carpark-records" ? /^CAK\d+[A-Z]?\s+/i : /$^/,
+    "",
+  );
   const tags = Array.isArray(product.tags)
     ? product.tags
     : String(product.tags ?? "").split(",");
@@ -89,7 +95,6 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
     .find((tag) => /^(?:artist|band)\s*[:=]/i.test(tag))
     ?.replace(/^[^:=]+[:=]\s*/, "");
   const vendor = clean(product.vendor);
-  const sourceId = source.sourceId ?? source.id;
   // This distributor's vendor is the issuing label (for example Enjoy the
   // Ride), while the artist may appear only in unstructured tags. Do not guess
   // which unlabelled tag is the artist.
@@ -158,6 +163,10 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
     artist = "Unknown Artist";
     title = parts.slice(0, -1).join(" - ");
   }
+  if (sourceId === "carpark-records" && /^CAK\d+[A-Z]?\s+/i.test(clean(product.title)) && parts.length > 1) {
+    artist = parts[0];
+    title = parts.slice(1, endsInVariant ? -1 : undefined).join(" - ");
+  }
   const formatText = [
     rawTitle,
     variant.title,
@@ -200,7 +209,7 @@ export function shopifyIdentity(product, variant = {}, source = {}) {
           : /\b(?:box\s*set|boxset)\b/i.test(rawTitle)
             ? "box_set"
             : "LP",
-    preorder: /\bpre[ -]?order\b/i.test(`${rawTitle} ${variant.title ?? ""}`),
+    preorder: /\bpre[ -]?order\b/i.test(`${rawTitle} ${variant.title ?? ""} ${tags}`),
     releaseDate: product.release_date ?? null,
   };
 }
@@ -247,12 +256,15 @@ export function isVariantDescription(value) {
 }
 
 export function retailerArtistConflict(artist, sourceName) {
+  const compact = value => clean(value).toLowerCase().replace(/[^a-z0-9]/g, "");
   const brand = (value) =>
     clean(value)
       .toLowerCase()
-      .replace(/\b(?:official|store|shop|records?|music)\b/g, "")
+      .replace(/\b(?:official|store|shop|recordings?|records?|music)\b/g, "")
       .replace(/[^a-z0-9]/g, "");
   return Boolean(
-    brand(artist) && brand(sourceName) && brand(artist) === brand(sourceName),
+    brand(artist) && brand(sourceName) && (brand(artist) === brand(sourceName) ||
+      compact(artist).replace(/prod(?:uction)?$/, "") === compact(sourceName) ||
+      brand(artist).replace(/prod(?:uction)?$/, "") === brand(sourceName)),
   );
 }

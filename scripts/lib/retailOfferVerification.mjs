@@ -4,6 +4,14 @@ import {
 } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 import { priceCampaignBasket } from "./campaignOffers.mjs";
 import { retailEligibility, shopifyIdentity } from "./retailIdentity.mjs";
+import { readBuyButtonVinylProduct } from "./shopifyBuyButtonCatalog.mjs";
+import { formatRetailAdapter } from "./formatRetailAdapters.mjs";
+
+const identityKey = (value) => String(value ?? "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]/g, "");
+const recordIdentityChanged = (before, after) => before.identityStatus === "resolved" && (
+  identityKey(normalizeResearchArtist(before.artist)) !== identityKey(normalizeResearchArtist(after.artist)) ||
+  identityKey(normalizeResearchTitle(before.title)) !== identityKey(normalizeResearchTitle(after.title))
+);
 
 /** Read-only Shopify Ajax product + currency checks, using the scan's configured same-store URLs. */
 export async function verifyRetailOffer(
@@ -32,18 +40,7 @@ export async function verifyRetailOffer(
     if (variant.available !== true || variant.requires_shipping === false)
       return failed("unavailable", "physical_variant_unavailable");
     const identity = shopifyIdentity(product, variant, find);
-    const key = (value) =>
-      String(value)
-        .toLowerCase()
-        .normalize("NFKD")
-        .replace(/[^a-z0-9]/g, "");
-    if (
-      find.identityStatus === "resolved" &&
-      (key(normalizeResearchArtist(find.artist)) !==
-        key(normalizeResearchArtist(identity.artist)) ||
-        key(normalizeResearchTitle(find.title)) !==
-          key(normalizeResearchTitle(identity.title)))
-    )
+    if (recordIdentityChanged(find, identity))
       return failed("failed", "record_identity_changed");
     const eligibility = retailEligibility({
       ...find,
@@ -146,19 +143,18 @@ export async function verifyRetailOffer(
 export async function verifyRetailOffers(
   finds,
   fetchJson,
-  { concurrency = 4, now = new Date().toISOString() } = {},
+  { concurrency = 4, now = new Date().toISOString(), readPage } = {},
 ) {
   const output = [...finds];
   let cursor = 0;
   // Cache only anonymous currency reads for this bounded verification pass.
   const currency = new Map();
   const blocked = new Set();
-  const deadline = Date.now() + 180000;
   const guardedRead = async (url) => {
     const host = new URL(url).host;
-    if (blocked.has(host) || Date.now() > deadline)
+    if (blocked.has(host))
       throw new Error(
-        "Retail verification deferred after access failure or time budget",
+        "Retail verification deferred after access failure",
       );
     try {
       return await fetchJson(url);
@@ -172,11 +168,73 @@ export async function verifyRetailOffers(
     if (!currency.has(url)) currency.set(url, guardedRead(url));
     return currency.get(url);
   };
+  const guardedPage = async (url, init) => {
+    const host = new URL(url).host;
+    if (blocked.has(host)) throw new Error('Retail verification deferred after access failure');
+    try {
+      const response = await readPage(url, init);
+      if (response.url && new URL(response.url).origin !== new URL(url).origin) throw new Error('Product redirected outside configured store');
+      return response;
+    }
+    catch (error) {
+      if (/HTTP (?:403|429)|timeout/i.test(error.message)) blocked.add(host);
+      throw error;
+    }
+  };
   await Promise.all(
     Array.from({ length: Math.min(concurrency, finds.length) }, async () => {
       while (cursor < finds.length) {
         const index = cursor++;
-        output[index] = await verifyRetailOffer(finds[index], read, now);
+        const find = finds[index];
+        if (find.buyButtonProductId) {
+          try {
+            if (!readPage) throw new Error('Public Storefront verification reader unavailable');
+            const page = await guardedPage(find.sourceUrl);
+            const parsed = await readBuyButtonVinylProduct(page.html, find.sourceUrl, guardedPage, find);
+            const item = parsed.items.find((item) => item.buyButtonProductId === find.buyButtonProductId && item.buyButtonVariantId === find.buyButtonVariantId);
+            if (!item) throw new Error('Exact public Storefront vinyl variant unavailable');
+            if (recordIdentityChanged(find, item.identity)) throw new Error('record_identity_changed');
+            if (find.barcode && item.gtin && String(find.barcode) !== String(item.gtin)) throw new Error('barcode_changed');
+            output[index] = { ...find, ...item.identity, purchasePrice:item.currentPrice, sourceCurrency:item.currency,
+              barcode:item.gtin || find.barcode, sku:item.sku || find.sku, retailVariantTitle:item.variantTitle,
+              ...(item.currency !== find.sourceCurrency ? {purchasePriceUsd:null,currencyConversionRate:null,currencyConversionUpdatedAt:null} : {}),
+              available:true, capturedAt:now, retailVerification:{...item.retailVerification,checkedAt:now},
+              purchaseOfferVerification:item.identity.identityStatus === 'resolved' ? 'direct_retailer' : 'discovery_lead' };
+          } catch (error) {
+            output[index] = {...find, purchaseOfferVerification:'discovery_lead',retailVerification:{status:'failed',checkedAt:now,reason:String(error?.message ?? error).slice(0,200)}};
+          }
+        } else if (formatRetailAdapter(find.sourceId)) {
+          try {
+            const adapter = formatRetailAdapter(find.sourceId);
+            if (!readPage) throw new Error('Format-specific verification reader unavailable');
+            const url = new URL(find.sourceUrl);
+            if (url.protocol !== 'https:' || url.hostname !== adapter.host) throw new Error('Unsupported format-specific retailer URL');
+            const page = await guardedPage(url.href);
+            const items = adapter.parse(page.html,url.href);
+            const matches = items.filter(item => find.retailFormatVariantId
+              ? item.stableId === find.retailFormatVariantId
+              : find.sku && String(item.sku ?? item.productId) === String(find.sku));
+            if (matches.length !== 1) throw new Error('Exact format-specific vinyl variant unavailable');
+            const item = matches[0];
+            if (item.available !== true || item.physicalFormatConfirmed !== true) throw new Error('Physical vinyl availability unverified');
+            if (item.identity ? recordIdentityChanged(find,item.identity) : identityKey(item.title) !== identityKey(find.sourceListingTitle)) throw new Error('record_identity_changed');
+            if (find.barcode && item.gtin && String(find.barcode) !== String(item.gtin)) throw new Error('barcode_changed');
+            output[index] = {...find, ...(item.identity ?? {}), purchasePrice:item.currentPrice,sourceCurrency:item.currency,
+              sourceListingTitle:item.title,barcode:item.gtin || find.barcode,sku:item.sku ?? item.productId,
+              retailVariantTitle:item.variantTitle,retailEditionText:item.identity?.retailEditionText ?? item.variantTitle,
+              available:true,stockStatus:'in_stock',capturedAt:now,retailFormatVariantId:item.stableId,
+              purchasePriceUsd:item.currency === 'USD' ? item.currentPrice : null,
+              ...(item.currency !== find.sourceCurrency ? {currencyConversionRate:null,currencyConversionUpdatedAt:null} : {}),
+              sourceOriginalPrice:item.regularPrice ?? null,sourceDiscountPercent:item.regularPrice > item.currentPrice ? Math.round((1-item.currentPrice/item.regularPrice)*100) : null,
+              appliedSaleCampaignId:null,appliedSaleCode:null,appliedSaleDiscountPercent:null,appliedCampaign:undefined,
+              purchaseOfferVerification:'direct_retailer',
+              retailVerification:{status:'verified',checkedAt:now,reason:'exact_format_price_stock_currency_confirmed',advertisedPrice:item.currentPrice,currency:item.currency}};
+          } catch (error) {
+            output[index] = {...find,purchaseOfferVerification:'discovery_lead',retailVerification:{status:'failed',checkedAt:now,reason:String(error?.message ?? error).slice(0,200)}};
+          }
+        } else {
+          output[index] = await verifyRetailOffer(find, read, now);
+        }
       }
     }),
   );

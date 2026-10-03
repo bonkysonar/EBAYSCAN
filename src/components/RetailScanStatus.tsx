@@ -41,7 +41,6 @@ export function RetailScanStatus({
     attempt &&
     ["running", "research"].includes(attempt.status) &&
     Date.now() - Date.parse(attempt.updatedAt ?? "") > 3 * 3600000;
-  const research = attempt?.researchProgress ?? payload?.researchProgress;
   const queue = attempt?.researchQueue ?? payload?.researchQueue;
   return (
     <aside className="panel retail-scan-status" aria-label="Scanner freshness">
@@ -71,11 +70,8 @@ export function RetailScanStatus({
         </p>
       ) : null}
       {attempt?.message ? <p role="status">{attempt.message}</p> : null}
-      {research ? (
-        <p>
-          {attempt?.researchProgress ? "Latest attempt" : "Published scan"} sold research: {research.completed}/{research.planned} offers researched; {research.validated} with matching sales; {research.noRows} without matching sales; {research.pending} pending; {research.failed} failed; {research.outsidePlan} deferred beyond this run’s research limit.
-        </p>
-      ) : null}
+      {payload?.researchProgress ? <ResearchSummary label="Published report" progress={payload.researchProgress} /> : null}
+      {attempt?.researchProgress ? <ResearchSummary label="Latest attempt" progress={attempt.researchProgress} /> : null}
       {queue ? (
         <p aria-label="Research queue">
           {queue.distinctQueries} distinct album searches across {queue.offers} offers. {queue.reused} date-window captures reused; {queue.repair} need capture repair; {queue.refresh} need fresh evidence; {queue.pending} await research. {queue.scheduled} searches queued now; {queue.retryLater} retry later; {queue.editionReviews} need edition identification.
@@ -83,4 +79,9 @@ export function RetailScanStatus({
       ) : null}
     </aside>
   );
+}
+
+function ResearchSummary({ label, progress }: { label: string; progress: ArbitrageResearchProgress }) {
+  if (!progress.planned) return <p>{label}: no product research in this update.</p>;
+  return <p>{label} sold research: {progress.completed}/{progress.planned} offers researched; {progress.validated} with matching sales; {progress.noRows} without matching sales; {progress.pending} pending; {progress.failed} failed; {progress.outsidePlan} deferred.</p>;
 }

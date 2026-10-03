@@ -887,7 +887,7 @@ function safelyParseJson(value) {
   }
 }
 
-function balancedJsonAfter(source, offset) {
+export function balancedJsonAfter(source, offset) {
   const start = source.slice(offset).search(/[\[{]/);
   if (start < 0) return null;
   const absoluteStart = offset + start;

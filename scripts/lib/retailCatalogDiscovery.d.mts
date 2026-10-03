@@ -3,3 +3,4 @@ export function discoverRetailCatalogLinks(
   pageUrl: string,
   maxLinks?: number,
 ): string[];
+export function isMissingRetailPage(html: string): boolean;

@@ -1,5 +1,6 @@
 import { buildProductResearchPlan, bestEvidenceForEntry, researchCheckpointComplete } from "./productResearchCuration.mjs";
 
+// Size of a work batch, never a ceiling on which offers must be completed.
 export const WORKFLOW_RESEARCH_LIMIT = 240;
 
 /** A browser recovery is a new bounded refresh, never a resumed or broad scan. */
@@ -47,13 +48,15 @@ export function researchProgress(draft, checkpoint = {}, now = new Date()) {
   if (checkpoint.runId && checkpoint.runId !== draft.runId) throw new Error("Research checkpoint belongs to another scan.");
   const pool = draft.researchCandidates ?? draft.finds ?? [];
   const allPlans = buildProductResearchPlan(pool);
-  const plans = allPlans.slice(0, WORKFLOW_RESEARCH_LIMIT);
+  const plans = allPlans;
   const byFind = new Map(pool.map((find) => [find.id, find]));
   const entries = new Map((checkpoint.entries ?? []).map((entry) => [entry.findId, entry]));
   const counts = { planned: plans.length, completed: 0, validated: 0, noRows: 0, failed: 0, pending: 0, researchedRows: 0 };
   for (const plan of plans) {
     const entry = entries.get(plan.findId);
-    const complete = researchCheckpointComplete(plan, entry);
+    // Collection completion and per-pressing sold validation are separate.
+    // Require fresh observed controls, dates and pagination for every query.
+    const complete = researchCheckpointComplete(plan, entry, now);
     if (complete) counts.completed++;
     if (!complete) {
       const failed = (entry?.runs ?? []).some((run) => run.error || ["failed", "blocked", "unavailable"].includes(run.status));
@@ -70,5 +73,13 @@ export function researchProgress(draft, checkpoint = {}, now = new Date()) {
   }
   const outsidePlan = Math.max(0, allPlans.length - plans.length);
   const complete = plans.length > 0 && counts.completed === plans.length && counts.failed === 0 && counts.pending === 0 && outsidePlan === 0;
-  return { ...counts, limit: WORKFLOW_RESEARCH_LIMIT, outsidePlan, complete, status: !plans.length ? "not_needed" : complete ? "complete" : "incomplete" };
+  return { ...counts, limit: plans.length, outsidePlan, complete, status: !plans.length ? "not_needed" : complete ? "complete" : "incomplete" };
+}
+
+export function assertResearchReady(progress, queue = {}) {
+  if (progress.status === "not_needed" && !(queue.tasks > 0)) return;
+  const unfinished = Number(queue.pending ?? 0) + Number(queue.repair ?? 0) + Number(queue.refresh ?? 0);
+  if (!progress.complete || unfinished || Number(queue.deferred ?? 0) > 0) {
+    throw new Error(`Research incomplete: ${progress.completed}/${progress.planned} offers have verified completed searches; ${unfinished} query windows remain. Resume the saved context and checkpoint before publication.`);
+  }
 }

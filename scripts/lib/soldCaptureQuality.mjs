@@ -35,18 +35,23 @@ export function assessSoldCapture(page = {}, now = new Date()) {
   } catch { add("research_url_invalid"); }
   if (page.condition !== "New" || page.category !== "Vinyl Records") add("filters_unverified");
   if (page.complete !== true || page.completePagination === false) add("pagination_incomplete");
-  if (!Array.isArray(page.rows) || page.rows.length > 1000) add("rows_invalid");
+  if (!Array.isArray(page.rows) || page.rows.length > 10000) add("rows_invalid");
   const importable = issues.length === 0;
   const window = verifiedResearchWindow(page, now, [30, 90, 365, 1095]);
   if (!window) add("window_unverified");
   const rows = Array.isArray(page.rows) ? page.rows.map(parseProductResearchRow) : [];
+  const invalidRows = rows.filter(row => !row.title || !(row.avgSoldPrice > 0) || !Number.isInteger(row.totalSold) || row.totalSold <= 0 || !Number.isFinite(Date.parse(row.dateLastSold)));
+  const malformedVisibleRows = invalidRows.filter(row => !/listing has been removed for a policy violation/i.test(row.title ?? ''));
   const identities = observedSoldRowIdentities(page, window);
   if (identities.missing) add("listing_identity_missing");
   if (identities.duplicate) add("duplicate_listings");
-  if (rows.some(row => !row.title || !(row.avgSoldPrice > 0) || !Number.isInteger(row.totalSold) || row.totalSold <= 0 || !Number.isFinite(Date.parse(row.dateLastSold)))) add("rows_invalid");
+  if (invalidRows.length) add("rows_invalid");
   if (window && rows.some(row => Date.parse(row.dateLastSold) < window.start || Date.parse(row.dateLastSold) > window.end)) add("row_date_outside_window");
   return {
     version: 1, importable, status: issues.length ? "repair" : "complete",
+    // The search can be fully observed even when eBay redacts a listing.
+    // This is completion of collection, never validation of the redacted sale.
+    searchComplete: importable && Boolean(window) && !identities.duplicate && !malformedVisibleRows.length && !issues.includes('row_date_outside_window'),
     periodDays: window?.duration ?? (Number(page.periodDays ?? url?.searchParams.get("dayRange")) || null),
     windowVerified: issues.length === 0, rowCount: rows.length,
     reasonCodes: issues, repairs: issues.map(code => CAPTURE_REPAIRS[code]),
@@ -58,7 +63,8 @@ export function mergeSoldCaptures(previous = [], incoming = [], now = new Date()
   const pages = new Map();
   for (const page of [...previous, ...incoming]) {
     const quality = assessSoldCapture(page, now);
-    const key = `${researchQueryKey(page.query)}:${page.url}:${quality.status}`;
+    const collectionState = quality.searchComplete ? "collected" : "unfinished";
+    const key = `${researchQueryKey(page.query)}:${page.url}:${collectionState}`;
     const old = pages.get(key);
     if (!old || Date.parse(page.capturedAt) >= Date.parse(old.capturedAt)) pages.set(key, { ...page, captureAssessment: quality });
   }

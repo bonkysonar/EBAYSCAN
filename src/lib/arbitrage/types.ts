@@ -109,6 +109,7 @@ export type ArbitrageSoldEvidence = {
   unitsSold365Days?: number | null;
   unitsSold1095Days?: number | null;
   observedWindow?: { startDate: string; endDate: string } | null;
+  windowCountIsLowerBound?: boolean;
   velocityEvidence?:
     | "aggregate_last_sale_only"
     | "dated_transactions"
@@ -291,6 +292,8 @@ export type ArbitrageFind = {
     totalSold: number;
   }>;
   ebayResearchStatus?: "failed" | "no_rows" | "pending" | "validated";
+  ebayResearchSearchComplete?: boolean;
+  ebayResearchCompletionVersion?: number;
   ebayResearchUpdatedAt?: string;
   ebayResearchUrl?: string;
   ebaySoldCondition?: ArbitrageSoldCondition;
@@ -505,6 +508,7 @@ export type ArbitrageRunManifest = {
 };
 
 export type ArbitrageResearchProgress = {
+  scope?: "visible_report";
   planned: number;
   completed: number;
   validated: number;
@@ -519,6 +523,7 @@ export type ArbitrageResearchProgress = {
 };
 
 export type ArbitrageResearchQueue = {
+  completeWithRedactedRows?: number;
   offers: number; distinctQueries: number; tasks: number; reused: number;
   repair: number; refresh: number; pending: number; retryLater: number;
   scheduled: number; deferred: number; editionReviews: number;
@@ -532,6 +537,8 @@ export type ArbitrageImportPayload = {
     newRetailerLeads: Array<{ url: string; title: string; status: string; capturedAt: string }>;
   };
   researchProgress?: ArbitrageResearchProgress;
+  latestUpdateResearchProgress?: ArbitrageResearchProgress;
+  latestUpdateResearchQueue?: ArbitrageResearchQueue;
   researchQueue?: ArbitrageResearchQueue;
   publicationMode?: "full" | "source_updates" | "evidence_updates";
   evidenceUpdateVersion?: number;

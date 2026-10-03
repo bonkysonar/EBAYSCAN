@@ -2,13 +2,15 @@ import {
   existsSync,
   readFileSync,
   readdirSync,
+  renameSync,
   writeFileSync,
   mkdirSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { publicationPreflight, publicationRequest } from "./lib/retailPublicationClient.mjs";
-import { admittedSourceIds, browserRecoveryScan, freshWorkflowDraftSummary, researchProgress, scannerOutputPath, WORKFLOW_RESEARCH_LIMIT } from "./lib/retailWorkflowState.mjs";
+import { resumableResearchWorkflow, carryUnfinishedResearch, carryResearchCheckpoint } from "./lib/retailResearchBacklog.mjs";
+import { admittedSourceIds, assertResearchReady, browserRecoveryScan, freshWorkflowDraftSummary, researchProgress, scannerOutputPath, WORKFLOW_RESEARCH_LIMIT } from "./lib/retailWorkflowState.mjs";
 const cwd = process.cwd(),
   dir = join(cwd, "exports", "arbitrage-finds");
 for (const line of (existsSync(".env.local")
@@ -47,7 +49,25 @@ let context = args.has("finish")
   ? JSON.parse(readFileSync(resolve(String(args.get("finish"))), "utf8"))
   : null;
 if (context) context.contextPath = resolve(String(args.get("finish")));
+const standaloneRefresh = ["browserOnly", "sources", "previousScan"].some(name => args.has(name));
+let priorWorkflows = [];
 try {
+priorWorkflows = !context && !standaloneRefresh ? readUnfinishedWorkflows() : [];
+if (!context && !standaloneRefresh) {
+  const pending = resumableResearchWorkflow(priorWorkflows);
+  if (pending) {
+    context = pending.context;
+    context.resumedAt = new Date().toISOString();
+    importBrowserResearch();
+    prepareResearchPlan();
+    context.researchProgress = researchProgress(JSON.parse(readFileSync(context.draftPath, "utf8")), readCheckpoint(context.checkpointPath, context.runId));
+    await status("research");
+    console.log(JSON.stringify({ resumed: true, contextPath: context.contextPath,
+      draftPath: context.draftPath, checkpointPath: context.checkpointPath,
+      planPath: context.planPath, researchProgress: context.researchProgress,
+      researchQueue: context.researchQueue }, null, 2));
+  }
+}
   if (!context) {
     const browserObservationsPath = args.has("browserObservations") ? argumentPath("browserObservations") : null;
     const previousScanPath = args.has("previousScan") ? argumentPath("previousScan") : null;
@@ -118,7 +138,7 @@ try {
       cadence.rotation = offset + 4;
       writeFileSync(cadencePath, JSON.stringify(cadence, null, 2));
     }
-    const scanArgs = recovery?.scanArgs ?? ["scripts/runRetailArbitrageScan.mjs", "--skipUpload"];
+    const scanArgs = recovery?.scanArgs ?? ["scripts/runRetailArbitrageScan.mjs", "--skipUpload", "--skipActiveEnrichment"];
     if (args.has("reviewedOffers")) scanArgs.push("--reviewedOffers=" + argumentPath("reviewedOffers"));
     if (args.has("webDiscovery")) scanArgs.push("--webDiscovery=" + argumentPath("webDiscovery"));
     if (browserObservationsPath) {
@@ -133,7 +153,8 @@ try {
     process.stdout.write(scanResult.stdout);
     const draftPath = resolve(scannerOutputPath(scanResult.stdout));
     if (draftPath === previousScanPath) throw new Error("The scanner returned the previous artifact instead of a new draft.");
-    const draft = JSON.parse(readFileSync(draftPath, "utf8"));
+    const draft = carryUnfinishedResearch(JSON.parse(readFileSync(draftPath, "utf8")), priorWorkflows);
+    writeFileSync(draftPath, JSON.stringify(draft, null, 2));
     Object.assign(context, freshWorkflowDraftSummary(draft, context));
     context.draftPath = draftPath;
     context.checkpointPath = join(
@@ -143,12 +164,21 @@ try {
     if (!existsSync(context.checkpointPath))
       writeFileSync(
         context.checkpointPath,
-        JSON.stringify({ runId: draft.runId, entries: [] }, null, 2),
+        JSON.stringify(carryResearchCheckpoint(draft, priorWorkflows), null, 2),
       );
     importBrowserResearch();
     prepareResearchPlan();
-    context.researchProgress = researchProgress(draft, readCheckpoint(context.checkpointPath, draft.runId));
+    context.researchProgress = researchProgress(JSON.parse(readFileSync(context.draftPath, "utf8")), readCheckpoint(context.checkpointPath, draft.runId));
     writeFileSync(contextPath, JSON.stringify(context, null, 2));
+    // Retire a prior context only after its unfinished offers, checkpoint and
+    // new context are durably saved. This prevents a completed handoff from
+    // reintroducing the same old backlog every subsequent day.
+    const superseded = new Set(draft.researchBacklog.supersededRunIds);
+    for (const prior of priorWorkflows.filter(prior => superseded.has(prior.draft.runId))) {
+      const path = prior.context.contextPath;
+      writeFileSync(`${path}.tmp`, JSON.stringify({ ...prior.context, supersededByRunId: context.runId, supersededAt: new Date().toISOString() }, null, 2));
+      renameSync(`${path}.tmp`, path);
+    }
     await status("research");
     console.log(
       JSON.stringify(
@@ -175,8 +205,16 @@ try {
     context.checkpointPath = checkpointPath;
     if (research !== "--pending") prepareResearchPlan();
     const checkpoint = checkpointPath && existsSync(checkpointPath) ? readCheckpoint(checkpointPath, draft.runId) : { runId: draft.runId, entries: [] };
-    context.researchProgress = researchProgress(draft, checkpoint);
+    context.researchProgress = researchProgress(JSON.parse(readFileSync(context.draftPath, "utf8")), checkpoint);
     await status("research");
+    assertResearchReady(context.researchProgress, context.researchQueue);
+    if (context.researchProgress.planned > 0) {
+      // Refresh the whole carried cohort, including offers beyond the initial
+      // scan batch. The enrichment command reuses only current complete checks.
+      const active = run(["scripts/enrichArbitrageActiveEbay.mjs",
+        "--file=" + relative(cwd, context.draftPath), "--pages=100"], true);
+      process.stdout.write(active.stdout);
+    }
     const result = run(
       ["scripts/curateRetailArbitrageRun.mjs", context.draftPath, research],
       true,
@@ -233,6 +271,21 @@ function argumentPath(name) {
   if (!existsSync(path)) throw new Error(`--${name} file not found: ${path}`);
   return path;
 }
+function readUnfinishedWorkflows() {
+  return readdirSync(dir).filter(name => /^workflow-\d+\.json$/.test(name)).flatMap(name => {
+    try {
+      const contextPath = join(dir, name);
+      const saved = JSON.parse(readFileSync(contextPath, "utf8"));
+      if (saved.publishedAt || saved.supersededByRunId || !saved.draftPath || !existsSync(saved.draftPath)) return [];
+      const draft = JSON.parse(readFileSync(saved.draftPath, "utf8"));
+      const checkpoint = saved.checkpointPath && existsSync(saved.checkpointPath)
+        ? JSON.parse(readFileSync(saved.checkpointPath, "utf8")) : {};
+      return [{ context: { ...saved, contextPath }, draft, checkpoint }];
+    } catch (error) {
+      throw new Error(`Cannot safely recover unfinished research from ${name}: ${error.message}`);
+    }
+  });
+}
 function readCheckpoint(path, runId) {
   const checkpoint = JSON.parse(readFileSync(path, "utf8"));
   if (checkpoint.runId !== runId || !Array.isArray(checkpoint.entries)) throw new Error("Research checkpoint must belong to the exact scan draft.");
@@ -251,6 +304,7 @@ function importBrowserResearch() {
   context.browserResearchImport = { accepted: imported.accepted?.length ?? 0, rejected: imported.rejected?.length ?? 0 };
 }
 function prepareResearchPlan() {
+  run(["scripts/enrichRetailReleaseIdentity.mjs", context.draftPath]);
   const command = ["scripts/prepareArbitrageResearchPlan.mjs", context.draftPath, "--max=" + WORKFLOW_RESEARCH_LIMIT, "--checkpoint=" + context.checkpointPath];
   if (context.browserResearchPath) command.push("--captures=" + context.browserResearchPath);
   const result = JSON.parse(run(command, true).stdout);

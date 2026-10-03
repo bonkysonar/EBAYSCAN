@@ -36,4 +36,5 @@ export function researchVariants(find: Record<string, unknown>): string[];
 export function researchCheckpointComplete(
   planEntry: ResearchPlanEntry,
   entry: any,
+  now?: Date,
 ): boolean;

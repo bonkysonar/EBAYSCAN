@@ -1,6 +1,7 @@
 import type { ArbitrageImportPayload } from "../lib/arbitrage/types";
 import { retailEligibility } from "../../scripts/lib/retailIdentity.mjs";
 import { reviewedRetailOfferIsCurrent } from "../../scripts/lib/reviewedRetailOffers.mjs";
+import { publishedResearchProgress } from "../lib/arbitrage/researchCoverage.mjs";
 
 const error = (message: string) =>
   Object.assign(new Error(message), { statusCode: 422 });
@@ -143,6 +144,11 @@ export function mergeVerifiedSourceUpdates(
   return {
     ...incoming,
     finds: [...newProducts, ...retained],
+    researchProgress: publishedResearchProgress([...newProducts, ...retained], now),
+    latestUpdateResearchProgress: incoming.researchProgress,
+    latestUpdateResearchQueue: incoming.researchQueue,
+    // The update's query queue cannot describe products retained from other sources.
+    researchQueue: undefined,
     saleObservations: observations,
     saleEvents: observations,
     sourceReports: mergedReports,

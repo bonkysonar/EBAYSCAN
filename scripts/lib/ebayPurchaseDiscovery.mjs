@@ -37,7 +37,13 @@ export function assessEbayPurchaseDetail(detail) {
   const descriptionText = normalizeWords(
     `${cleanText(detail.shortDescription) ?? ""} ${cleanText(detail.description) ?? ""}`,
   );
-  const accessoryText = `${detailTitleText} ${allAspectValueText} ${descriptionText}`.trim();
+  // Packaging and grading boilerplate describe how a record is shipped or
+  // presented; they do not turn an otherwise identified record into an accessory.
+  const incidentalPackagingRemoved = value => value
+    .replace(/\b(?:hype|price|fragile|barcode|promo(?:tional)?)\s+stickers?\b/g, '')
+    .replace(/\bsticker\s+(?:residue|remnants?)\b/g, '')
+    .replace(/\b(?:package|packaged|packaging|ship|shipped|shipping)\b.{0,70}?\brecord\s+mailer\b/g, '');
+  const accessoryText = `${detailTitleText} ${incidentalPackagingRemoved(allAspectValueText)} ${incidentalPackagingRemoved(descriptionText)}`.trim();
   const accessorySignal = /\b(?:decal|sticker|non\s+adhesive\s+label|paper\s+label|label\s+decal|replacement\s+(?:sleeve|jacket|cover)|sleeve\s+only|jacket\s+only|cover\s+only|record\s+mailer|record\s+protector|record\s+cleaning|cleaning\s+(?:brush|cloth|fluid|kit)|record\s+(?:weight|stabilizer|clamp|divider|storage|display|frame|bowl)|turntable\s+(?:platter\s+)?mat|platter\s+mat|mat\s+for\s+(?:a\s+)?turntables?|record\s+mat|lp\s+mat|slipmat|replica\s+record|miniature\s+record|wall\s+(?:art|clock|decor)|decorative\s+wall|vinyl\s+(?:record\s+)?clock|record\s+coasters?|(?:tote|canvas|shoulder|shopping)\s+bags?|earrings?|keychains?|jewel(?:ry|lery)|phone\s+case)\b/;
   const accessoryProductType = identityAspects.some((aspect) => {
     if (!/^(?:type|product type|item type)$/i.test(aspect.name)) return false;
@@ -66,7 +72,7 @@ export function assessEbayPurchaseDetail(detail) {
   const itemKeywordValues = aspects
     .filter((aspect) => /^item type keyword$/i.test(aspect.name))
     .map((aspect) => normalizeWords(aspect.value));
-  const recordProductType = /^(?:album|box set|ep|lp|maxi single|record|single|vinyl record|vinyl records)$/;
+  const recordProductType = /^(?:album|box set|ep|(?:(?:double|triple|[2-9])\s+)?lp|maxi single|record|single|vinyl record|vinyl records|(?:7|10|12)(?:\s+inch)?)$/;
   const recordFormat = /\b(?:vinyl|record|lp|33 rpm|45 rpm|12 inch|10 inch|7 inch)\b/;
   const nonRecordMediaFormat = /\b(?:8 track|audio cd|blu ray|cassette|cd|compact disc|digital|download|dvd|mp3)\b/;
   const hasRecordProductType = typeValues.some((value) => recordProductType.test(value));
@@ -817,7 +823,7 @@ function assessRecordTitle(title) {
   return hasRecordSignal ? { accepted: true, reason: null } : { accepted: false, reason: "record_signal_missing" };
 }
 
-async function verifyEbayPurchaseCandidateDetails(candidates, context) {
+export async function verifyEbayPurchaseCandidateDetails(candidates, context) {
   const maxDetailRequests = Math.min(context.maxDetailRequests, candidates.length);
   const selection = selectDetailCandidates(candidates, maxDetailRequests);
   const candidateUpdates = new Map();
@@ -895,6 +901,7 @@ async function verifyEbayPurchaseCandidateDetails(candidates, context) {
       verifiedCount += 1;
       candidateUpdates.set(index, {
         ...candidate,
+        ...ebayDetailReleaseIdentity(payloadResult.value, candidate.sourceListingTitle),
         productIdentityEvidence: assessment.evidence,
         productIdentityVerification: "detail_aspects",
       });
@@ -938,6 +945,25 @@ async function verifyEbayPurchaseCandidateDetails(candidates, context) {
       verifiedCount,
     },
   };
+}
+
+/** Item aspects identify the release; listing punctuation only identifies a lead. */
+export function ebayDetailReleaseIdentity(detail = {}, listingTitle = detail.title) {
+  const values = expression => [...new Set((detail.localizedAspects ?? [])
+    .filter(aspect => expression.test(aspect.name ?? ""))
+    .flatMap(aspect => Array.isArray(aspect.value) ? aspect.value : [aspect.value])
+    .map(cleanText).filter(value => value && !/^(?:n\/?a|unknown|not (?:specified|available)|does not apply|see (?:heading|(?:item )?(?:description|title)))$/i.test(value)))];
+  const artists = values(/^artist$/i), titles = values(/^(?:album name|record title|release title)$/i);
+  if (artists.length !== 1 || titles.length !== 1) return {};
+  // Sellers sometimes copy another release's item specifics. Neither surface
+  // can silently override a contradiction with the advertised listing.
+  if (listingTitle) {
+    const tokens = text => normalizeWords(text).split(/\s+/).filter(word => word && !/^(?:the|a|an|and|of|by|various|artists?)$/.test(word));
+    const advertised = new Set(tokens(listingTitle));
+    if ([...tokens(artists[0]), ...tokens(titles[0])].some(word => !advertised.has(word)))
+      return { artist: "Unknown Artist", title: listingTitle, identitySource: "ebay_detail_conflict", identityStatus: "unresolved", physicalFormatConfirmed: true };
+  }
+  return { artist: artists[0], title: titles[0], identitySource: "ebay_detail_aspects", identityStatus: "resolved", physicalFormatConfirmed: true };
 }
 
 function selectDetailCandidates(candidates, maxDetailRequests) {

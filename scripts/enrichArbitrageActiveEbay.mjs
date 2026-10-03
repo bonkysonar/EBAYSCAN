@@ -15,9 +15,10 @@ const FINDS_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
 const EBAY_VINYL_CATEGORY_ID = "176985";
 const EBAY_MARKETPLACE_ID = "EBAY_US";
 const SEARCH_PAGE_LIMIT = 100;
-const DEFAULT_MAX_SEARCH_PAGES = 2;
+const DEFAULT_MAX_SEARCH_PAGES = 100;
 const DEFAULT_CONCURRENCY = 1;
-const DEFAULT_MAX_QUERIES = 100;
+const DEFAULT_MAX_QUERIES = Number.POSITIVE_INFINITY;
+const ACTIVE_REFRESH_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 export const ACTIVE_MATCHING_VERSION = 7;
 
@@ -48,7 +49,8 @@ async function main() {
   if (!tokenResult.available) throw new Error(tokenResult.reason);
   token = tokenResult.token;
   const payload = JSON.parse(readFileSync(latestPath, "utf8"));
-  const queue = buildQueue(payload.finds).slice(0, maxQueries);
+  const researchFinds = payload.researchCandidates ?? payload.finds;
+  const queue = buildQueue(researchFinds).slice(0, maxQueries);
   const startedAt = new Date().toISOString();
   let completed = 0;
   let withLowest = 0;
@@ -58,7 +60,7 @@ async function main() {
   console.log(
     JSON.stringify({
       file: latestPath,
-      rows: payload.finds.length,
+      rows: researchFinds.length,
       uniqueQueries: queue.length,
       concurrency,
       maxSearchPages,
@@ -70,7 +72,8 @@ async function main() {
   await runPool(queue, concurrency, async (entry) => {
     const result = await enrichActiveEntry(entry);
     if (haltedByRateLimit && result.status !== "failed") return;
-    applyResult(payload.finds, entry.key, result);
+    applyResult(researchFinds, entry.key, result);
+    if (researchFinds !== payload.finds) applyResult(payload.finds, entry.key, result);
     completed += 1;
     if (result.status === "available") withLowest += 1;
     if (result.status === "no_results") withoutResults += 1;
@@ -138,7 +141,7 @@ function readLocalEnv() {
   };
 }
 
-export function buildQueue(finds) {
+export function buildQueue(finds, now = Date.now()) {
   const byKey = new Map();
   for (const find of finds) {
     const profile = buildActiveSearchProfile(find);
@@ -156,6 +159,9 @@ export function buildQueue(finds) {
     const entry = byKey.get(key);
     if (
       includeCompleted ||
+      !Number.isFinite(Date.parse(find.ebayActiveSearchUpdatedAt)) ||
+      Number(now) - Date.parse(find.ebayActiveSearchUpdatedAt) > ACTIVE_REFRESH_MS ||
+      Date.parse(find.ebayActiveSearchUpdatedAt) - Number(now) > 300000 ||
       find.ebayActiveMatchingVersion !== ACTIVE_MATCHING_VERSION ||
       find.ebayActiveProfileKey !== profile.key ||
       !["available", "no_results"].includes(find.ebayActiveSearchStatus) ||

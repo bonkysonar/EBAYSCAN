@@ -1,9 +1,17 @@
 const CATALOG_PATH =
-  /\/(?:browse|c|categories?|collections?|music|records?|shop|store)(?:\/|$)/i;
+  /\/(?:browse|c|categories?|collections?|music|records?|shop|store|vinyl(?:-cd)?)(?:\/|$)/i;
 const NON_CATALOG_PATH =
   /\/(?:account|artists?|blog|cart|checkout|events?|login|pages\/contact|policies|products?|search)\b/i;
 const NON_TARGET_CATALOG =
   /\b(?:damaged|pre\s*owned|second\s*hand|used)\b/i;
+
+/** A soft 404 is an unavailable page, even when the HTTP response is 200. */
+export function isMissingRetailPage(html) {
+  const headings = [...String(html ?? "").matchAll(/<(?:h1|title)\b[^>]*>([\s\S]*?)<\/(?:h1|title)>/gi)]
+    .map(match => cleanText(stripTags(match[1])));
+  return headings.some(text => /^(?:404(?:\s*[-:|]\s*)?)?(?:page\s+not\s+found|page\s+does\s+not\s+exist|404\s+not\s+found)(?:\s*[-|].*)?$/i.test(text)) &&
+    /\b(?:page|url|address|link)\b[\s\S]{0,100}\b(?:does\s+not\s+exist|not\s+found|out[ -]of[ -]date|mistyped)\b/i.test(cleanText(stripTags(html)));
+}
 
 export function discoverRetailCatalogLinks(html, pageUrl, maxLinks = 2) {
   if (!html || !pageUrl || maxLinks <= 0) return [];

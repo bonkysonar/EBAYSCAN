@@ -37,17 +37,18 @@ export function buildEbayProductResearchUrl(query, options = {}) {
   url.searchParams.set("marketplace", "EBAY-US");
   url.searchParams.set("keywords", truncateQuery(cleanResearchText(query)));
   const dayRange = positiveInteger(options.dayRange, 1095);
-  const endDate = Math.floor(Date.now() / 86400000) * 86400000;
+  const timeZone = options.timeZone || "America/Los_Angeles";
+  const dates = researchCalendarWindow(dayRange, timeZone);
   url.searchParams.set("dayRange", String(dayRange));
-  url.searchParams.set("startDate", String(endDate - dayRange * 86400000));
-  url.searchParams.set("endDate", String(endDate));
+  url.searchParams.set("startDate", String(dates.start));
+  url.searchParams.set("endDate", String(dates.end));
   url.searchParams.set("categoryId", EBAY_RESEARCH_VINYL_CATEGORY_ID);
   url.searchParams.set("conditionId", EBAY_RESEARCH_NEW_CONDITION_ID);
   url.searchParams.set("offset", "0");
   url.searchParams.set("limit", "50");
   url.searchParams.set("sorting", "-itemssold");
   url.searchParams.set("tabName", "SOLD");
-  url.searchParams.set("tz", options.timeZone || "America/Los_Angeles");
+  url.searchParams.set("tz", timeZone);
   return url.toString();
 }
 
@@ -94,6 +95,21 @@ export function normalizeResearchArtist(rawArtist = "") {
 /** Remove merchandising suffixes while preserving words that can be album names. */
 export function normalizeResearchTitle(rawTitle = "") {
   let title = decodeEntities(String(rawTitle))
+    .replace(/\s+all[ -]analog\s*$/i, " ")
+    .replace(/\s+(?:brand\s+new|new\s+sealed|factory\s+sealed|sealed)(?:\s+U\.?S\.?)?\s*(?:\d+["”]?\s*)?(?:vinyl|lps?|records?)?\s*$/i, " ")
+    .replace(/\s+\d+[ -]*LP[ -]*Set\s*$/i, " ")
+    .replace(/\s+(?:rsd|record\s+store\s+day)(?:\s+black\s+friday)?(?:\s+(?:19|20)\d{2})?\s*$/i, " ")
+    .replace(/\s+(?:180|200)\s*(?:g|grams?)\b[^)]*$/i, " ")
+    .replace(/\s+signed\s*(?:\(\s*US\s+only\s*\))?\s+(?:vinyl\s+)?LP\b/i, " LP")
+    .replace(/[•*]+/g, " ")
+    .replace(/\s+new\s+sealed\s+(?:vinyl\s+)?lp\b.*$/i, " ")
+    .replace(/\[(?:vinyl|lp)\]\s*new\s*$/i, " ")
+    .replace(/\s+(?:brand\s+)?new\s+(?:sealed\s+)?(?:vinyl\s+)?lps?(?:\s+with\s+\d+[ -]page\s+booklet)?\s*$/i, " ")
+    .replace(/\s+chess\s+\d+\s+series\s*$/i, " ")
+    // eBay merchant titles put pressing shorthand after an explicit format.
+    // Remove only a fully recognized suffix; preserve album title words.
+    .replace(/\[\s*(?:brand\s+)?new\s+[^\]]*vinyl[^\]]*\]\s*([^\[\]]*)$/i, (whole, tail) =>
+      isEditionDescription(tail.replace(/\b(?:ltd|ed|rmst|rpm)\b/gi, " ").replace(/,/g, " ")) ? " " : whole)
     .replace(/^\s*(?:soundtrack|ost)\s+[-–—]\s+/i, "")
     .replace(/\s*\((?:with\s+)?(?:autograph(?:ed)?|signed)(?:\s+(?:postcard|card|jacket|insert))?\)\s*$/i, " ")
     .replace(/\s+(?:with\s+(?:autographed|signed)\s+(?:postcard|card|jacket|insert)|[-–—]\s*(?:autographed|signed))\s*$/i, " ")
@@ -118,7 +134,7 @@ export function normalizeResearchTitle(rawTitle = "") {
     .replace(/[[(]([^\])]+)[\])]/g, (whole, inside) =>
       /\b(?:vinyl|lps?|remaster(?:ed)?|reissue|edition|version|grams?|swirl|splatter|exclusive|variant|walmart|target)\b/i.test(
         inside,
-      ) || /^(?:verve\s+vault|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series$/i.test(inside.trim()) ||
+      ) || /^(?:\d+(?:st|nd|rd|th)?(?:[ -]year)?\s+anniversary|alt(?:ernate)?\s+cover|US\s+only)$/i.test(inside.trim()) || /^(?:verve\s+vault|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series$/i.test(inside.trim()) ||
       /^(?:black|white|red|blue|green|yellow|orange|pink|purple|clear|silver|gold|tangerine|apple\s+red|ghostly\s+blue)$/i.test(inside.trim())
         ? " "
         : ` ${inside} `,
@@ -133,6 +149,11 @@ export function normalizeResearchTitle(rawTitle = "") {
     .replace(/\bmotion\s+picture\s+soundtrack\b/gi, " ")
     .replace(/\b(?:soundtrack|ost)\s*$/gi, " ");
 
+  const quotedAlbum = title.match(/^\s*(['"])(.+)\1\s+(.+)$/);
+  if (quotedAlbum && isEditionDescription(quotedAlbum[3].replace(/\bsplit\b/gi, " "))) {
+    title = quotedAlbum[2];
+  }
+
   // Retailers separate the album from format/color/edition with a dash, colon
   // or pipe. Only discard a suffix made entirely of merchandising descriptors.
   const chunks = title.split(/\s+[-–—|]\s+|:\s+/);
@@ -142,7 +163,7 @@ export function normalizeResearchTitle(rawTitle = "") {
     (chunks.length > 2 ||
       isExplicitEditionTail(chunks.at(-1)) ||
       /^(?:apple\s+red|ghostly\s+blue|black|white|red|blue|green|tan|tangerine|amber|ruby|coral|pink|purple|yellow|clear)\b.*\b(?:vinyl|lp|inch)\b/i.test(chunks.at(-1)) ||
-      /^(?:r\s*&\s*b|rock|pop|country|jazz|rap|hip[-\s]?hop)\s*-*$/i.test(
+      /^(?:r\s*&\s*b|rock|pop|country|jazz|rap|hip[-\s]?hop)(?:\s*\/\s*(?:r\s*&\s*b|rock|pop|country|jazz|rap|hip[-\s]?hop))*\s*-*$/i.test(
         chunks.at(-1),
       ) ||
       /^(?:clear|black|white|red|blue|green|tan|pink|purple|yellow)\s+(?:7|10|12)\s*(?:[ -]?inch|["”])/i.test(
@@ -163,6 +184,7 @@ export function normalizeResearchTitle(rawTitle = "") {
       !/^(?:and|or|in|of|to|it|the|on)$/i.test(tokens[index - 1]);
     if (
       (isExplicitEditionTail(tail) || repeatedColor || whiteFormatTail ||
+        (index > 0 && /^(?:black|white|red|blue|green|tan|pink|purple|yellow|gold)\s+(?:7|10|12)\s*["”]$/.test(tail.toLowerCase())) ||
         (index > 0 &&
           /^(?:apple\s+red|ghostly\s+blue|baby|royal|cloudy|milky|neon|hot|light|dark|half)\b.*\b(?:vinyl|lp|inch)\b/i.test(
             tail,
@@ -178,6 +200,8 @@ export function normalizeResearchTitle(rawTitle = "") {
   }
   return cleanResearchText(
     title
+      .replace(/\s+all[ -]analog\s*$/i, " ")
+      .replace(/\s+\d+-\s*set\s*$/i, " ")
       .replace(/\s+(?:verve\s+vault|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series\s*$/i, " ")
       .replace(
         /\s+(?:[-–—|:]\s*)?(?:rsd|record\s+store\s+day)(?:\s+black\s+friday)?(?:\s+(?:19|20)\d{2})?\s*$/i,
@@ -240,6 +264,7 @@ function cleanResearchText(value) {
 function normalizeKey(value) {
   return cleanResearchText(value)
     .toLowerCase()
+    .replace(/&/g, " and ")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 }
@@ -255,6 +280,25 @@ function truncateQuery(query) {
 function positiveInteger(value, fallback) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function researchCalendarWindow(days, timeZone) {
+  const format = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  const parts = value => Object.fromEntries(format.formatToParts(new Date(value)).map(part => [part.type, part.value]));
+  const today = parts(Date.now());
+  const endDay = Date.UTC(Number(today.year), Number(today.month) - 1, Number(today.day));
+  const midnight = calendarDay => {
+    let instant = calendarDay;
+    // Resolve each local midnight independently so a DST transition cannot
+    // shift the dates displayed by Seller Hub.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const p = parts(instant);
+      const local = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second));
+      instant += calendarDay - local;
+    }
+    return instant;
+  };
+  return { start: midnight(endDay - days * 86400000), end: midnight(endDay) };
 }
 
 function decodeEntities(value) {

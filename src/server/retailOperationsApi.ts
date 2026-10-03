@@ -179,7 +179,7 @@ function bounded(value: unknown) {
 function boundedResearchProgress(value: unknown) {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
-  const planned = Math.min(240, bounded(input.planned));
+  const planned = bounded(input.planned);
   const completed = Math.min(planned, bounded(input.completed));
   const validated = Math.min(completed, bounded(input.validated));
   const noRows = Math.min(completed - validated, bounded(input.noRows));
@@ -187,12 +187,12 @@ function boundedResearchProgress(value: unknown) {
   const pending = Math.max(bounded(input.pending), planned - validated - noRows - failed);
   const outsidePlan = bounded(input.outsidePlan);
   const complete = planned > 0 && completed === planned && validated + noRows === planned && failed === 0 && pending === 0 && outsidePlan === 0;
-  return { planned, completed, validated, noRows, failed, pending: Math.min(planned, pending), researchedRows: bounded(input.researchedRows), limit: 240, outsidePlan, complete, status: planned === 0 ? "not_needed" : complete ? "complete" : "incomplete" };
+  return { planned, completed, validated, noRows, failed, pending: Math.min(planned, pending), researchedRows: bounded(input.researchedRows), limit: planned, outsidePlan, complete, status: planned === 0 ? "not_needed" : complete ? "complete" : "incomplete" };
 }
 function boundedResearchQueue(value: unknown) {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
-  return Object.fromEntries(["offers", "distinctQueries", "tasks", "reused", "repair", "refresh", "pending", "retryLater", "scheduled", "deferred", "editionReviews"].map(key => [key, bounded(input[key])]));
+  return Object.fromEntries(["offers", "distinctQueries", "tasks", "reused", "repair", "refresh", "pending", "retryLater", "scheduled", "deferred", "editionReviews", "completeWithRedactedRows"].map(key => [key, bounded(input[key])]));
 }
 async function read(
   cwd: string,

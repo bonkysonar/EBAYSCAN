@@ -4,6 +4,8 @@ Local-first record triage MVP for deciding whether vinyl records are probably be
 
 Retail sold research resumes across scans: the planner reuses fresh captures, groups duplicate album searches across retailer offers, and gives failed or incomplete captures specific repair tasks. See [SOLD_HISTORY.md](SOLD_HISTORY.md) for the evidence contract. Run `node scripts/prepareArbitrageResearchPlan.mjs <exact-draft>` after each research batch; the saved plan also contains edition-review tasks, justified annual searches, and acquisition-price targets. The normal daily workflow imports saved captures automatically.
 
+The daily runner retains every eligible research candidate, resumes unfinished work before starting over, and blocks publication while required searches remain incomplete. The 240-task batch and 80-product display sizes are not total research limits. See [RESEARCH_RELIABILITY.md](RESEARCH_RELIABILITY.md) for recovery behavior, exact-format retailer adapters, verification and coverage definitions.
+
 ## Local Setup
 
 ```powershell

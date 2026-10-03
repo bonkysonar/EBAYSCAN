@@ -11,6 +11,9 @@ const at = "2026-09-05T00:00:00.000Z";
 const find = { id: "record", artist: "Mother Love Bone", title: "Shine", purchasePrice: 10, sourceId: "shop", sourceName: "Shop", sourceUrl: "https://shop.example/products/shine", capturedAt: at };
 const draft = { runId: "scan-test", researchCandidates: [find], createdAt: at, finds: [find] };
 const query = buildProductResearchPlan([find])[0].variants[0].query;
+const verifiedCapture = { query, status: "complete", capturedAt: at, condition: "New", category: "Vinyl Records", complete: true, completePagination: true, periodDays: 90,
+  observedWindow: { startDate: "2026-06-07", endDate: "2026-09-05" },
+  url: `https://www.ebay.com/sh/research?keywords=${encodeURIComponent(query)}&conditionId=1000&categoryId=176985&tabName=SOLD&dayRange=90`, rows: [] };
 
 describe("retail workflow state", () => {
   it("starts browser recovery as a bounded refresh from exact prior evidence", () => {
@@ -44,6 +47,7 @@ describe("retail workflow state", () => {
       const exportDir = join(workspace, "exports", "arbitrage-finds");
       mkdirSync(exportDir, { recursive: true });
       mkdirSync(join(workspace, "scripts"));
+      writeFileSync(join(workspace, "scripts", "enrichRetailReleaseIdentity.mjs"), 'console.log(JSON.stringify({checked:0,pending:0}));');
       const oldPath = join(exportDir, "prior-final.json");
       const previous = JSON.stringify({ ...draft, phase: "final", sourceReports: [{ id: "prior" }] });
       writeFileSync(oldPath, previous);
@@ -94,21 +98,22 @@ describe("retail workflow state", () => {
   });
 
   it("counts successful empty searches separately from failed searches", () => {
-    const checkpoint = (status: string) => ({ runId: draft.runId, entries: [{ findId: find.id, runs: [{ query, status, rows: [] }] }] });
+    const checkpoint = (status: string) => ({ runId: draft.runId, entries: [{ findId: find.id, runs: [{ ...verifiedCapture, status }] }] });
     expect(researchProgress(draft, checkpoint("complete"), new Date(at))).toMatchObject({ completed: 1, validated: 0, noRows: 1, pending: 0, complete: true });
     expect(researchProgress(draft, checkpoint("blocked"), new Date(at))).toMatchObject({ completed: 0, noRows: 0, failed: 1, complete: false });
   });
 
   it("counts validated matched evidence while retaining incomplete work in the full plan", () => {
     const second = { ...find, id: "other", title: "Other Release" };
-    const checkpoint = { runId: draft.runId, entries: [{ findId: find.id, runs: [{ query, status: "complete", rows: [{ title: "Mother Love Bone - Shine Vinyl LP New Sealed", totalSold: 2, avgSoldPrice: 30, avgShipping: 5, dateLastSold: "2026-08-30" }] }] }] };
+    const checkpoint = { runId: draft.runId, entries: [{ findId: find.id, runs: [{ ...verifiedCapture, rows: [{ title: "Mother Love Bone - Shine Vinyl LP New Sealed", itemUrl: "https://www.ebay.com/itm/123456789012", totalSold: 2, avgSoldPrice: 30, avgShipping: 5, dateLastSold: "2026-08-30" }] }] }] };
     expect(researchProgress({ ...draft, researchCandidates: [find, second] }, checkpoint, new Date(at))).toMatchObject({ planned: 2, completed: 1, validated: 1, researchedRows: 1, pending: 1, complete: false });
   });
 
-  it("keeps the workflow bounded at 240 and refuses a wrong-run checkpoint", () => {
+  it("requires every carried offer across work batches and refuses a wrong-run checkpoint", () => {
     const rows = Array.from({ length: 300 }, (_, i) => ({ ...find, id: `row-${i}` }));
-    const entries = rows.slice(0, 240).map((row) => ({ findId: row.id, runs: [{ query, status: "complete", rows: [] }] }));
-    expect(researchProgress({ ...draft, researchCandidates: rows }, { runId: draft.runId, entries }, new Date(at))).toMatchObject({ planned: 240, completed: 240, outsidePlan: 60, limit: 240, complete: false });
+    const entries = rows.slice(0, 240).map((row) => ({ findId: row.id, runs: [{ ...verifiedCapture }] }));
+    expect(researchProgress({ ...draft, researchCandidates: rows }, { runId: draft.runId, entries }, new Date(at))).toMatchObject({ planned: 300, completed: 240, pending: 60, outsidePlan: 0, limit: 300, complete: false });
+    expect(researchProgress({ ...draft, researchCandidates: rows }, { runId: draft.runId, entries: rows.map(row => ({ findId: row.id, runs: [{ ...verifiedCapture }] })) }, new Date(at))).toMatchObject({ completed: 300, pending: 0, complete: true });
     expect(() => researchProgress(draft, { runId: "scan-other", entries: [] })).toThrow("another scan");
   });
 

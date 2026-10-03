@@ -66,6 +66,7 @@ describe("active eBay enrichment", () => {
     const completed: ArbitrageFind = {
       ...find, ebayActiveSearchStatus: "available", ebayActiveSearchComplete: true,
       ebayActiveMatchingVersion: ACTIVE_MATCHING_VERSION, ebayActiveProfileKey: profile.key,
+      ebayActiveSearchUpdatedAt: new Date().toISOString(),
     };
     expect(buildQueue([completed])).toHaveLength(0);
     expect(buildQueue([{ ...completed, ebayActiveMatchingVersion: undefined }])).toHaveLength(1);
@@ -74,6 +75,8 @@ describe("active eBay enrichment", () => {
     expect(buildQueue([{ ...completed, ebayActiveMatchingVersion: 4 }])).toHaveLength(1);
     expect(buildQueue([{ ...completed, sourceListingTitle: "Artist - Great Escape (Tangerine LP)" }])).toHaveLength(1);
     expect(buildQueue([{ ...completed, ebayActiveSearchStatus: "failed" }])).toHaveLength(1);
+    expect(buildQueue([{ ...completed, ebayActiveSearchUpdatedAt: undefined }])).toHaveLength(1);
+    expect(buildQueue([{ ...completed, ebayActiveSearchUpdatedAt: new Date(Date.now() - 25 * 3600000).toISOString() }])).toHaveLength(1);
   });
 
   it("excludes the source eBay purchase listing from its own active comparisons", async () => {
