@@ -93,6 +93,14 @@ describe("generic retail listing parsing", () => {
     ).toBe("Commodores");
   });
 
+  it("resolves single-quoted label album headings without splitting name apostrophes", () => {
+    expect(inferRetailArtist("Roll Call 'Perpetuate' EP")).toBe('Roll Call');
+    expect(inferRetailTitle("Roll Call 'Perpetuate' EP")).toBe('Perpetuate');
+    expect(inferRetailArtist("The Go-Go's 'Can't Stop' LP")).toBe("The Go-Go's");
+    expect(inferRetailTitle("The Go-Go's 'Can't Stop' LP")).toBe("Can't Stop");
+    expect(inferRetailArtist("Can't Stop Thinking About You Vinyl")).toBe('Unknown Artist');
+  });
+
   it("removes preorder badges before splitting the artist and title", () => {
     const listing =
       "[PRE-ORDER] Herbie Hancock - Maiden Voyage [Release Date: 07/17/2026]";

@@ -3,9 +3,10 @@ import {
   normalizeResearchTitle,
 } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 import { priceCampaignBasket } from "./campaignOffers.mjs";
-import { retailEligibility, shopifyIdentity } from "./retailIdentity.mjs";
+import { retailEligibility } from "./retailIdentity.mjs";
 import { readBuyButtonVinylProduct } from "./shopifyBuyButtonCatalog.mjs";
 import { formatRetailAdapter } from "./formatRetailAdapters.mjs";
+import { reconciledShopifyIdentity } from "./retailBarcodeIdentity.mjs";
 
 const identityKey = (value) => String(value ?? "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]/g, "");
 const recordIdentityChanged = (before, after) => before.identityStatus === "resolved" && (
@@ -39,7 +40,7 @@ export async function verifyRetailOffer(
       return failed("failed", "variant_identity_changed");
     if (variant.available !== true || variant.requires_shipping === false)
       return failed("unavailable", "physical_variant_unavailable");
-    const identity = shopifyIdentity(product, variant, find);
+    const identity = reconciledShopifyIdentity(find, product, variant);
     if (recordIdentityChanged(find, identity))
       return failed("failed", "record_identity_changed");
     const eligibility = retailEligibility({

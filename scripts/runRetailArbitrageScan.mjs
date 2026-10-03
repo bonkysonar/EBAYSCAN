@@ -93,6 +93,7 @@ import { discoverMagentoGroupedProducts, parseMagentoGroupedVinyl } from "./lib/
 import { discoverBarsukProductUrls, readBuyButtonVinylProduct } from "./lib/shopifyBuyButtonCatalog.mjs";
 import { discoverThrillJockeyProducts, parseThrillJockeyVinyl } from "./lib/thrillJockeyCatalog.mjs";
 import { discoverTopshelfProducts, parseTopshelfVinyl } from "./lib/topshelfCatalog.mjs";
+import { discoverHonestJonsProducts, parseHonestJonsVinyl, discoverResidentProducts, parseResidentVinyl, discoverZavviProducts, parseZavviVinyl, discoverPlasticHeadProducts, parsePlasticHeadVinyl } from "./lib/ukFormatCatalog.mjs";
 import { discoverDominoProducts, parseDominoVinyl } from "./lib/dominoCatalog.mjs";
 import { formatRetailAdapter } from "./lib/formatRetailAdapters.mjs";
 import {
@@ -1173,6 +1174,10 @@ async function scanGenericRetailerSource(source) {
   if (source.id === "barsuk-records") return scanBuyButtonSource(source, pageScan);
   if (source.id === "thrill-jockey") return scanFormatSpecificSource(source, pageScan, discoverThrillJockeyProducts, parseThrillJockeyVinyl);
   if (source.id === "topshelf-records") return scanFormatSpecificSource(source, pageScan, discoverTopshelfProducts, parseTopshelfVinyl);
+  if (source.id === "honest-jons") return scanFormatSpecificSource(source, pageScan, discoverHonestJonsProducts, parseHonestJonsVinyl);
+  if (source.id === "resident-music") return scanFormatSpecificSource(source, pageScan, discoverResidentProducts, parseResidentVinyl);
+  if (source.id === "zavvi") return scanFormatSpecificSource(source, pageScan, discoverZavviProducts, parseZavviVinyl);
+  if (source.id === "plastic-head-megastore") return scanFormatSpecificSource(source, pageScan, discoverPlasticHeadProducts, parsePlasticHeadVinyl);
   if (["domino-us", "domino-mart"].includes(source.id)) return scanFormatSpecificSource(source, pageScan, discoverDominoProducts, parseDominoVinyl);
   const configuredPage = pageScan.pages.find(
     (page) =>

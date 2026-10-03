@@ -60,6 +60,11 @@ function splitRetailArtistTitle(value) {
   const quoted = source.match(/^(.{2,100}?)\s+["“]([^"”]{2,})["”](?:\s|$)/);
   if (quoted) return { artist: quoted[1], title: quoted[2] };
 
+  // Label storefronts also use Artist 'Album' EP/LP. Require the closing
+  // quote to precede the format so apostrophes in names stay intact.
+  const singleQuoted = source.match(/^(.{2,100}?)\s+['‘](.{2,}?)['’]\s+(?:EP|LP|Vinyl|(?:7|10|12)["”])(?:\s|$)/i);
+  if (singleQuoted) return { artist: singleQuoted[1], title: singleQuoted[2] };
+
   const selfTitled = source.match(/^(.{2,100}?)\s+(?:s\s*\/\s*t|self[- ]titled)(?=\s|$|\()/i);
   if (selfTitled) return { artist: selfTitled[1], title: selfTitled[1] };
 
