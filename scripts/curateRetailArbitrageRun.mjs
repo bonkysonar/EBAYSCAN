@@ -5,6 +5,7 @@ import { browserVerifiedRetailOffer } from "./lib/browserRetailVerification.mjs"
 import { refreshReviewedRetailOffer } from "./lib/reviewedRetailOffers.mjs";
 import { mergeResearchSoldEvidence } from "./lib/soldResearchWindow.mjs";
 import { verifyRetailOffers } from "./lib/retailOfferVerification.mjs";
+import { refreshEbayPurchaseOffers } from "./lib/ebayOfferVerification.mjs";
 import { retailerArtistConflict } from "./lib/retailIdentity.mjs";
 import { createPoliteFetcher } from "./lib/politeHttp.mjs";
 import { deferredResearch, rememberResearch } from "./lib/researchMemory.mjs";
@@ -95,6 +96,9 @@ if (Number(String(payload.runManifest?.scannerVersion ?? "").split("/").at(-1)) 
   });
   curatedProducts = curatedProducts.map((find) => browserVerifiedRetailOffer(find, browserCaptures, new Date(curatedAt)) ?? find);
   curatedProducts = curatedProducts.map(find => refreshReviewedRetailOffer(find, curatedAt));
+  const purchaseRefresh = await refreshEbayPurchaseOffers(curatedProducts);
+  curatedProducts = purchaseRefresh.finds;
+  payload.purchaseOfferRefresh = purchaseRefresh.progress;
   const prioritized = [...curatedProducts]
     .filter((f) => f.identityStatus !== "unresolved" && f.retailVerification?.captureMethod !== "visible_browser")
     .sort((a, b) => (b.candidateScore ?? 0) - (a.candidateScore ?? 0));

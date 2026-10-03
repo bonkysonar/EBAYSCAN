@@ -13,6 +13,7 @@ The daily runner must finish the retained research cohort before publishing a ne
 | Retailer feed routes moved or stopped returning JSON | Use the official Shopify Ajax product interface and observed catalog links, with legacy feed fallback. Correct verified storefront migrations. Stop a host after access failures. |
 | A mixed-format product's cheapest price was a CD or download | Read the exact enabled vinyl option and its own price/stock. Magento grouped rows, Shopify Buy Buttons, Thrill Jockey, Topshelf, Domino, Honest Jon's, Resident, Zavvi and Plastic Head have explicit format adapters. Recheck the same variant during curation. Resident backorders cannot use its broader available-for-sale flag as in-stock evidence. |
 | Retailer records lacked an explicit artist | Re-read the exact Shopify variant. A valid variant barcode may corroborate artist and album against eBay Browse record aspects, with agreement required against both advertised titles. Conflicts remain unresolved. This metadata check does not add a price, a sale, completed research, or a BUY. |
+| Long research sessions left eBay acquisition quotes at scan-time prices | Before final curation, re-read each exact eBay listing through Browse with the configured destination ZIP. Verify unchanged listing/release identity, New fixed-price vinyl, in-stock status, domestic origin and fixed shipping. Refresh acquisition price/time only on success; failed, removed, rate-limited or destination-unconfigured offers lose verified status. |
 | Valid records were classified as accessories | Recognize Double/Triple LP and record-size types. Ignore specific incidental sticker and protective-mailer phrases while retaining actual accessory exclusions. Version identity checks so classifier fixes revisit prior rejections. |
 | Status reported only the most recent partial update | Measure offers visible in the merged report separately from the current scan attempt. Legacy completion flags do not establish current completed research. |
 
@@ -31,6 +32,8 @@ Configured domains are deduplicated. Storefront migrations can reveal duplicate 
 2. Collect every scheduled query through the signed-in Seller Hub browser. Save all result pages, explicit empty results, actual date controls and filters. Keep checkpoints local.
 3. Run `node scripts/prepareArbitrageResearchPlan.mjs <exact-draft>` after each batch. Continue pending, repair, refresh and justified annual tasks until none remain.
 4. Finish through `node scripts/runRetailWorkflow.mjs --finish=<exact-context>`. The completion gate runs before active-price refresh, retail verification, curation and publication. An unfinished cohort stays unpublished and resumable.
+
+Set `EBAY_DELIVERY_POSTAL_CODE` to the actual purchase destination. The final eBay offer check needs it to request a destination-specific shipping quote; it cannot be inferred from a generic listing. This uses the documented [Browse contextual-location header](https://developer.ebay.com/api-docs/buy/static/api-browse.html).
 
 Source recovery probes are diagnostic runs. A manually combined set of successful probes must be labeled as a multi-scan recovery audit, never presented as one simultaneous broad scan. A healthy catalog with no candidate and a blocked catalog are distinct outcomes.
 
