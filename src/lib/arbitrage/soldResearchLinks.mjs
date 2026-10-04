@@ -114,6 +114,7 @@ export function normalizeResearchTitle(rawTitle = "") {
   if (/^(?:the\s+)?original\s+soundtrack(?:\s+(?:vinyl|lp))*$/i.test(original.trim()))
     return cleanResearchText(original.replace(/(?:\s+(?:vinyl|lp))+$/i, ""));
   let title = original
+    .replace(/\s+(?:33(?:\s*1\s*\/\s*3)?|45|78)\s*rpm\s+(?=(?:7|10|12)\s*["”]|vinyl\b|lps?\b)/gi, " ")
     .replace(/\s+[-–—]\s+(?:19|20)\d{2}\s+special\s+edition\s*$/i, " ")
     .replace(/\s+(?:only\s+(?:at\s+)?)best\s+buy\s*$/i, " ")
     .replace(/\s+(?:vinyl\s+)?(?:[1-9]\s*)?lp\s*[-–—]?\s*turntable\s+lab\s+exclusive\s*$/i, " LP")
