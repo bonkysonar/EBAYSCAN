@@ -11,7 +11,16 @@ export function buildSoldResearchQueryVariants(candidate = {}) {
   const artist = normalizeResearchArtist(candidate.artist ?? "");
   const title = preferredTitle(candidate);
   const query = buildBaseResearchQuery(artist, title);
-  return query ? [{ identitySignals: [], kind: "base", query }] : [];
+  if (!query) return [];
+  const variants = [{ identitySignals: [], kind: "base", query }];
+  // Sellers often name only the A-side of a single. Collect that search too;
+  // the original release and pressing still govern sale matching.
+  const sides = title.split(/\s+b\s*\/\s*w\s+/i);
+  if (artist && sides.length === 2 && sides.every(side => side.trim().length >= 2)) {
+    const aside = buildBaseResearchQuery(artist, sides[0]);
+    if (aside && aside !== query) variants.push({ identitySignals: [], kind: "base", query: aside });
+  }
+  return variants;
 }
 
 export function buildSoldResearchLinks(candidate = {}, options = {}) {
@@ -225,8 +234,14 @@ function isExplicitEditionTail(value) {
 }
 
 function preferredTitle(candidate) {
-  const title = String(candidate.title ?? "").trim();
+  let title = String(candidate.title ?? "").trim();
   const sourceTitle = String(candidate.sourceListingTitle ?? "").trim();
+  // A previous display-title cleanup may have removed "edition" but left its
+  // modifier. Require the original listing's explicit edition suffix.
+  const modifier = title.match(/\s+[-–—]\s+(FIRST|STANDARD)\s*$/i)?.[1];
+  if (modifier && new RegExp(`\\s+[-–—]\\s+${modifier}\\s+EDITION(?:\\s*\\(Vinyl\\))?\\s*$`, 'i').test(sourceTitle)) {
+    title = title.replace(/\s+[-–—]\s+(FIRST|STANDARD)\s*$/i, '');
+  }
   if (normalizeResearchTitle(title)) return title;
   return sourceTitle || title;
 }

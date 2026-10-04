@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 import {
   activeSearchKey,
   buildActiveSearchProfile,
@@ -141,7 +142,14 @@ function readLocalEnv() {
   };
 }
 
-export function buildQueue(finds, now = Date.now()) {
+export function activeDestinationKey(environment = env) {
+  return createHash('sha256').update(JSON.stringify([
+    environment.EBAY_ENV ?? 'production', environment.EBAY_MARKETPLACE_ID ?? EBAY_MARKETPLACE_ID,
+    'US', String(environment.EBAY_DELIVERY_POSTAL_CODE ?? '').trim(),
+  ])).digest('hex');
+}
+
+export function buildQueue(finds, now = Date.now(), environment = env) {
   const byKey = new Map();
   for (const find of finds) {
     const profile = buildActiveSearchProfile(find);
@@ -164,6 +172,7 @@ export function buildQueue(finds, now = Date.now()) {
       Date.parse(find.ebayActiveSearchUpdatedAt) - Number(now) > 300000 ||
       find.ebayActiveMatchingVersion !== ACTIVE_MATCHING_VERSION ||
       find.ebayActiveProfileKey !== profile.key ||
+      find.ebayActiveDestinationKey !== activeDestinationKey(environment) ||
       !["available", "no_results"].includes(find.ebayActiveSearchStatus) ||
       find.ebayActiveSearchComplete !== true
     ) {
@@ -456,6 +465,7 @@ function applyResult(finds, key, result) {
 
     find.ebayActiveSearchStatus = result.status;
     find.ebayActiveMatchingVersion = ACTIVE_MATCHING_VERSION;
+    find.ebayActiveDestinationKey = activeDestinationKey();
     find.ebayActiveProfileKey = profile.key;
     find.ebayActiveSearchUpdatedAt = now;
     find.ebayActiveSearchKeyword = result.keyword ?? result.searchedVariants?.[0] ?? profile.primary;

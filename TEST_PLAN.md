@@ -90,7 +90,7 @@ Run `npx vitest run src/tests/retailDiscoveryRefresh.test.ts src/tests/retailDis
    node scripts/prepareArbitrageResearchPlan.mjs exports\arbitrage-finds\<scan-file>.json --max=40
    ```
 
-   Verify every entry is keyed by stable find ID and carries one artist/album-only query, source identity, Seller Hub URL, and public Sold/Completed URL. Colors, formats, barcodes, and retailer copy must not appear in keyword fields. The workflow plans at most 240 retained candidates and reports any outside that bound; a standalone explicit cap is honored. Returned rows still require edition and condition matching.
+   Verify every entry is keyed by stable find ID and carries artist/album queries, source identity, Seller Hub URLs, and public Sold/Completed URLs. A single titled A b/w B also receives an A-side search. Colors, formats, barcodes, and retailer copy must not appear in keyword fields. The 240-task work batch retains all remaining candidates for subsequent batches; a standalone explicit cap is honored. Returned rows still require edition and condition matching.
 
 6. Curate the scan with a raw Product Research result:
 

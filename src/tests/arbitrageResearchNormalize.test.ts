@@ -82,6 +82,21 @@ describe("arbitrage research normalization", () => {
     ]);
   });
 
+  it("collects a single's A-side without discarding its full-title query", () => {
+    expect(buildSoldResearchQueryVariants({ artist: 'Benny Sings', title: 'Sailing b/w Passionfruit' }).map(v => v.query))
+      .toEqual(['Benny Sings Sailing b/w Passionfruit', 'Benny Sings Sailing']);
+    expect(buildSoldResearchQueryVariants({ artist: 'Artist', title: 'Black/White' })).toHaveLength(1);
+  });
+
+  it("removes orphaned edition modifiers only with explicit source evidence", () => {
+    for (const modifier of ['FIRST', 'STANDARD']) {
+      const candidate = { artist: 'Aoife O\'Donovan', title: `Bull Frogs Croon (and Other Songs) - ${modifier}`,
+        sourceListingTitle: `Aoife O'Donovan - Bull Frogs Croon (and Other Songs) - ${modifier} EDITION (Vinyl)` };
+      expect(buildSoldResearchQueryVariants(candidate)[0].query).toBe("Aoife O'Donovan Bull Frogs Croon and Other Songs");
+    }
+    expect(buildSoldResearchQueryVariants({ artist: 'Artist', title: 'First' })[0].query).toBe('Artist First');
+  });
+
   it("keeps pressing descriptors out of search while retaining genuine album subtitles", () => {
     expect(
       buildSoldResearchQueryVariants({

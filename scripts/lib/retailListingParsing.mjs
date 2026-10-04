@@ -54,16 +54,17 @@ function splitRetailArtistTitle(value) {
     .replace(/^best\s+seller\s+/i, "")
     .replace(/^\[(?:pre[\s-]?order|preorder)\]\s*/i, "")
     .replace(/^\$\s*[0-9][0-9,.]*\s*\*?\s*\|\s*/i, "");
+  // Label storefronts also use Artist 'Album' EP/LP. Require the closing
+  // quote to precede the format so apostrophes in names stay intact. Parse
+  // this before a trailing dash introducing the selected color variant.
+  const singleQuoted = source.match(/^(.{2,100}?)\s+['‘](.{2,}?)['’]\s+(?:EP|LP|Vinyl|(?:7|10|12)["”])(?:\s|$)/i);
+  if (singleQuoted && !/\s[-\u2013\u2014]\s/.test(singleQuoted[1])) return { artist: singleQuoted[1], title: singleQuoted[2] };
+
   const dash = source.match(/^(.{2,100}?)\s+[-\u2013\u2014]\s+(.{2,})$/);
   if (dash) return { artist: dash[1], title: dash[2] };
 
   const quoted = source.match(/^(.{2,100}?)\s+["“]([^"”]{2,})["”](?:\s|$)/);
   if (quoted) return { artist: quoted[1], title: quoted[2] };
-
-  // Label storefronts also use Artist 'Album' EP/LP. Require the closing
-  // quote to precede the format so apostrophes in names stay intact.
-  const singleQuoted = source.match(/^(.{2,100}?)\s+['‘](.{2,}?)['’]\s+(?:EP|LP|Vinyl|(?:7|10|12)["”])(?:\s|$)/i);
-  if (singleQuoted) return { artist: singleQuoted[1], title: singleQuoted[2] };
 
   const selfTitled = source.match(/^(.{2,100}?)\s+(?:s\s*\/\s*t|self[- ]titled)(?=\s|$|\()/i);
   if (selfTitled) return { artist: selfTitled[1], title: selfTitled[1] };

@@ -314,6 +314,7 @@ export type ArbitrageFind = {
   }>;
   ebayActiveSearchError?: string;
   ebayActiveMatchingVersion?: number;
+  ebayActiveDestinationKey?: string;
   ebayActiveProfileKey?: string;
   ebayActiveSearchKeyword?: string;
   ebayActiveSearchStatus?: "available" | "failed" | "no_results";
