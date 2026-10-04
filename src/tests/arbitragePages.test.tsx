@@ -723,7 +723,7 @@ describe("arbitrage pages", () => {
 
     const productCoverage = Array.from(
       container?.querySelectorAll<HTMLElement>(".seller-stat") ?? [],
-    ).find((stat) => stat.textContent?.includes("Product coverage"));
+    ).find((stat) => stat.textContent?.includes("Sources with opportunities"));
     expect(productCoverage?.textContent).toContain("1/2");
     expect(container?.textContent).toContain(
       "1 healthy · 1 degraded · 0 blocked",

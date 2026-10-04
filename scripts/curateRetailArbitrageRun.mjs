@@ -5,6 +5,7 @@ import { browserVerifiedRetailOffer } from "./lib/browserRetailVerification.mjs"
 import { refreshReviewedRetailOffer } from "./lib/reviewedRetailOffers.mjs";
 import { mergeResearchSoldEvidence } from "./lib/soldResearchWindow.mjs";
 import { verifyRetailOffers } from "./lib/retailOfferVerification.mjs";
+import { refreshEbayPurchaseOffers } from "./lib/ebayOfferVerification.mjs";
 import { retailerArtistConflict } from "./lib/retailIdentity.mjs";
 import { createPoliteFetcher } from "./lib/politeHttp.mjs";
 import { deferredResearch, rememberResearch } from "./lib/researchMemory.mjs";
@@ -95,10 +96,12 @@ if (Number(String(payload.runManifest?.scannerVersion ?? "").split("/").at(-1)) 
   });
   curatedProducts = curatedProducts.map((find) => browserVerifiedRetailOffer(find, browserCaptures, new Date(curatedAt)) ?? find);
   curatedProducts = curatedProducts.map(find => refreshReviewedRetailOffer(find, curatedAt));
+  const purchaseRefresh = await refreshEbayPurchaseOffers(curatedProducts);
+  curatedProducts = purchaseRefresh.finds;
+  payload.purchaseOfferRefresh = purchaseRefresh.progress;
   const prioritized = [...curatedProducts]
     .filter((f) => f.identityStatus !== "unresolved" && f.retailVerification?.captureMethod !== "visible_browser")
-    .sort((a, b) => (b.candidateScore ?? 0) - (a.candidateScore ?? 0))
-    .slice(0, 80);
+    .sort((a, b) => (b.candidateScore ?? 0) - (a.candidateScore ?? 0));
   const verified = await verifyRetailOffers(
     prioritized,
     async (url) => {
@@ -108,7 +111,11 @@ if (Number(String(payload.runManifest?.scannerVersion ?? "").split("/").at(-1)) 
       if (!response.ok) throw new Error("HTTP " + response.status);
       return response.json();
     },
-    { concurrency: 2 },
+    { concurrency: 2, readPage: async (url, init) => {
+      const response = await fetchRetail(url, init);
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      return {html:await response.text(),url:response.url};
+    } },
   );
   const byId = new Map(verified.map((find) => [find.id, find]));
   curatedProducts = curatedProducts.map((find) => {
@@ -249,6 +256,7 @@ function curateFind(find) {
     ebayResearchLatestSaleDate: research.latestSoldDate ?? null,
     ebayResearchRows: (research.rows ?? []).slice(0, 12),
     ebayResearchStatus: research.status,
+    ebayResearchCompletionVersion: 2,
     ebayResearchSearchComplete: researchCheckpointComplete(
       buildProductResearchPlan([find])[0] ?? { variants: [] },
       rawResearch.entries?.find((entry) => entry.findId === find.id),

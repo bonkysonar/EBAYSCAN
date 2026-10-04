@@ -2,7 +2,8 @@ import type { ActiveSearchProfile } from "../src/lib/arbitrage/activeEbayMatchin
 import type { ArbitrageFind, ArbitrageMatchConfidence } from "../src/lib/arbitrage/types";
 
 export const ACTIVE_MATCHING_VERSION: number;
-export function buildQueue(finds: ArbitrageFind[]): Array<{
+export function activeDestinationKey(environment?: Record<string, string | undefined>): string;
+export function buildQueue(finds: ArbitrageFind[], now?: number, environment?: Record<string, string | undefined>): Array<{
   key: string;
   primary: string;
   profile: ActiveSearchProfile;

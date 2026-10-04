@@ -1,6 +1,7 @@
 import { verifiedWindowSales, verifiedResearchWindow } from "./soldResearchWindow.mjs";
 import { retailEligibility, hasResearchableRetailIdentity } from "./retailIdentity.mjs";
 import { verifiedSoldItemIdentity } from "./soldItemIdentity.mjs";
+import { assessSoldCapture, researchQueryKey } from "./soldCaptureQuality.mjs";
 import { extractEditionIdentity, selfTitledReleaseMismatch, sameDistinctiveVariant } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
 import {
   buildEbayProductResearchUrl,
@@ -170,8 +171,7 @@ export function bestEvidenceForEntry(
     if (run.error || ["failed", "unavailable", "blocked"].includes(run.status)) continue;
     const window = verifiedResearchWindow(run, now);
     if (!window || !Array.isArray(run.rows)) continue;
-    const parsed = run.rows.map(parseProductResearchRow);
-    if (parsed.length && !verifiedWindowSales(parsed, run, now)) continue;
+    if (!assessSoldCapture(run, now).searchComplete) continue;
     const prior = newestWindows.get(window.duration);
     if (!prior || window.end > prior.end || (window.end === prior.end && Date.parse(run.capturedAt) > Date.parse(prior.run.capturedAt))) newestWindows.set(window.duration, { ...window, run });
   }
@@ -224,6 +224,7 @@ export function bestEvidenceForEntry(
     const evidence = {
       capturedAt: run.capturedAt ?? null,
       observedWindow: windowSales?.observedWindow ?? null,
+      windowCountIsLowerBound: windowSales?.windowCountIsLowerBound === true,
       aggregatePeriodDays,
       aggregateUnitsSold: exactEntry && rows.length ? totalSoldCount : null,
       averageSoldPrice,
@@ -273,9 +274,10 @@ export function bestEvidenceForEntry(
         .sort((a,b) => Date.parse(b.capturedAt) - Date.parse(a.capturedAt))[0];
       if (!observed) continue;
       best[field] = observed[field];
-      windows[days] = { capturedAt: observed.capturedAt, ...observed.observedWindow };
+      windows[days] = { capturedAt: observed.capturedAt, ...observed.observedWindow, windowCountIsLowerBound: observed.windowCountIsLowerBound === true };
     }
     best.observedWindows = windows;
+    best.windowCountIsLowerBound = Object.values(windows).some(window => window.windowCountIsLowerBound);
   }
   return (
     best ?? {
@@ -320,6 +322,7 @@ export function parseProductResearchRow(row) {
     itemUrl: cleanText(row?.itemUrl ?? row?.href ?? row?.url),
     itemSales: money(row?.itemSales ?? cells[5]),
     ...(row?.itemIdentityEvidence ? { itemIdentityEvidence: row.itemIdentityEvidence } : {}),
+    ...(row?.listingLinkUnavailable === true ? { listingLinkUnavailable: true, cells: row.cells } : {}),
     title: rowTitle(row),
     totalSold: wholeNumber(row?.totalSold ?? cells[4]),
   };
@@ -334,6 +337,11 @@ export function resetPressingSoldEvidence(find) {
 
 export function productResearchRowMatchScore(find, rowTitleValue) {
   const rowTitle = cleanText(rowTitleValue);
+  // Quantity of discs in one album is legitimate. A LOT or a list of albums
+  // is not an exact single-release comparable, even when title tokens match.
+  if (/\b(?:lps?|vinyl|records?|albums?)\s+lot\b|\blot\s+(?:\d+|of)\b/i.test(rowTitle)) return 0;
+  if (/\b[2-9]\s*lps?\s+vinyl\s*[,;:]/i.test(rowTitle) &&
+      (rowTitle.match(/[,;]/g)?.length ?? 0) >= 2) return 0;
   if (selfTitledReleaseMismatch(find.artist, find.title, rowTitle)) return 0;
   if (
     !rowTitle ||
@@ -427,23 +435,19 @@ export function researchVariants(find) {
   return researchVariantDetails(find).map((variant) => variant.query);
 }
 
-export function researchCheckpointComplete(planEntry, entry) {
+export function researchCheckpointComplete(planEntry, entry, now = new Date()) {
   const successful = new Set(
     (entry?.runs ?? [])
-      .filter(
-        (run) =>
-          !run.error &&
-          !["failed", "pending", "blocked", "unavailable"].includes(
-            run.status,
-          ) &&
-          Array.isArray(run.rows),
-      )
-      .map((run) => cleanText(run.query).toLowerCase()),
+      .filter((run) => {
+        const quality = assessSoldCapture(run, now);
+        return quality.searchComplete && quality.periodDays === 90;
+      })
+      .map((run) => researchQueryKey(run.query)),
   );
   return (
     planEntry.variants.length > 0 &&
     planEntry.variants.every((variant) =>
-      successful.has(cleanText(variant.query).toLowerCase()),
+      successful.has(researchQueryKey(variant.query)),
     )
   );
 }

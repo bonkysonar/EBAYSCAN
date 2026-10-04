@@ -418,7 +418,7 @@ describe("generic Product Research curation", () => {
 });
 
 describe("research checkpoint and edition safeguards", () => {
-  it("still validates every query in legacy checkpoints and rejects failures", () => {
+  it("requires a verified completed window for every checkpoint query", () => {
     const [currentPlan] = buildProductResearchPlan([find]);
     const plan = {
       ...currentPlan,
@@ -429,17 +429,23 @@ describe("research checkpoint and edition safeguards", () => {
     };
     const runs = plan.variants.map((variant) => ({
       query: variant.query,
+      url: `https://www.ebay.com/sh/research?keywords=${encodeURIComponent(variant.query)}&dayRange=90&conditionId=1000&categoryId=176985&tabName=SOLD`,
+      capturedAt: "2026-10-03T18:00:00Z", condition: "New", category: "Vinyl Records",
+      complete: true, completePagination: true, periodDays: 90,
+      observedWindow: { startDate: "2026-07-05", endDate: "2026-10-03" },
       rows: [],
       status: "complete",
     }));
-    expect(researchCheckpointComplete(plan, { runs: runs.slice(0, 1) })).toBe(
+    const now = new Date("2026-10-03T18:00:00Z");
+    expect(researchCheckpointComplete(plan, { runs: runs.slice(0, 1) }, now)).toBe(
       false,
     );
-    expect(researchCheckpointComplete(plan, { runs })).toBe(true);
+    expect(researchCheckpointComplete(plan, { runs }, now)).toBe(true);
+    expect(researchCheckpointComplete(plan, { runs: runs.map(run => ({ query: run.query, rows: [] })) }, now)).toBe(false);
     expect(
       researchCheckpointComplete(plan, {
         runs: runs.map((run, i) => (i ? { ...run, status: "failed" } : run)),
-      }),
+      }, now),
     ).toBe(false);
   });
   it("does not validate partial rows from a failed request or a never-started entry", () => {

@@ -489,7 +489,7 @@ export function RetailArbitrage() {
             }
           />
           <Stat
-            label="Product coverage"
+            label="Sources with opportunities"
             value={
               coverage.hasProductDiagnostics
                 ? `${coverage.productUsable}/${coverage.productAttempted}`
@@ -500,6 +500,10 @@ export function RetailArbitrage() {
                 ? "warn"
                 : undefined
             }
+          />
+          <Stat
+            label="Catalogs with products"
+            value={coverage.hasProductDiagnostics ? `${coverage.productParsed}/${coverage.productAttempted}` : "Unavailable"}
           />
           <Stat
             label="Blocked"
@@ -1301,7 +1305,7 @@ function FindDetail({
         <dl className="arbitrage-metrics">
           <Metric
             label="Sold 30 / 90 / 365d"
-            value={`${count(find.soldUnits30Days)} / ${count(find.soldUnits90Days)} / ${count(find.soldUnits365Days)}`}
+            value={`${find.soldEvidence?.windowCountIsLowerBound ? "At least " : ""}${count(find.soldUnits30Days)} / ${count(find.soldUnits90Days)} / ${count(find.soldUnits365Days)}`}
           />
           <Metric
             label="Sold over 3 years"
@@ -1934,6 +1938,7 @@ function summarizeCoverage(payload: PayloadWithDiagnostics | null) {
       report.productParseHealth !== "not_attempted",
   );
   const productAttempted = productReports.length;
+  const productParsed = productReports.filter(report => report.productParseHealth === "productive").length;
   const productUsable = productReports.filter(
     (report) =>
       report.usableCoverage === "selected" ||
@@ -1966,6 +1971,7 @@ function summarizeCoverage(payload: PayloadWithDiagnostics | null) {
     priorityHealthy,
     priorityTotal: priorityReports.length,
     productAttempted,
+    productParsed,
     productFailed,
     productUsable,
     saleCapable,

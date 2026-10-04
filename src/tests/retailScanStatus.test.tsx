@@ -32,7 +32,7 @@ describe("sold research progress visibility", () => {
     document.body.append(container);
     root = createRoot(container);
     await act(async () => root?.render(<RetailScanStatus payload={{ createdAt: "2026-09-05T01:00:00Z", finds: [], researchProgress: { ...progress, planned: 10, completed: 2, validated: 1, noRows: 1, pending: 8, outsidePlan: 0 } }} />));
-    expect(container.textContent).toContain("Published scan sold research: 2/10 offers researched; 1 with matching sales; 1 without matching sales; 8 pending");
+    expect(container.textContent).toContain("Published report sold research: 2/10 offers researched; 1 with matching sales; 1 without matching sales; 8 pending");
   });
   it("distinguishes reused query windows from offer coverage and repairs", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ status: "research", researchQueue: { offers: 12, distinctQueries: 8, tasks: 9, reused: 4, repair: 2, refresh: 1, pending: 2, scheduled: 4, retryLater: 1, deferred: 0, editionReviews: 3 } }) })));
@@ -40,5 +40,12 @@ describe("sold research progress visibility", () => {
     await act(async () => root?.render(<RetailScanStatus payload={{ createdAt: "2026-10-01T14:00:00Z", finds: [] }} />));
     expect(container.textContent).toContain("8 distinct album searches across 12 offers. 4 date-window captures reused; 2 need capture repair");
     expect(container.textContent).toContain("3 need edition identification");
+  });
+  it("does not let a campaign-only refresh erase the published report's research totals", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ status: "partial", researchProgress: { ...progress, planned: 0, completed: 0 } }) })));
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    await act(async () => root?.render(<RetailScanStatus payload={{ createdAt: "2026-10-03T14:00:00Z", finds: [], researchProgress: { ...progress, planned: 139, completed: 139, validated: 98, noRows: 41, pending: 0, outsidePlan: 0, complete: true, status: "complete" } }} />));
+    expect(container.textContent).toContain("Published report sold research: 139/139 offers researched; 98 with matching sales");
+    expect(container.textContent).toContain("Latest attempt: no product research in this update.");
   });
 });

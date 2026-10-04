@@ -1304,14 +1304,14 @@ function clamp(value, minimum, maximum) {
 }
 import { isMarketplaceNonRecordTitle } from "../../src/lib/arbitrage/marketplaceProductClassification.mjs";
 
-/** Spend a bounded research budget on both observed demand and new deals.
+/** Retain every eligible offer unless a caller explicitly sets a research limit.
  * A research slot is not a recommendation. Never require our own inventory
  * history before asking whether the broader market buys a record.
  */
-export function selectResearchCandidates(candidates, { limit = 240 } = {}) {
+export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_INFINITY } = {}) {
   const requestedLimit = Number.isFinite(limit)
     ? Math.max(0, Math.floor(limit))
-    : 240;
+    : candidates.length;
   let explorationLimit = 0;
   const ranked = candidates
     .filter(

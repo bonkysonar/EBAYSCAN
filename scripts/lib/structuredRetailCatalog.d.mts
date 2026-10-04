@@ -43,6 +43,7 @@ export type StructuredRetailCatalogInput = {
 };
 
 export function extractStructuredRetailPayloads(html: unknown): unknown[];
+export function balancedJsonAfter(source: string, offset: number): string | null;
 export function parseStructuredRetailCatalog(
   input:
     | string

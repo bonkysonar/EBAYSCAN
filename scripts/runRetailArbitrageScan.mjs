@@ -12,6 +12,8 @@ import {
   campaignBasketScenario,
 } from "./lib/campaignOffers.mjs";
 import { shopifyIdentity, retailEligibility } from "./lib/retailIdentity.mjs";
+import { readShopifyAjaxCatalog } from "./lib/shopifyAjaxCatalog.mjs";
+import { prefetchShopifyCatalog } from "./lib/shopifyFeedPreflight.mjs";
 import { validateBrowserRetailObservations, browserObservationUrl, browserObservationPage, browserSourceDiagnostics, browserProductCandidates, preferObservedSkuCandidates } from "./lib/browserRetailObservations.mjs";
 import { reviewedRetailOffers } from "./lib/reviewedRetailOffers.mjs";
 import { spawnSync } from "node:child_process";
@@ -77,7 +79,7 @@ import {
   inferRetailTitle,
   parseRetailProductPrices,
 } from "./lib/retailListingParsing.mjs";
-import { discoverRetailCatalogLinks } from "./lib/retailCatalogDiscovery.mjs";
+import { discoverRetailCatalogLinks, isMissingRetailPage } from "./lib/retailCatalogDiscovery.mjs";
 import { discoverRetailPaginationLinks, discoverNewestForumPages } from "./lib/retailPagination.mjs";
 import { extractRetailProductCards } from "./lib/retailProductCards.mjs";
 import {
@@ -87,6 +89,13 @@ import {
   shopifyCatalogUrls,
 } from "./lib/shopifyCatalog.mjs";
 import { parseStructuredRetailCatalog } from "./lib/structuredRetailCatalog.mjs";
+import { discoverMagentoGroupedProducts, parseMagentoGroupedVinyl } from "./lib/magentoGroupedCatalog.mjs";
+import { discoverBarsukProductUrls, readBuyButtonVinylProduct } from "./lib/shopifyBuyButtonCatalog.mjs";
+import { discoverThrillJockeyProducts, parseThrillJockeyVinyl } from "./lib/thrillJockeyCatalog.mjs";
+import { discoverTopshelfProducts, parseTopshelfVinyl } from "./lib/topshelfCatalog.mjs";
+import { discoverHonestJonsProducts, parseHonestJonsVinyl, discoverResidentProducts, parseResidentVinyl, discoverZavviProducts, parseZavviVinyl, discoverPlasticHeadProducts, parsePlasticHeadVinyl } from "./lib/ukFormatCatalog.mjs";
+import { discoverDominoProducts, parseDominoVinyl } from "./lib/dominoCatalog.mjs";
+import { formatRetailAdapter } from "./lib/formatRetailAdapters.mjs";
 import {
   assessWalmartAbsolutePrice,
   isFirstPartyWalmartOffer,
@@ -128,7 +137,7 @@ const DEFAULT_FETCH_RETRIES = 2;
 const DEFAULT_FETCH_RETRY_DELAY_MS = 1_000;
 const DEFAULT_HOST_DELAY_MS = 650;
 const DEFAULT_GENERIC_MAX_PAGES = 5;
-const DEFAULT_MAX_RESEARCH_POOL_SIZE = 240;
+const DEFAULT_MAX_RESEARCH_POOL_SIZE = Number.POSITIVE_INFINITY;
 const DEFAULT_RESEARCH_POOL_MULTIPLIER = 3;
 const DEFAULT_SHOPIFY_COLLECTION_LANES = 6;
 const DEFAULT_SHOPIFY_MAX_PAGES = 10;
@@ -255,7 +264,9 @@ const maxResearchPoolSize = parseLimit(
 const researchPoolProductLimit =
   scanMode === "comprehensive" || !Number.isFinite(maxProductFinds)
     ? Number.POSITIVE_INFINITY
-    : Math.min(
+    : !args.has("researchPoolMultiplier")
+      ? maxResearchPoolSize
+      : Math.min(
         maxResearchPoolSize,
         Math.max(
           maxProductFinds,
@@ -281,9 +292,7 @@ const skipActiveEnrichment =
 const skipUpload = args.has("skipUpload") || args.get("upload") === "false";
 const maxActiveQueries = parseLimit(
   args.get("maxActiveQueries"),
-  Number.isFinite(researchPoolProductLimit)
-    ? researchPoolProductLimit
-    : DEFAULT_MAX_PRODUCT_FINDS,
+  researchPoolProductLimit,
 );
 
 const requestedSourceIds = new Set(
@@ -1159,6 +1168,17 @@ async function scanFieldstackPageScan(source, pageScan) {
 
 async function scanGenericRetailerSource(source) {
   const pageScan = await fetchSourcePages(source);
+  // This store advertises the lowest CD/digital price even on its vinyl category.
+  // Its public grouped-product table is the available format-specific interface.
+  if (source.id === "yep-roc") return scanMagentoGroupedSource(source, pageScan);
+  if (source.id === "barsuk-records") return scanBuyButtonSource(source, pageScan);
+  if (source.id === "thrill-jockey") return scanFormatSpecificSource(source, pageScan, discoverThrillJockeyProducts, parseThrillJockeyVinyl);
+  if (source.id === "topshelf-records") return scanFormatSpecificSource(source, pageScan, discoverTopshelfProducts, parseTopshelfVinyl);
+  if (source.id === "honest-jons") return scanFormatSpecificSource(source, pageScan, discoverHonestJonsProducts, parseHonestJonsVinyl);
+  if (source.id === "resident-music") return scanFormatSpecificSource(source, pageScan, discoverResidentProducts, parseResidentVinyl);
+  if (source.id === "zavvi") return scanFormatSpecificSource(source, pageScan, discoverZavviProducts, parseZavviVinyl);
+  if (source.id === "plastic-head-megastore") return scanFormatSpecificSource(source, pageScan, discoverPlasticHeadProducts, parsePlasticHeadVinyl);
+  if (["domino-us", "domino-mart"].includes(source.id)) return scanFormatSpecificSource(source, pageScan, discoverDominoProducts, parseDominoVinyl);
   const configuredPage = pageScan.pages.find(
     (page) =>
       page.scanRootPurpose === "configured" &&
@@ -1171,6 +1191,73 @@ async function scanGenericRetailerSource(source) {
     return scanFieldstackPageScan(source, pageScan);
   }
   return genericRetailerResult(source, pageScan);
+}
+
+async function scanMagentoGroupedSource(source, pageScan) {
+  const urls = [...new Set(genericCandidatePages(pageScan.pages, source)
+    .flatMap((page) => discoverMagentoGroupedProducts(page.html, page.url)))];
+  const candidates = [];
+  const pageReports = [...pageScan.pageReports];
+  const stats = { adapter: "magento-grouped-vinyl", catalogCoverage: "bounded_observed_catalog_links", discoveredProducts: urls.length, attemptedProducts: 0, groupedProducts: 0, vinylRows: 0, unavailableVinylRows: 0 };
+  for (const url of urls) {
+    stats.attemptedProducts += 1;
+    try {
+      const page = await fetchPage(url);
+      if (new URL(page.url).origin !== new URL(source.url).origin) throw new Error("Product redirected outside configured store");
+      // Yep Roc's US storefront explicitly displays dollar prices; no other store inherits USD.
+      const parsed = parseMagentoGroupedVinyl(page.html, page.url, "USD");
+      stats.groupedProducts += Number(parsed.supported);
+      stats.vinylRows += parsed.vinylRows;
+      stats.unavailableVinylRows += parsed.unavailableRows;
+      candidates.push(...parsed.items.map((item) => structuredRetailItemToCandidate(source, item, page.url)).filter(Boolean));
+      pageReports.push({ ...availablePageReport("grouped-product-detail", url, page.url, "catalog"), formatSpecific: parsed.supported });
+    } catch (error) {
+      pageReports.push(failedPageReport("grouped-product-detail", url, error, "catalog"));
+      if (/403|429/.test(String(error?.message))) break;
+    }
+  }
+  return { candidates: dedupeCandidates(candidates), pageReports, adapterStats: { ...stats, candidateCount: candidates.length }, saleEvents: [] };
+}
+
+async function scanBuyButtonSource(source, pageScan) {
+  const urls = [...new Set(genericCandidatePages(pageScan.pages, source).flatMap((page) => discoverBarsukProductUrls(page.html, page.url)))];
+  const candidates = [], pageReports = [...pageScan.pageReports];
+  let attempted = 0, supported = 0;
+  for (const url of urls) {
+    attempted += 1;
+    try {
+      const page = await fetchPage(url);
+      if (new URL(page.url).origin !== new URL(source.url).origin) throw new Error("Product redirected outside configured store");
+      const parsed = await readBuyButtonVinylProduct(page.html, page.url, fetchPage, source);
+      supported += Number(parsed.supported);
+      candidates.push(...parsed.items.map((item) => structuredRetailItemToCandidate(source, item, page.url)).filter(Boolean));
+      pageReports.push({ ...availablePageReport("buy-button-product", url, page.url, "catalog"), officialApiVerified: parsed.supported });
+    } catch (error) {
+      pageReports.push(failedPageReport("buy-button-product", url, error, "catalog"));
+      if (/403|429/.test(String(error?.message))) break;
+    }
+  }
+  return { candidates:dedupeCandidates(candidates), pageReports, saleEvents:[], adapterStats:{adapter:"shopify-public-buy-button", catalogCoverage:"bounded_observed_catalog_links", discoveredProducts:urls.length, attemptedProducts:attempted, supportedProducts:supported, candidateCount:candidates.length} };
+}
+
+async function scanFormatSpecificSource(source, pageScan, discoverProducts, parseVinyl) {
+  const urls = [...new Set(genericCandidatePages(pageScan.pages, source).flatMap((page) => discoverProducts(page.html, page.url)))];
+  const candidates = [], pageReports = [...pageScan.pageReports];
+  let attempted = 0;
+  for (const url of urls) {
+    attempted += 1;
+    try {
+      const page = await fetchPage(url);
+      if (new URL(page.url).origin !== new URL(source.url).origin) throw new Error("Product redirected outside configured store");
+      const items = parseVinyl(page.html, page.url);
+      candidates.push(...items.map((item) => structuredRetailItemToCandidate(source, item, page.url)).filter(Boolean));
+      pageReports.push(availablePageReport("format-specific-product", url, page.url, "catalog"));
+    } catch (error) {
+      pageReports.push(failedPageReport("format-specific-product", url, error, "catalog"));
+      if (/403|429/.test(String(error?.message))) break;
+    }
+  }
+  return { candidates:dedupeCandidates(candidates), pageReports, saleEvents:[], adapterStats:{adapter:`${source.id}-format-rows`, catalogCoverage:"bounded_observed_catalog_links", discoveredProducts:urls.length, attemptedProducts:attempted, candidateCount:candidates.length} };
 }
 
 function genericRetailerResult(source, pageScan) {
@@ -1277,16 +1364,14 @@ function genericCandidatePages(pages, source) {
   );
   const discoveredVinylSalePages = pages.filter(
     (page) =>
-      page.scanRootPurpose === "discovered-sale-link" &&
-      /\b(?:vinyl|records?|music|lps?)\b/i.test(
-        new URL(page.url).pathname.replace(/[-_/]+/g, " "),
-      ),
+      page.scanRole === "sale" &&
+      ["configured-sale-hint", "discovered-sale-link", "prior-sale-recheck"].includes(page.scanRootPurpose),
   );
   const recoveredCatalogPages = pages.filter(
     (page) => page.scanRootPurpose === "discovered-catalog-link",
   );
   if (configuredPages.length > 0)
-    return dedupePages([...configuredPages, ...discoveredVinylSalePages, ...observedPages]);
+    return dedupePages([...configuredPages, ...recoveredCatalogPages, ...discoveredVinylSalePages, ...observedPages]);
   if (recoveredCatalogPages.length > 0) {
     return dedupePages([...recoveredCatalogPages, ...discoveredVinylSalePages, ...observedPages]);
   }
@@ -1341,6 +1426,7 @@ function structuredRetailItemToCandidate(source, item, pageUrl) {
   return {
     artist: inferArtist(item.title),
     available: item.available,
+    ...(item.physicalFormatConfirmed === true ? { physicalFormatConfirmed: true, recordFormat: item.recordFormat, retailVariantTitle: item.variantTitle } : {}),
     barcode: item.gtin ?? item.upc ?? null,
     candidateQualityReasons: assessment.reasons,
     candidateQualityScore: assessment.score,
@@ -1366,6 +1452,9 @@ function structuredRetailItemToCandidate(source, item, pageUrl) {
     sourceUrl,
     stockStatus: item.availability,
     title: inferTitle(item.title),
+    ...(item.identity ?? {}),
+    ...(formatRetailAdapter(source.id) ? {retailFormatVariantId:item.stableId,retailEditionText:item.identity?.retailEditionText ?? item.variantTitle} : {}),
+    ...(item.buyButtonProductId ? { buyButtonProductId:item.buyButtonProductId, buyButtonVariantId:item.buyButtonVariantId, retailVerification:item.retailVerification } : {}),
   };
 }
 
@@ -1829,10 +1918,18 @@ function incrementCount(counts, key) {
 }
 
 async function scanShopifySource(source) {
+  const seedUrls = browserObservations.filter(page => page.sourceId === source.id).flatMap(page => [page.url, ...(page.links ?? []).map(link => typeof link === "string" ? link : link.url ?? link.href), ...(page.catalogProducts ?? []).map(product => product.url)]);
+  const ajax = await readShopifyAjaxCatalog(source, fetchPage, { seedUrls });
+
+  const prefetched = await prefetchShopifyCatalog(source, fetchPage, {
+    collectionLimit: shopifyCollectionLanes, maxPages: shopifyMaxPages,
+    rootMaxPages: shopifyRootMaxPages, includeRootCatalog: includeShopifyRootCatalog,
+  });
   const pageScan = await fetchSourcePages(source, {
     allowEmpty: true,
     followPagination: false,
   });
+  pageScan.pageReports.unshift(...ajax.pageReports);
   const origin = pageScan.pages.length
     ? new URL(pageScan.pages[0].url).origin
     : new URL(source.url).origin;
@@ -1843,7 +1940,7 @@ async function scanShopifySource(source) {
   let shopifyRootFeedPageCount = 0;
   let shopifyProductCount = 0;
   let shopifyRecordProductCount = 0;
-  const shopifyCurrency = extractShopifyCurrency(
+  const shopifyCurrency = ajax.currency ?? extractShopifyCurrency(
     pageScan.pages.map((page) => page.html),
   );
   const collectionLaneSelection = selectShopifyCollectionLanes(
@@ -1870,6 +1967,91 @@ async function scanShopifySource(source) {
       : []),
   ].filter(Boolean);
 
+  function addNormalizedItems(normalized) {
+    for (const item of normalized) {
+      const identity = shopifyIdentity(
+        item.product,
+        {
+          id: item.variantId,
+          title: item.variantTitle,
+        },
+        source,
+      );
+      const artist = identity.artist;
+      const candidate = {
+        ...identity,
+        available: true,
+        artist,
+        availableVariantCount: item.availableVariantCount,
+        barcode: item.barcode,
+        candidateQualityReasons: item.candidateQualityReasons,
+        candidateQualityScore: item.candidateQualityScore,
+        collectionContext: item.collectionContext,
+        collectionContexts: item.collectionContext
+          ? [item.collectionContext]
+          : [],
+        condition: "new/sealed",
+        discoveryUrl: item.collectionContext
+          ? `${origin}/collections/${item.collectionContext}`
+          : null,
+        discoveryUrls: item.collectionContext
+          ? [`${origin}/collections/${item.collectionContext}`]
+          : [],
+        id: stableId(
+          source.id,
+          item.productUrl,
+          item.variantId ?? item.product.title,
+        ),
+        purchasePrice: item.price,
+        quantityAvailable: item.inventoryQuantity,
+        shopifyVariantId: item.variantId,
+        shopifyVariantTitle: item.variantTitle,
+        sku: item.sku,
+        sourceCurrency: item.currency,
+        sourceDiscountPercent:
+          item.compareAtPrice && item.compareAtPrice > item.price
+            ? Math.round(
+                ((item.compareAtPrice - item.price) / item.compareAtPrice) *
+                  100,
+              )
+            : null,
+        sourceId: source.id,
+        sourceListingTitle: cleanText(item.listingTitle),
+        sourceName: source.name,
+        sourceOriginalPrice: item.compareAtPrice,
+        sourceUrl: item.productUrl,
+        title: identity.title,
+      };
+      const current = byUrl.get(item.productUrl);
+      const preferCandidate =
+        !current ||
+        collectionContextPriority(candidate.collectionContext) >
+          collectionContextPriority(current.collectionContext) ||
+        candidate.purchasePrice < current.purchasePrice;
+      const preferred = preferCandidate ? candidate : current;
+      byUrl.set(item.productUrl, {
+        ...preferred,
+        collectionContexts: [
+          ...new Set([
+            ...(current?.collectionContexts ??
+              [current?.collectionContext].filter(Boolean)),
+            ...candidate.collectionContexts,
+          ]),
+        ],
+        discoveryUrls: [
+          ...new Set([
+            ...(current?.discoveryUrls ??
+              [current?.discoveryUrl].filter(Boolean)),
+            ...candidate.discoveryUrls,
+          ]),
+        ],
+      });
+    }
+  }
+  const ajaxNormalized = normalizeShopifyProducts({ assessment: assessRecordCandidate, source, origin, products: ajax.products, currency: ajax.currency });
+  shopifyProductCount += ajax.products.length;
+  shopifyRecordProductCount += ajaxNormalized.length;
+  addNormalizedItems(ajaxNormalized);
   for (const firstDescriptor of firstPageDescriptors) {
     const pageLimit = firstDescriptor.collectionContext
       ? shopifyMaxPages
@@ -1883,7 +2065,9 @@ async function scanShopifySource(source) {
         ? "shopify-collection-feed"
         : "shopify-catalog-feed";
       try {
-        const page = await fetchPage(descriptor.url);
+        const cached = prefetched.get(descriptor.url);
+        if (cached?.error) throw cached.error;
+        const page = cached?.page ?? await fetchPage(descriptor.url, { headers: { accept: "application/json" } });
         pageScan.pageReports.push(
           availablePageReport(purpose, descriptor.url, page.url, "catalog"),
         );
@@ -1904,85 +2088,7 @@ async function scanShopifySource(source) {
           source,
         });
         shopifyRecordProductCount += normalized.length;
-        for (const item of normalized) {
-          const identity = shopifyIdentity(
-            item.product,
-            {
-              id: item.variantId,
-              title: item.variantTitle,
-            },
-            source,
-          );
-          const artist = identity.artist;
-          const candidate = {
-            ...identity,
-            available: true,
-            artist,
-            availableVariantCount: item.availableVariantCount,
-            barcode: item.barcode,
-            candidateQualityReasons: item.candidateQualityReasons,
-            candidateQualityScore: item.candidateQualityScore,
-            collectionContext: item.collectionContext,
-            collectionContexts: item.collectionContext
-              ? [item.collectionContext]
-              : [],
-            condition: "new/sealed",
-            discoveryUrl: item.collectionContext
-              ? `${origin}/collections/${item.collectionContext}`
-              : null,
-            discoveryUrls: item.collectionContext
-              ? [`${origin}/collections/${item.collectionContext}`]
-              : [],
-            id: stableId(
-              source.id,
-              item.productUrl,
-              item.variantId ?? item.product.title,
-            ),
-            purchasePrice: item.price,
-            quantityAvailable: item.inventoryQuantity,
-            shopifyVariantId: item.variantId,
-            shopifyVariantTitle: item.variantTitle,
-            sku: item.sku,
-            sourceCurrency: item.currency,
-            sourceDiscountPercent:
-              item.compareAtPrice && item.compareAtPrice > item.price
-                ? Math.round(
-                    ((item.compareAtPrice - item.price) / item.compareAtPrice) *
-                      100,
-                  )
-                : null,
-            sourceId: source.id,
-            sourceListingTitle: cleanText(item.listingTitle),
-            sourceName: source.name,
-            sourceOriginalPrice: item.compareAtPrice,
-            sourceUrl: item.productUrl,
-            title: identity.title,
-          };
-          const current = byUrl.get(item.productUrl);
-          const preferCandidate =
-            !current ||
-            collectionContextPriority(candidate.collectionContext) >
-              collectionContextPriority(current.collectionContext) ||
-            candidate.purchasePrice < current.purchasePrice;
-          const preferred = preferCandidate ? candidate : current;
-          byUrl.set(item.productUrl, {
-            ...preferred,
-            collectionContexts: [
-              ...new Set([
-                ...(current?.collectionContexts ??
-                  [current?.collectionContext].filter(Boolean)),
-                ...candidate.collectionContexts,
-              ]),
-            ],
-            discoveryUrls: [
-              ...new Set([
-                ...(current?.discoveryUrls ??
-                  [current?.discoveryUrl].filter(Boolean)),
-                ...candidate.discoveryUrls,
-              ]),
-            ],
-          });
-        }
+        addNormalizedItems(normalized);
         if (products.length < 250) break;
       } catch (error) {
         shopifyFeedErrorCount += 1;
@@ -2039,7 +2145,11 @@ async function scanShopifySource(source) {
 
   return {
     adapterStats: {
-      adapter: "shopify-products-json",
+      adapter: "shopify-ajax-and-products-json",
+      ajaxDiscoveryScope: ajax.discoveryScope,
+      ajaxProductCount: ajax.products.length,
+      ajaxDiscoveredProductCount: ajax.discoveredProductCount,
+      ajaxOmittedProductCount: ajax.omittedProductCount,
       candidateCount: byUrl.size,
       collectionCandidateCount: collectionLaneSelection.candidateCount,
       collectionConfiguredExcluded: collectionLaneSelection.configuredExcluded,
@@ -2176,8 +2286,10 @@ async function fetchSourcePages(source, options = {}) {
 
     try {
       const page = await fetchPage(url);
-      if (page.browserOutcome === "not_found") {
-        pageReports.push({purpose,requestedUrl:url,resolvedUrl:page.url,role,status:"confirmed_removed",observationMethod:"visible_browser",observedAt:page.observedAt});
+      if (page.browserOutcome === "not_found" || isMissingRetailPage(page.html)) {
+        pageReports.push({ purpose, requestedUrl: url, resolvedUrl: page.url, role,
+          status: "confirmed_removed", failureKind: "not_found",
+          ...(page.observationMethod ? { observationMethod: page.observationMethod, observedAt: page.observedAt } : {}) });
         return false;
       }
       pageReports.push({
@@ -3692,8 +3804,8 @@ async function fetchPage(url, options = {}) {
         "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
       "accept-language": "en-US,en;q=0.9",
       "cache-control": "no-cache",
-      "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+      // This is a server-side feed client, not Chrome. Identify it honestly.
+      "user-agent": "RecordScanner/4 (+https://github.com/bonkysonar/EBAYSCAN)",
       ...additionalHeaders,
     },
     redirect: requestOptions.redirect ?? "follow",

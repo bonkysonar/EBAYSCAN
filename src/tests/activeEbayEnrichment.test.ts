@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildActiveSearchProfile } from "../lib/arbitrage/activeEbayMatching.mjs";
-import { ACTIVE_MATCHING_VERSION, buildQueue, enrichActiveEntry, searchVariantPages, type ActiveVariantResult } from "../../scripts/enrichArbitrageActiveEbay.mjs";
+import { ACTIVE_MATCHING_VERSION, activeDestinationKey, buildQueue, enrichActiveEntry, searchVariantPages, type ActiveVariantResult } from "../../scripts/enrichArbitrageActiveEbay.mjs";
 import type { ArbitrageFind } from "../lib/arbitrage/types";
 
 function sourceFind(): ArbitrageFind {
@@ -66,6 +66,8 @@ describe("active eBay enrichment", () => {
     const completed: ArbitrageFind = {
       ...find, ebayActiveSearchStatus: "available", ebayActiveSearchComplete: true,
       ebayActiveMatchingVersion: ACTIVE_MATCHING_VERSION, ebayActiveProfileKey: profile.key,
+      ebayActiveDestinationKey: activeDestinationKey(),
+      ebayActiveSearchUpdatedAt: new Date().toISOString(),
     };
     expect(buildQueue([completed])).toHaveLength(0);
     expect(buildQueue([{ ...completed, ebayActiveMatchingVersion: undefined }])).toHaveLength(1);
@@ -74,6 +76,24 @@ describe("active eBay enrichment", () => {
     expect(buildQueue([{ ...completed, ebayActiveMatchingVersion: 4 }])).toHaveLength(1);
     expect(buildQueue([{ ...completed, sourceListingTitle: "Artist - Great Escape (Tangerine LP)" }])).toHaveLength(1);
     expect(buildQueue([{ ...completed, ebayActiveSearchStatus: "failed" }])).toHaveLength(1);
+    expect(buildQueue([{ ...completed, ebayActiveSearchUpdatedAt: undefined }])).toHaveLength(1);
+    expect(buildQueue([{ ...completed, ebayActiveSearchUpdatedAt: new Date(Date.now() - 25 * 3600000).toISOString() }])).toHaveLength(1);
+  });
+
+  it("refreshes cached shipping when the destination changes or was never recorded", () => {
+    const find = sourceFind();
+    const destination = { EBAY_DELIVERY_POSTAL_CODE: '10001' };
+    const completed: ArbitrageFind = {
+      ...find, ebayActiveSearchStatus: 'available', ebayActiveSearchComplete: true,
+      ebayActiveMatchingVersion: ACTIVE_MATCHING_VERSION,
+      ebayActiveProfileKey: buildActiveSearchProfile(find)!.key,
+      ebayActiveDestinationKey: activeDestinationKey(destination),
+      ebayActiveSearchUpdatedAt: new Date().toISOString(),
+    };
+    expect(buildQueue([completed], Date.now(), destination)).toHaveLength(0);
+    expect(buildQueue([completed], Date.now(), { EBAY_DELIVERY_POSTAL_CODE: '90210' })).toHaveLength(1);
+    expect(buildQueue([completed], Date.now(), {})).toHaveLength(1);
+    expect(buildQueue([{ ...completed, ebayActiveDestinationKey: undefined }], Date.now(), destination)).toHaveLength(1);
   });
 
   it("excludes the source eBay purchase listing from its own active comparisons", async () => {

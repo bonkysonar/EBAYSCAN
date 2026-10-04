@@ -1,0 +1,51 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildEbayProductResearchUrl, buildSoldResearchQueryVariants, normalizeResearchTitle } from '../lib/arbitrage/soldResearchLinks.mjs';
+import { shopifyIdentity, retailerArtistConflict } from '../../scripts/lib/retailIdentity.mjs';
+afterEach(() => vi.useRealTimers());
+describe('research query repairs', () => {
+  it('removes genre and format-delimited merchant shorthand without changing album names', () => {
+    expect(normalizeResearchTitle('Father Figga - Rap/Hip-Hop')).toBe('Father Figga');
+    expect(normalizeResearchTitle('Love Songs [New 7" Vinyl] Green, Ltd Ed, Pink, Rmst')).toBe('Love Songs');
+    expect(normalizeResearchTitle('Vinyl Champeta [New 7" Vinyl] 45 Rpm, Ltd Ed')).toBe('Vinyl Champeta');
+    expect(normalizeResearchTitle('Green')).toBe('Green');
+    expect(normalizeResearchTitle('Pink Moon')).toBe('Pink Moon');
+    expect(normalizeResearchTitle('46th And 8th New Sealed LP With 8-page Booklet')).toBe('46th And 8th');
+    expect(normalizeResearchTitle('At Last Chess 75 Series')).toBe('At Last');
+    expect(normalizeResearchTitle('New Adventures LP')).toBe('New Adventures');
+    expect(normalizeResearchTitle('Driftin’ •••New Sealed LP•••')).toBe('Driftin');
+    expect(normalizeResearchTitle('Guitar Artistry **New Sealed LP**')).toBe('Guitar Artistry');
+    expect(normalizeResearchTitle('Year at a Time [Vinyl] NEW')).toBe('Year at a Time');
+    expect(normalizeResearchTitle('Aphelian Volume 2: Vinyl LP Limited RSD 2021')).toBe('Aphelian Volume 2');
+    expect(normalizeResearchTitle('The Complete Masters 180 Gram Stereo Version + Bound Booklet')).toBe('The Complete Masters');
+    expect(normalizeResearchTitle('Green River (Half-Speed Master 180g LP)')).toBe('Green River');
+    expect(normalizeResearchTitle('Guilty Of Everything (10 Year Anniversary) 12"')).toBe('Guilty Of Everything');
+    expect(normalizeResearchTitle('Never Enough (Alt Cover) 2LP')).toBe('Never Enough');
+    expect(normalizeResearchTitle('Love and Lies Signed (US Only) LP')).toBe('Love and Lies');
+    expect(normalizeResearchTitle('Signed')).toBe('Signed');
+    expect(normalizeResearchTitle('Electrified All-Analog')).toBe('Electrified');
+    expect(normalizeResearchTitle('Make You Mine - sealed U.S. 7" vinyl')).toBe('Make You Mine');
+    expect(normalizeResearchTitle('Readysexgo 2-LP Set')).toBe('Readysexgo');
+    expect(normalizeResearchTitle('Ernie Hines Electrified (All-Analog)')).toBe('Ernie Hines Electrified');
+    expect(normalizeResearchTitle('Marvelous 3 Readysexgo 2- Set')).toBe('Marvelous 3 Readysexgo');
+  });
+  it('separates quoted releases, artist spelling variants and label catalog numbers', () => {
+    const query = (artist, title) => buildSoldResearchQueryVariants({ artist, title })[0].query;
+    expect(query('Tigers Jaw', "Tigers Jaw 'Old Clothes' Blue & Neon Split 7\"")).toBe('Tigers Jaw Old Clothes');
+    expect(query('ROAM', "ROAM 'Head Down' Red W/ Green Splatter Vinyl 7\"")).toBe('ROAM Head Down');
+    expect(query('New Found Glory', "New Found Glory 'From The Screen To Your Stereo 3' Gold")).toBe('New Found Glory From The Screen To Your Stereo 3');
+    expect(query('Aaron West and the Roaring Twenties', 'Aaron West & The Roaring Twenties Bittersweet Black 7"')).toBe('Aaron West and the Roaring Twenties Bittersweet');
+    expect(normalizeResearchTitle("'Hello' Goodbye")).toBe("'Hello' Goodbye");
+    const identity = shopifyIdentity({ title: "CAK173 @ - Are You There God? It's Me, @ - LP (Light Blue Vinyl)", vendor: 'Carpark Records' }, { title: 'LP' }, { id: 'carpark-records' });
+    expect(identity.artist).toBe('@');
+    expect(identity.title).toBe("Are You There God? It's Me, @");
+    expect(retailerArtistConflict('XLRecordingsProd', 'XL Recordings')).toBe(true);
+    expect(retailerArtistConflict('Overmono', 'XL Recordings')).toBe(false);
+  });
+  it.each(['2026-10-03T19:00:00Z', '2026-12-03T19:00:00Z'])('sets local calendar boundaries across daylight saving time: %s', now => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(now));
+    const url = new URL(buildEbayProductResearchUrl('Artist Album', { dayRange: 90 }));
+    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' });
+    for (const key of ['startDate', 'endDate']) expect(formatter.format(Number(url.searchParams.get(key)))).toMatch(/00$/);
+    expect(formatter.format(Number(url.searchParams.get('endDate')))).toContain(now.slice(0, 10));
+  });
+});

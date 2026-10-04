@@ -32,7 +32,9 @@ export function buildPersistentResearchQueue(payload, { captures = {}, checkpoin
   const availablePages = [...savedPages, ...imported.entries.flatMap(entry => entry.runs ?? [])];
   const seenPages = new Set();
   for (const page of availablePages) {
-    const identity = `${page.query}:${page.url}:${page.capturedAt}`;
+    // Pagination resumes retain the original observation timestamp. A saved
+    // partial page must not hide the completed capture with the same URL/time.
+    const identity = `${page.query}:${page.url}:${page.capturedAt}:${page.complete}:${page.completePagination}:${page.rows?.length}`;
     if (seenPages.has(identity)) continue;
     seenPages.add(identity);
     const key = researchQueryKey(page.query), pages = pagesByQuery.get(key) ?? [];
@@ -83,6 +85,7 @@ export function buildPersistentResearchQueue(payload, { captures = {}, checkpoin
     repair: tasks.filter(task => task.status === "repair").length,
     refresh: tasks.filter(task => task.status === "refresh").length,
     pending: tasks.filter(task => task.status === "pending").length,
+    completeWithRedactedRows: tasks.filter(task => task.status === "complete" && task.evidenceIncomplete).length,
     retryLater: tasks.filter(task => task.retryAfter).length, scheduled: entries.length,
     deferred: Math.max(0, actionable.length - entries.length), editionReviews: editionReviews.length,
   };
@@ -94,7 +97,7 @@ export function buildPersistentResearchQueue(payload, { captures = {}, checkpoin
     const prior = nextState[taskId] ?? {};
     const relevant = pages.filter(({ quality }) => quality.periodDays === periodDays || !quality.periodDays)
       .sort((a,b) => Date.parse(b.page.capturedAt) - Date.parse(a.page.capturedAt));
-    const accepted = relevant.find(({ quality }) => quality.windowVerified && quality.periodDays === periodDays);
+    const accepted = relevant.find(({ quality }) => quality.searchComplete && quality.periodDays === periodDays);
     const latest = relevant[0];
     const status = accepted ? "complete" : latest?.quality.reasonCodes.includes("capture_stale") ? "refresh" : latest ? "repair" : "pending";
     const reasonCodes = accepted ? [] : latest?.quality.reasonCodes ?? [];
@@ -110,6 +113,8 @@ export function buildPersistentResearchQueue(payload, { captures = {}, checkpoin
     const url = buildEbayProductResearchUrl(group.query, { dayRange: periodDays });
     tasks.push({ taskId, query: group.query, periodDays, url, status, reasonCodes,
       repairs: accepted ? [] : latest?.quality.repairs ?? [], retryAfter, lane: group.lane, order: group.order,
+      evidenceIncomplete: accepted ? !accepted.quality.windowVerified : true,
+      evidenceReasonCodes: accepted?.quality.reasonCodes ?? reasonCodes,
       firstSeenAt: nextState[taskId].firstSeenAt, lastAttemptAt,
       findId: group.targets[0].id, findIds: group.targets.map(find => find.id),
       artist: group.targets[0].artist, title: group.targets[0].title,

@@ -71,6 +71,13 @@ describe("new-deal research allowance", () => {
     expect(result.diagnostics).toMatchObject({observedDemandSelectedCount:10, explorationSelectedCount:10});
     expect([...new Set(result.selected.filter((row:any)=>row.researchPriority === "unproven_exploration").map((row:any)=>row.sourceId))].sort()).toEqual(["large-feed","vinyl-price-drop"]);
   });
+  it("retains the entire discovered backlog beyond 240 while respecting explicit batch limits", () => {
+    const input = Array.from({length:400}, (_, i) => make(`offer-${i}`, `shop-${i % 12}`, i % 3 === 0));
+    expect(selectResearchCandidates(input).selected).toHaveLength(400);
+    expect(selectResearchCandidates(input, {limit:Infinity}).selected).toHaveLength(400);
+    expect(selectResearchCandidates(input, {limit:240}).selected).toHaveLength(240);
+    expect(selectResearchCandidates(input, {limit:0}).selected).toHaveLength(0);
+  });
   it("keeps unfamiliar offers in the first research batch after evaluation reorders the pool", () => {
     const input = [...Array.from({length:30}, (_,i)=>make(`known-${i}`,"known-shop",true)),
       ...Array.from({length:30}, (_,i)=>make(`new-${i}`,i % 2 ? "new-shop-a" : "new-shop-b"))];
