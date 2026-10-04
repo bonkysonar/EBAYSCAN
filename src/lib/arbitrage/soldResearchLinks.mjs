@@ -143,7 +143,7 @@ export function normalizeResearchTitle(rawTitle = "") {
     .replace(/[[(]([^\])]+)[\])]/g, (whole, inside) =>
       /\b(?:vinyl|lps?|remaster(?:ed)?|reissue|edition|version|grams?|swirl|splatter|exclusive|variant|walmart|target)\b/i.test(
         inside,
-      ) || /^(?:\d+(?:st|nd|rd|th)?(?:[ -]year)?\s+anniversary|alt(?:ernate)?\s+cover|US\s+only)$/i.test(inside.trim()) || /^(?:verve\s+vault|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series$/i.test(inside.trim()) ||
+      ) || /^(?:\d+(?:st|nd|rd|th)?(?:[ -]year)?\s+anniversary|alt(?:ernate)?\s+cover|US\s+only)$/i.test(inside.trim()) || /^(?:verve\s+(?:vault|acoustic\s+sounds)|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series$/i.test(inside.trim()) ||
       /^(?:black|white|red|blue|green|yellow|orange|pink|purple|clear|silver|gold|tangerine|apple\s+red|ghostly\s+blue)$/i.test(inside.trim())
         ? " "
         : ` ${inside} `,
@@ -211,7 +211,7 @@ export function normalizeResearchTitle(rawTitle = "") {
     title
       .replace(/\s+all[ -]analog\s*$/i, " ")
       .replace(/\s+\d+-\s*set\s*$/i, " ")
-      .replace(/\s+(?:verve\s+vault|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series\s*$/i, " ")
+      .replace(/\s+(?:verve\s+(?:vault|acoustic\s+sounds)|blue\s+note\s+(?:essentials?|classic))(?:\s+vinyl)?\s+series\s*$/i, " ")
       .replace(
         /\s+(?:[-–—|:]\s*)?(?:rsd|record\s+store\s+day)(?:\s+black\s+friday)?(?:\s+(?:19|20)\d{2})?\s*$/i,
         " ",

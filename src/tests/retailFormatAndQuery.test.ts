@@ -293,4 +293,17 @@ describe("vinyl-only research and release queries", () => {
     expect(normalizeResearchTitle("A Story (The Original Series)")).toBe("A Story The Original Series");
     expect(buildSoldResearchQueryVariants({ artist: "Artist", title: "Artist - A Real Album - Apple Red Vinyl LP" })[0].query).toBe("Artist A Real Album");
   });
+
+  it("researches Acoustic Sounds releases by album while retaining their edition identity", () => {
+    for (const [artist, album] of [["Jimmy Smith", "The Cat"], ["Oscar Peterson Trio", "We Get Requests"], ["Oscar Peterson Trio", "Night Train"]]) {
+      for (const suffix of ["Verve Acoustic Sounds Series LP", "(Verve Acoustic Sounds Series) LP"]) {
+        const candidate = { id: `${artist}-${album}`, artist, title: `${album} ${suffix}`, sourceListingTitle: `${album} ${suffix}`, purchasePrice: 20 };
+        const original = { ...candidate };
+        expect(buildProductResearchPlan([candidate])[0].variants[0].query).toBe(`${artist} ${album}`);
+        expect(candidate).toEqual(original);
+      }
+    }
+    expect(normalizeResearchTitle("Acoustic Sounds")).toBe("Acoustic Sounds");
+    expect(normalizeResearchTitle("A Story (The Acoustic Series)")).toBe("A Story The Acoustic Series");
+  });
 });
