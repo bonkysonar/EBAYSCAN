@@ -41,4 +41,14 @@ describe("automatic retail publication", () => {
     await expect(publicationRequest("/unrelated", { env, fetchImpl })).rejects.toThrow("Unsupported");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+  it("surfaces bounded validation errors without echoing credentials or response data", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: `finds[30].capturedAt must be an ISO timestamp. ${env.ARBITRAGE_UPLOAD_TOKEN}`,
+      privateData: "do-not-print",
+    }), { status: 400 }));
+    await expect(publicationRequest("/api/arbitrage/upload", { env, fetchImpl })).rejects.toThrow(
+      "HTTP 400. finds[30].capturedAt must be an ISO timestamp. [redacted]",
+    );
+    await expect(publicationRequest("/api/arbitrage/upload", { env, fetchImpl: vi.fn().mockResolvedValue(new Response("<html>private</html>", { status: 502 })) })).rejects.toThrow("HTTP 502.");
+  });
 });

@@ -7,6 +7,7 @@ vi.mock("../lib/arbitrage/vinylShopSources", () => ({
   getActiveRetailSources: () => [{ id: "store" }],
 }));
 import {
+  assertFinalArbitragePayload,
   readArbitrageFindsHistory,
   readLatestArbitrageFinds,
   uploadArbitrageFinds,
@@ -16,6 +17,15 @@ describe("arbitrage finds publication", () => {
   const originalUploadToken = process.env.ARBITRAGE_UPLOAD_TOKEN;
   const originalBlobToken = process.env.BLOB_READ_WRITE_TOKEN;
   let workspace = "";
+
+  it.each(["2026-09-05T10:37:23.6Z", "2026-09-05T10:37:23.60Z", "2026-09-05T10:37:23.600Z"])("preserves valid fractional-second observation timestamps: %s", (capturedAt) => {
+    const payload = finalPayload({ finds: [productFind({ capturedAt })] });
+    expect(assertFinalArbitragePayload(payload).finds[0].capturedAt).toBe(capturedAt);
+  });
+
+  it.each(["yesterday", "2026-09-05", "2026-09-05T10:37:23.badZ"])("still rejects invalid observation timestamps: %s", (capturedAt) => {
+    expect(() => assertFinalArbitragePayload(finalPayload({ finds: [productFind({ capturedAt })] }))).toThrow("capturedAt must be an ISO timestamp");
+  });
 
   beforeEach(() => {
     workspace = mkdtempSync(join(tmpdir(), "record-scanner-arbitrage-"));
