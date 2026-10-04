@@ -5,9 +5,21 @@ import {
   buildEbayPublicSoldUrl,
   buildSoldResearchLinks,
   buildSoldResearchQueryVariants,
+  buildBaseResearchQuery,
 } from "../lib/arbitrage/soldResearchLinks.mjs";
 
 describe("arbitrage research normalization", () => {
+  it("preserves recovered album names and does not turn a missing artist into a null keyword", () => {
+    expect(buildBaseResearchQuery(null, "Pavement Watery Domestic LP")).toBe("Pavement Watery Domestic");
+    for (const [artist, title, expected] of [
+      ["Grateful Dead", "In The Dark (Colored Vinyl) Vinyl LP", "Grateful Dead In The Dark"],
+      ["10CC", "The Original Soundtrack LP", "10CC The Original Soundtrack"],
+      ["Tara Clerkin Trio", "On The Turning Ground (Colored Vinyl) Vinyl LP - Turntable Lab Exclusive", "Tara Clerkin Trio On The Turning Ground"],
+      ["Sevendust", "Truth Killer Only Best Buy", "Sevendust Truth Killer"],
+      ["Seether", "Surface Seems So Far Explicit Content", "Seether Surface Seems So Far"],
+    ]) expect(buildSoldResearchQueryVariants({ artist, title })[0].query).toBe(expected);
+    expect(buildSoldResearchQueryVariants({ artist: "Artist", title: "Album Dark Blue Vinyl LP" })[0].query).toBe("Artist Album");
+  });
   it("searches the album without a format-anchored named variant while retaining its pressing identity", () => {
     for (const [artist, title, expected] of [
       ["Bartees Strange", "Live Forever Exclusive LP (Pinwheel)", "Bartees Strange Live Forever"],

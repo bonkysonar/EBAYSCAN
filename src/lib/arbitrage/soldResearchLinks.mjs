@@ -87,7 +87,7 @@ export function buildBaseResearchQuery(artist, title) {
 }
 
 export function normalizeResearchArtist(rawArtist = "") {
-  const raw = decodeEntities(String(rawArtist));
+  const raw = decodeEntities(String(rawArtist ?? ""));
   if (/^\s*(?:unknown\s+artist|various(?:\s+artists?)?)\s*$/i.test(raw))
     return "";
   return cleanResearchText(
@@ -103,7 +103,14 @@ export function normalizeResearchArtist(rawArtist = "") {
 
 /** Remove merchandising suffixes while preserving words that can be album names. */
 export function normalizeResearchTitle(rawTitle = "") {
-  let title = decodeEntities(String(rawTitle))
+  const original = decodeEntities(String(rawTitle ?? ""));
+  // This is also an album title (for example 10cc), not always a format label.
+  if (/^(?:the\s+)?original\s+soundtrack(?:\s+(?:vinyl|lp))*$/i.test(original.trim()))
+    return cleanResearchText(original.replace(/(?:\s+(?:vinyl|lp))+$/i, ""));
+  let title = original
+    .replace(/\s+(?:only\s+(?:at\s+)?)best\s+buy\s*$/i, " ")
+    .replace(/\s+(?:vinyl\s+)?(?:[1-9]\s*)?lp\s*[-–—]?\s*turntable\s+lab\s+exclusive\s*$/i, " LP")
+    .replace(/\s+explicit\s+content\s*$/i, " ")
     .replace(/\s+all[ -]analog\s*$/i, " ")
     .replace(/\s+(?:brand\s+new|new\s+sealed|factory\s+sealed|sealed)(?:\s+U\.?S\.?)?\s*(?:\d+["”]?\s*)?(?:vinyl|lps?|records?)?\s*$/i, " ")
     .replace(/\s+\d+[ -]*LP[ -]*Set\s*$/i, " ")
@@ -195,6 +202,7 @@ export function normalizeResearchTitle(rawTitle = "") {
       (isExplicitEditionTail(tail) || repeatedColor || whiteFormatTail ||
         (index > 0 && /^(?:black|white|red|blue|green|tan|pink|purple|yellow|gold)\s+(?:7|10|12)\s*["”]$/.test(tail.toLowerCase())) ||
         (index > 0 &&
+          !/^(?:and|or|in|of|to|it|the|on)$/i.test(tokens[index - 1]) &&
           /^(?:apple\s+red|ghostly\s+blue|baby|royal|cloudy|milky|neon|hot|light|dark|half)\b.*\b(?:vinyl|lp|inch)\b/i.test(
             tail,
           ) &&
