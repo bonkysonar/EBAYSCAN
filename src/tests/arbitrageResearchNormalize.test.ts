@@ -155,6 +155,8 @@ describe("arbitrage research normalization", () => {
       ["Seether", "Surface Seems So Far [Translucent Sea Blue Vinyl] [Best Buy Exclusive] [LP] [Explicit Content]", "Seether Surface Seems So Far"],
       ["Alter Bridge", "One Day Remains [20th Anniversary Deluxe Edition] [Blue Smoke 2 LP] [Only @ Best Buy] [LP] [VINYL]", "Alter Bridge One Day Remains"],
       ["THE BEATLES", "RUBBER SOUL - 2026 SPECIAL EDITION", "THE BEATLES RUBBER SOUL"],
+      ["Julian Lennon", 'Imagine 45rpm 7" Vinyl', "Julian Lennon Imagine"],
+      ["Artist", "45 RPM", "Artist 45 RPM"],
     ];
     for (const [artist, title, query] of cases) {
       expect(buildSoldResearchQueryVariants({ artist, title })[0].query).toBe(query);
