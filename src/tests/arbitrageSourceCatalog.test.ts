@@ -88,6 +88,14 @@ describe("retail arbitrage source catalog", () => {
     });
   });
 
+  it("routes migrated Ochre stores through the retailer adapter rather than guessing Shopify from shop subdomains", () => {
+    for (const id of ["captured-tracks", "mexican-summer"]) {
+      const source = getActiveRetailSources().find((entry) => entry.id === id);
+      expect(source?.crawlType).toBe("retailer");
+      expect(new URL(source!.baseUrl).hostname).toBe(source?.domain);
+    }
+  });
+
   it("does not regress repaired collection handles to known empty or removed routes", () => {
     const byId = new Map(retailArbitrageSourceCatalog.map((source) => [source.id, source.baseUrl]));
 

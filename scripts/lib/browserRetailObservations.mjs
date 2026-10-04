@@ -2,6 +2,9 @@ import { validatedCheckoutQuote } from "../../src/lib/arbitrage/checkoutBasket.m
 const MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const host = (value) =>
   new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+const privateRetailUrl = (url) =>
+  /(?:^|\/)(?:accounts?|checkout|customer_authentication|cart|buyer_flags)(?:[/.]|$)/i.test(url.pathname) ||
+  [...url.searchParams.keys()].some(key => /^(?:accounts?|checkout|customer_authentication|cart|buyer_flags)$/i.test(key));
 const escape = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -41,9 +44,7 @@ export function validateBrowserRetailObservations(
     if (
       url.protocol !== "https:" ||
       host(url) !== host(source.url ?? source.baseUrl) ||
-      /(?:account|checkout|customer_authentication|cart|buyer_flags)/i.test(
-        url.href,
-      )
+      privateRetailUrl(url)
     )
       throw new Error(
         `Browser observation URL does not match source: ${page.sourceId}`,
@@ -80,9 +81,7 @@ export function validateBrowserRetailObservations(
           return (
             target.protocol === "https:" &&
             (host(target) === host(url) || (source.group === "Discovery sources" && page.role === "discovery" && retailerHosts.has(host(target)))) &&
-            !/(?:account|checkout|customer_authentication|cart|buyer_flags)/i.test(
-              target.href,
-            ) &&
+            !privateRetailUrl(target) &&
             typeof link.text === "string"
           );
         } catch {
@@ -138,14 +137,12 @@ function validateCatalogProduct(card, page) {
     page.outcome !== "available" ||
     url.protocol !== "https:" ||
     host(url) !== host(page.url) ||
-    /(?:account|checkout|customer_authentication|cart|buyer_flags)/i.test(
-      url.href,
-    ) ||
+    privateRetailUrl(url) ||
     (card.artist && !text.includes(normalize(card.artist))) ||
     !text.includes(normalize(card.title)) ||
     !Number.isFinite(card.price) ||
     card.price <= 0 ||
-    !card.visibleText.includes(card.price.toFixed(2))
+    !visiblePriceMatches(card.visibleText, card.price)
   )
     throw new Error("Catalog card identity/price/domain mismatch");
   if (
@@ -182,6 +179,13 @@ function validateCatalogProduct(card, page) {
     url: url.toString(),
     visibleText: card.visibleText.slice(0, 4000),
   };
+}
+
+// Retailers display decimal commas as well as decimal points. Require a whole
+// price token so 17.60 cannot be claimed from a visible 117.60 or 1,017.60.
+function visiblePriceMatches(text, price) {
+  const token = price.toFixed(2).replace(".", "[.,]");
+  return new RegExp(`(?:^|[^\\d.,])${token}(?!\\d|[.,]\\d)`).test(text);
 }
 
 function validateProductEvidence(page) {
