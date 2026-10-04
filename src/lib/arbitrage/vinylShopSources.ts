@@ -543,7 +543,7 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
   ...[
     ["music-direct", "Music Direct", "musicdirect.com", "https://www.musicdirect.com/music/vinyl/"],
     ["acoustic-sounds", "Acoustic Sounds", "acousticsounds.com", "https://store.acousticsounds.com/c/15/Vinyl_Records"],
-    ["elusive-disc", "Elusive Disc", "elusivedisc.com", "https://elusivedisc.com/music/vinyl/"],
+    ["elusive-disc", "Elusive Disc", "elusivedisc.com", "https://elusivedisc.com/music/vinyl-records/"],
   ].map(([id, displayName, domain, baseUrl]) =>
     source({
       id,
@@ -634,8 +634,8 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
     ["yep-roc", "Yep Roc", "yeproc.11spot.com", "https://yeproc.11spot.com/music/vinyl.html"],
     ["fat-possum", "Fat Possum", "fatpossum.com", "https://fatpossum.com/collections/vinyl"],
     ["third-man-records", "Third Man Records", "thirdmanrecords.com", "https://thirdmanrecords.com/collections/all-music"],
-    ["captured-tracks", "Captured Tracks", "capturedtracks.com", "https://capturedtracks.com/collections/vinyl"],
-    ["mexican-summer", "Mexican Summer", "mexicansummer.com", "https://mexicansummer.com/collections/vinyl"],
+    ["captured-tracks", "Captured Tracks", "store.capturedtracks.com", "https://store.capturedtracks.com/"],
+    ["mexican-summer", "Mexican Summer", "shop.mexicansummer.com", "https://shop.mexicansummer.com/"],
     ["sacred-bones", "Sacred Bones", "sacredbonesrecords.com", "https://www.sacredbonesrecords.com/collections/releases"],
     ["dais-records", "Dais Records", "daisrecords.com", "https://www.daisrecords.com/collections/vinyl"],
     ["saddle-creek", "Saddle Creek", "saddle-creek.com", "https://saddle-creek.com/collections/vinyl"],
@@ -653,7 +653,7 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
       baseUrl,
       country: ["domino-mart", "ninja-tune", "partisan-records"].includes(id) ? "US/UK" : "US",
       sourceType: "indie_label_store",
-      crawlType: id === "stones-throw" || baseUrl.includes("/collections/") || baseUrl.includes("shop.") ? "shopify-store" : "retailer",
+      crawlType: id === "stones-throw" || baseUrl.includes("/collections/") ? "shopify-store" : "retailer",
       priority: 2,
       saleLikelihood: "medium",
       ...labelSourceRules,
@@ -709,7 +709,7 @@ export const retailArbitrageSourceCatalog: RetailArbitrageSource[] = [
     ["data-discs", "Data Discs", "data-discs.com", "https://data-discs.com/collections/records"],
     ["ship-to-shore-media", "Ship to Shore Media", "shiptoshoremedia.com", "https://shiptoshoremedia.com/collections/vinyl"],
     ["milan-records", "Milan Records", "milanrecords.shop", "https://milanrecords.shop/collections/all"],
-    ["varese-sarabande", "Varese Sarabande", "varesesarabande.com", "https://varesesarabande.com/collections/vinyl"],
+    ["varese-sarabande", "Varese Sarabande", "varesesarabande.com", "https://craftrecordings.com/collections/varese-sarabande?filter.p.product_type=Vinyl&sort_by=manual"],
     ["enjoy-the-ride-records", "Enjoy The Ride Records", "enjoytheriderecords.com", "https://enjoytheriderecords.com/collections/on-sale"],
     ["terror-vision", "Terror Vision", "terror-vision.com", "https://www.terror-vision.com/store/tv-vinyl-releases"],
   ].map(([id, displayName, domain, baseUrl]) =>

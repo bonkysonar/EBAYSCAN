@@ -31,6 +31,28 @@ const document = (pages: unknown[]) => ({
   pages,
 });
 describe("visible browser retail observations", () => {
+  it("allows Carter album URLs while excluding actual private storefront routes", () => {
+    const card = { artist: "Carter Burwell", title: "Carol", format: "LP", price: 30, url: "https://shop.example/products/carter-burwell-carol-lp", visibleText: "Carter Burwell Carol LP $30.00" };
+    const catalog = { ...page, outcome: "available", title: "Carol LP", url: card.url, visibleText: card.visibleText, catalogProducts: [card] };
+    expect(validateBrowserRetailObservations(document([catalog]), sources, now)[0].catalogProducts).toHaveLength(1);
+    for (const path of ["/cart", "/cart.php", "/account/login", "/accounts/profile", "/checkout/payment", "/customer_authentication", "/buyer_flags", "/products/album?cart=1"]) {
+      const url = `https://shop.example${path}`;
+      expect(() => validateBrowserRetailObservations(document([{ ...catalog, url }]), sources, now)).toThrow(/URL/);
+      expect(() => validateBrowserRetailObservations(document([{ ...catalog, catalogProducts: [{ ...card, url }] }]), sources, now)).toThrow(/domain/);
+    }
+  });
+  it("accepts decimal-comma catalog prices without accepting a partial price or inventing currency", () => {
+    const card = { artist: "Sargeist", title: "Disciple of the Heinous Path", format: "LP (blood red)", price: 17.60, currency: "EUR", available: true, url: "/product/disciple", visibleText: "Sargeist Disciple of the Heinous Path LP (blood red) In stock 22,00 € 17,60 €" };
+    const catalog = { ...page, outcome: "available", title: "Vinyl sale", visibleText: card.visibleText, catalogProducts: [card] };
+    const parsed = validateBrowserRetailObservations(document([catalog]), sources, now)[0];
+    expect(parsed.catalogProducts?.[0]).toMatchObject({ price: 17.60, currency: null, available: true });
+    const punctuated = { ...catalog, catalogProducts: [{ ...card, visibleText: "Sargeist Disciple of the Heinous Path LP In stock Current price: 17.60. EUR" }] };
+    expect(validateBrowserRetailObservations(document([punctuated]), sources, now)[0].catalogProducts?.[0]).toMatchObject({ price: 17.60, currency: "EUR" });
+    for (const price of ["117.60", "1,017.60", "17.600", "117,60", "17,600", "17.61"]) {
+      const invalid = { ...catalog, catalogProducts: [{ ...card, visibleText: `Sargeist Disciple of the Heinous Path LP In stock ${price} EUR` }] };
+      expect(() => validateBrowserRetailObservations(document([invalid]), sources, now)).toThrow(/price/);
+    }
+  });
   it("preserves observed Fall 2LP identity over the same-SKU generic parser copy", () => {
     const source = { id: "mvd-shop", name: "MVD Shop" };
     const observed = browserProductCandidates([{
