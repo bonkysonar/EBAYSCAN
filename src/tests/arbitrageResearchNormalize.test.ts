@@ -148,6 +148,19 @@ describe("arbitrage research normalization", () => {
     ]);
   });
 
+  it("removes observed bracketed merchandising without losing the album", () => {
+    const cases = [
+      ["10CC", "The Original Soundtrack (reissue)", "10CC The Original Soundtrack"],
+      ["Seether", "Holding Onto Strings Better Left to Fray [Tiger's Eye Vinyl] [Only @ Best Buy] [LP]", "Seether Holding Onto Strings Better Left to Fray"],
+      ["Seether", "Surface Seems So Far [Translucent Sea Blue Vinyl] [Best Buy Exclusive] [LP] [Explicit Content]", "Seether Surface Seems So Far"],
+      ["Alter Bridge", "One Day Remains [20th Anniversary Deluxe Edition] [Blue Smoke 2 LP] [Only @ Best Buy] [LP] [VINYL]", "Alter Bridge One Day Remains"],
+      ["THE BEATLES", "RUBBER SOUL - 2026 SPECIAL EDITION", "THE BEATLES RUBBER SOUL"],
+    ];
+    for (const [artist, title, query] of cases) {
+      expect(buildSoldResearchQueryVariants({ artist, title })[0].query).toBe(query);
+    }
+  });
+
   it("builds Product Research and public Sold plus Completed links from the same safely encoded query", () => {
     const query = "Simon & Garfunkel Bookends";
     const productUrl = new URL(buildEbayProductResearchUrl(query));
