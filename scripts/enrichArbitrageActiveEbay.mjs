@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import {
@@ -10,6 +10,7 @@ import {
   extractEditionIdentity,
 } from "../src/lib/arbitrage/activeEbayMatching.mjs";
 import { getEbayApplicationToken } from "./lib/ebayPurchaseDiscovery.mjs";
+import { mergeActiveEvidenceCache, reuseActiveEvidence } from "./lib/activeEvidenceCache.mjs";
 
 const WORKSPACE = process.cwd();
 const FINDS_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
@@ -45,12 +46,38 @@ if (isMain) await main();
 
 async function main() {
   const latestPath = args.get("file") ? join(WORKSPACE, args.get("file")) : latestFindsPath();
-  const endpointRoot = env.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
-  const tokenResult = await getEbayApplicationToken({ endpointRoot, env, fetchImpl: fetch });
-  if (!tokenResult.available) throw new Error(tokenResult.reason);
-  token = tokenResult.token;
   const payload = JSON.parse(readFileSync(latestPath, "utf8"));
   const researchFinds = payload.researchCandidates ?? payload.finds;
+  const cachePath = args.has("cache") ? resolve(args.get("cache")) : process.env.LOCALAPPDATA
+    ? join(process.env.LOCALAPPDATA, "RecordScanner", "marketplace-cache", "active-evidence.json")
+    : join(FINDS_DIR, "active-evidence-cache.json");
+  const cacheOptions = { matchingVersion: ACTIVE_MATCHING_VERSION, destinationKey: activeDestinationKey() };
+  const readCache = () => {
+    if (!existsSync(cachePath)) return [];
+    const saved = JSON.parse(readFileSync(cachePath, "utf8"));
+    if (saved.version !== 1 || !Array.isArray(saved.records)) throw new Error("Unsupported active evidence cache");
+    return saved.records;
+  };
+  let reuseFinds = [];
+  if (args.has("reuse")) {
+    const source = JSON.parse(readFileSync(resolve(args.get("reuse")), "utf8"));
+    reuseFinds = source.researchCandidates ?? source.finds;
+    if (!Array.isArray(reuseFinds)) throw new Error("--reuse must identify an existing scan artifact");
+  }
+  let cacheRecords = mergeActiveEvidenceCache(readCache(), [...researchFinds, ...reuseFinds], cacheOptions);
+  const reusedOffers = includeCompleted ? 0 : reuseActiveEvidence(researchFinds, cacheRecords, cacheOptions);
+  if (!includeCompleted && researchFinds !== payload.finds) reuseActiveEvidence(payload.finds, cacheRecords, cacheOptions);
+  const persistCache = () => {
+    cacheRecords = mergeActiveEvidenceCache([...readCache(), ...cacheRecords], researchFinds, cacheOptions);
+    mkdirSync(dirname(cachePath), { recursive: true });
+    const temporary = `${cachePath}.${process.pid}.tmp`;
+    writeFileSync(temporary, JSON.stringify({ version: 1, records: cacheRecords }));
+    renameSync(temporary, cachePath);
+  };
+  // Save reused observations before any network call. A provider limit must not
+  // discard valid evidence collected earlier by another scan or worktree.
+  writeFileSync(latestPath, JSON.stringify(payload, null, 2));
+  persistCache();
   const queue = buildQueue(researchFinds).slice(0, maxQueries);
   const startedAt = new Date().toISOString();
   let completed = 0;
@@ -63,12 +90,22 @@ async function main() {
       file: latestPath,
       rows: researchFinds.length,
       uniqueQueries: queue.length,
+      reusedOffers,
       concurrency,
       maxSearchPages,
       pageLimit: SEARCH_PAGE_LIMIT,
       startedAt,
     }),
   );
+
+  if (args.has("cacheOnly") || !queue.length) {
+    console.log(JSON.stringify({ completed: 0, reusedOffers, remaining: queue.length, cacheOnly: args.has("cacheOnly"), file: latestPath }));
+    return;
+  }
+  const endpointRoot = env.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+  const tokenResult = await getEbayApplicationToken({ endpointRoot, env, fetchImpl: fetch });
+  if (!tokenResult.available) throw new Error(tokenResult.reason);
+  token = tokenResult.token;
 
   await runPool(queue, concurrency, async (entry) => {
     const result = await enrichActiveEntry(entry);
@@ -82,6 +119,7 @@ async function main() {
 
     if (completed % 10 === 0 || completed === queue.length) {
       writeFileSync(latestPath, JSON.stringify(payload, null, 2));
+      persistCache();
       console.log(
         JSON.stringify({
           completed,
@@ -95,6 +133,7 @@ async function main() {
   });
 
   writeFileSync(latestPath, JSON.stringify(payload, null, 2));
+  persistCache();
   console.log(
     JSON.stringify({
       completed,

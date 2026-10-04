@@ -1457,7 +1457,7 @@ function validSaleCampaignStatus(value: unknown): value is SaleCampaignStatus {
 function validIsoTimestamp(value: unknown): value is string {
   return (
     typeof value === "string" &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) &&
     !Number.isNaN(Date.parse(value))
   );
 }
