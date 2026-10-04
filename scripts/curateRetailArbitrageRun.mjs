@@ -217,6 +217,9 @@ console.log(
 );
 
 function curateFind(find) {
+  if (!cleanText(find.artist)) {
+    find = { ...find, artist: "Unknown Artist", identityStatus: "unresolved" };
+  }
   if (find.opportunityType === "sitewide_sale") {
     return evaluateOpportunity(
       {

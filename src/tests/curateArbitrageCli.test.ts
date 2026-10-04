@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe("retail arbitrage curation CLI", () => {
-  it("can safely finalize a run with research left pending", () => {
+  it.each(["Artist", null])("can safely finalize pending research with artist %s", (artist) => {
     const workspace = mkdtempSync(join(tmpdir(), "record-scanner-curation-"));
     temporaryDirectories.push(workspace);
     const outputDirectory = join(workspace, "exports", "arbitrage-finds");
@@ -37,7 +37,7 @@ describe("retail arbitrage curation CLI", () => {
         createdAt: "2026-07-22T12:00:00.000Z",
         finds: [
           {
-            artist: "Artist",
+            artist,
             capturedAt: "2026-07-22T12:00:00.000Z",
             condition: "new/sealed",
             id: "candidate-1",
@@ -76,8 +76,10 @@ describe("retail arbitrage curation CLI", () => {
       runId: "scan-pending-test",
     });
     expect(finalPayload.finds[0]).toMatchObject({
+      artist: artist ?? "Unknown Artist",
       decision: "REVIEW",
       ebayResearchStatus: "pending",
     });
+    if (artist === null) expect(finalPayload.finds[0].identityStatus).toBe("unresolved");
   });
 });
