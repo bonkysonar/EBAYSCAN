@@ -103,11 +103,18 @@ export function normalizeResearchArtist(rawArtist = "") {
 
 /** Remove merchandising suffixes while preserving words that can be album names. */
 export function normalizeResearchTitle(rawTitle = "") {
-  const original = decodeEntities(String(rawTitle ?? ""));
+  // Remove complete merchandising annotations before format cleanup can
+  // erase their identifying words (for example "[Blue Smoke 2 LP]").
+  const original = decodeEntities(String(rawTitle ?? "")).replace(
+    /[[(]([^\])]+)[\])]/g,
+    (whole, inside) => /^(?:only\s*(?:@|at)?\s*best\s+buy|explicit\s+content|reissue)$/i.test(inside.trim()) ||
+      /\b[1-9]\s*lps?\b/i.test(inside) ? " " : whole,
+  ).trim();
   // This is also an album title (for example 10cc), not always a format label.
   if (/^(?:the\s+)?original\s+soundtrack(?:\s+(?:vinyl|lp))*$/i.test(original.trim()))
     return cleanResearchText(original.replace(/(?:\s+(?:vinyl|lp))+$/i, ""));
   let title = original
+    .replace(/\s+[-–—]\s+(?:19|20)\d{2}\s+special\s+edition\s*$/i, " ")
     .replace(/\s+(?:only\s+(?:at\s+)?)best\s+buy\s*$/i, " ")
     .replace(/\s+(?:vinyl\s+)?(?:[1-9]\s*)?lp\s*[-–—]?\s*turntable\s+lab\s+exclusive\s*$/i, " LP")
     .replace(/\s+explicit\s+content\s*$/i, " ")
@@ -230,7 +237,7 @@ export function normalizeResearchTitle(rawTitle = "") {
 }
 
 const EDITION_WORDS =
-  /^(?:(?:baby|apple|royal|cloudy|ghostly|opaque|transparent|translucent|milky|neon|hot|light|dark|limited|exclusive|standard|version|deluxe|anniversary|collector'?s?|import|indie|edition|pressing|reissue|remaster(?:ed)?|heavyweight|half|speed|master(?:ed)?|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|tan|tangerine|amber|ruby|coral|brown|cream|clear|navy|teal|grey|gray|beer|marble|marbled|galaxy|splatter|swirl|smoke|platinum|colour|color|colored|coloured|vinyl|lps?|ep|single|inch|in|gram(?:s)?|g|record|album|box|set|picture|disc|gatefold|soundtrack|ost|mono|stereo|new|sealed|brand|sale|clearance|preorder|pre|order|staff|pick|walmart|target|urban|outfitters|uo|r|b|rock|pop|country|jazz|rap|hip|hop|in|with|w|and|\d+(?:st|nd|rd|th|g|lp)?)|[\s/&()+.\-"”])+$/i;
+  /^(?:(?:baby|apple|royal|cloudy|ghostly|opaque|transparent|translucent|milky|neon|hot|light|dark|limited|exclusive|standard|special|version|deluxe|anniversary|collector'?s?|import|indie|edition|pressing|reissue|remaster(?:ed)?|heavyweight|half|speed|master(?:ed)?|black|white|red|blue|pink|purple|orange|yellow|green|gold|silver|bone|tan|tangerine|amber|ruby|coral|brown|cream|clear|navy|teal|grey|gray|beer|marble|marbled|galaxy|splatter|swirl|smoke|platinum|colour|color|colored|coloured|vinyl|lps?|ep|single|inch|in|gram(?:s)?|g|record|album|box|set|picture|disc|gatefold|soundtrack|ost|mono|stereo|new|sealed|brand|sale|clearance|preorder|pre|order|staff|pick|walmart|target|urban|outfitters|uo|r|b|rock|pop|country|jazz|rap|hip|hop|in|with|w|and|\d+(?:st|nd|rd|th|g|lp)?)|[\s/&()+.\-"”])+$/i;
 function isEditionDescription(value) {
   const text = String(value ?? "").trim();
   return !text || EDITION_WORDS.test(text);
