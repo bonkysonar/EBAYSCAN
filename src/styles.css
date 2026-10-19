@@ -3611,3 +3611,10 @@ input[type="radio"] {
   }
 }
 
+.seller-checkpoint-import textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  margin: 0.5rem 0 1rem;
+  font-family: monospace;
+}

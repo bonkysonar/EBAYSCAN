@@ -1,4 +1,4 @@
-﻿# Test Plan
+# Test Plan
 
 ## Research reliability and source recovery
 
@@ -269,3 +269,11 @@ Confirm item prices are compared before shipping; missing shipping is not free; 
 Run `src/tests/sellerMatchingV4.test.ts` for sealed M/M versus New, unspecified multi-disc albums versus mixed-album bundles, self-titled identity, explicit description grades versus sleeve grades, missing covers, apostrophe normalization, a single 200-result extended request and robust medians. Three/four matches, unknown seller coverage and wide spreads must stay tentative with a 10% cap; supported evidence needs five matches from at least two known sellers. Fewer than three matches cannot generate drafts. CSVs and UI must show confidence separately from price direction.
 
 Load a full-store checkpoint in the browser, filter and page through results, prepare drafts, export filtered CSV and reload. Verify IndexedDB preserves notes and proposals, errors remain distinct from analyzed counts, expired evidence requeues and local-run loading is available only on loopback. The CLI should leave a review CSV, separate draft CSV, explicit completion status and no active lock after a normal exit. `--resume --report-only` must not call eBay.
+# Seller checkpoint import recovery
+
+- Copy a full queue with proposed prices, paste it into another browser/origin, and verify the imported counts and proposed amounts match.
+- Reload the destination after the saved confirmation; the imported queue and tags must persist.
+- A file-read failure must offer Paste Checkpoint, and selecting the same file again must trigger another read.
+- Invalid/truncated transfer text and duplicate IDs must leave the saved queue unchanged.
+- Expired checkpoints retain proposals but remove expired comparison evidence without changing timestamps.
+- `npx vitest run src/tests/sellerCheckpoint.test.ts` covers compressed/plain transfers, proposals, expiry, corrupt text, duplicate IDs and size limits.

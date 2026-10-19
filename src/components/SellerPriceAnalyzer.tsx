@@ -4,6 +4,7 @@ import { ebaySellerSearchUrl, mediaGradeFromListing } from "../lib/seller/search
 import { rowsFromSnapshotCsv } from "../lib/seller/snapshot";
 import { runSellerAnalysis, hasFreshAnalysis, mergeSellerListings, restoreRows, draftSellerPrice, type AnalyzerRow } from "../lib/seller/queue";
 import { readSellerRows, writeSellerRows } from "../lib/seller/storage";
+import { decodeSellerCheckpoint, encodeSellerCheckpoint, MAX_CHECKPOINT_BYTES } from "../lib/seller/checkpoint";
 import { SellerListingsClient } from "../lib/seller/client";
 import type { SellerListing, SellerPricingStatus } from "../lib/seller/types";
 
@@ -45,6 +46,8 @@ export function SellerPriceAnalyzer() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [showCheckpointPaste, setShowCheckpointPaste] = useState(false);
+  const checkpointTextRef = useRef<HTMLTextAreaElement>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -169,26 +172,51 @@ export function SellerPriceAnalyzer() {
     setSelectedListingId(null);
   }
 
+  async function acceptImportedRows(importedRows: AnalyzerRow[], source: string) {
+    await savingRef.current;
+    const incomingIds = new Set(importedRows.map(row => row.listing.id));
+    await writeSellerRows(importedRows, [...savedRowsRef.current.keys()].filter(id => !incomingIds.has(id)));
+    savedRowsRef.current = new Map(importedRows.map(row => [row.listing.id, row]));
+    setRows(importedRows);
+    setSelectedListingId(null);
+    setTablePage(0);
+    setStatusFilter(importedRows.some(row => row.isTaggedForChange) ? "TAGGED" : "ALL");
+    setError(null);
+    setShowCheckpointPaste(false);
+    setWarnings([`Imported and saved ${importedRows.length} rows from ${source}, including ${importedRows.filter(row => row.proposedPrice !== undefined).length} proposed prices. No live prices were changed.`]);
+  }
+
+  async function importPastedCheckpoint() {
+    if (isAnalyzing || isLoadingListings || !storageReady) return;
+    setIsLoadingListings(true);
+    try { await acceptImportedRows(await decodeSellerCheckpoint(checkpointTextRef.current?.value ?? ""), "pasted checkpoint"); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "Checkpoint import failed."); }
+    finally { setIsLoadingListings(false); }
+  }
+
+  async function copyCheckpoint() {
+    try {
+      await navigator.clipboard.writeText(await encodeSellerCheckpoint(rows));
+      setWarnings(["Checkpoint copied. Open the other analyzer, choose Paste Checkpoint, and paste it there. Includes proposed prices; no live prices were changed."]);
+    } catch { setError("Could not copy the checkpoint. Download Checkpoint is still available."); }
+  }
+
   async function importSnapshotCsv(file: File | undefined) {
     if (!file || isAnalyzing || isLoadingListings || !storageReady) return;
-    if (file.size > 40_000_000) { setError("Import exceeds 40 MB."); return; }
-
+    if (file.size > MAX_CHECKPOINT_BYTES) { setError("Import exceeds 40 MB."); return; }
+    setIsLoadingListings(true);
     try {
-      const text = await file.text();
-      let importedRows: AnalyzerRow[];
-      if (file.name.toLowerCase().endsWith(".json")) {
-        const data = JSON.parse(text);
-        if (data.version !== 2 || !Array.isArray(data.rows) || data.rows.some((row: AnalyzerRow) => !row?.listing?.id || typeof row.listing.title !== "string" || !Number.isFinite(row.listing.currentPrice))) throw new Error("Invalid seller checkpoint.");
-        if (new Set(data.rows.map((row: AnalyzerRow) => row.listing.id)).size !== data.rows.length) throw new Error("Checkpoint contains duplicate listing IDs.");
-        importedRows = restoreRows(data.rows);
-      } else importedRows = rowsFromSnapshotCsv(text, rows);
-      setRows(importedRows);
-      setSelectedListingId(null);
-      setError(null);
-      setWarnings([`Imported ${importedRows.length} rows from ${file.name}. SKU/custom label is preserved where active listings were already loaded.`]);
+      let text: string;
+      try { text = await file.text(); }
+      catch {
+        setShowCheckpointPaste(true);
+        throw new Error("The browser could not read this file. Select it again, or use Copy Checkpoint in the source analyzer and paste it below.");
+      }
+      const importedRows = file.name.toLowerCase().endsWith(".json") ? await decodeSellerCheckpoint(text) : rowsFromSnapshotCsv(text, rows);
+      await acceptImportedRows(importedRows, file.name);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Snapshot CSV import failed.");
-    }
+    } finally { setIsLoadingListings(false); }
   }
 
   const analyzedCount = rows.filter((row) => hasFreshAnalysis(row, now)).length;
@@ -238,13 +266,15 @@ export function SellerPriceAnalyzer() {
           </button>
           <label className="import-csv-button">
             Import CSV / Checkpoint
-            <input type="file" accept=".csv,.json,text/csv,application/json" disabled={isAnalyzing || isLoadingListings || !storageReady} onChange={(event) => importSnapshotCsv(event.target.files?.[0])} />
+            <input type="file" accept=".csv,.json,text/csv,application/json" disabled={isAnalyzing || isLoadingListings || !storageReady} onChange={(event) => { const input = event.currentTarget; void importSnapshotCsv(input.files?.[0]).finally(() => { input.value = ""; }); }} />
           </label>
+          <button type="button" onClick={() => setShowCheckpointPaste(true)} disabled={isAnalyzing || isLoadingListings || !storageReady}>Paste Checkpoint</button>
           <button type="button" className="secondary-button" onClick={clearCachedAnalysis} disabled={isAnalyzing || isLoadingListings || rows.length === 0}>
             Clear Cache
           </button>
           <button type="button" onClick={prepareDrafts} disabled={isAnalyzing || isLoadingListings || analyzedCount === 0}>Prepare Sale Drafts (10–20%)</button>
           <button type="button" onClick={() => downloadCheckpoint(rows)} disabled={!rows.length}>Download Checkpoint</button>
+          <button type="button" onClick={copyCheckpoint} disabled={!rows.length || isAnalyzing || isLoadingListings}>Copy Checkpoint</button>
           <button type="button" className="secondary-button" disabled={isAnalyzing || isLoadingListings || !rows.length} onClick={() => setRows(current => current.map(row => ({ ...row, state: "pending", analysis: undefined, searchResult: undefined, error: undefined })))}>Reanalyze Entire Store</button>
         </div>
       </div>
@@ -253,6 +283,16 @@ export function SellerPriceAnalyzer() {
       {warnings.map((warning) => (
         <div className="warning-box" key={warning}>{warning}</div>
       ))}
+
+      {showCheckpointPaste ? <section className="panel seller-checkpoint-import">
+        <h3>Paste Checkpoint</h3>
+        <p>Paste copied checkpoint text or the contents of a checkpoint JSON file. Import replaces this browser's saved queue and keeps proposed prices. Expired comparison evidence still requires a refresh.</p>
+        <label>Checkpoint text<textarea ref={checkpointTextRef} rows={4} maxLength={MAX_CHECKPOINT_BYTES} spellCheck={false} autoComplete="off" disabled={isLoadingListings} /></label>
+        <div className="seller-actions">
+          <button type="button" onClick={importPastedCheckpoint} disabled={isLoadingListings}>{isLoadingListings ? "Importing and saving..." : "Import and Save Checkpoint"}</button>
+          <button type="button" className="secondary-button" onClick={() => setShowCheckpointPaste(false)} disabled={isLoadingListings}>Cancel</button>
+        </div>
+      </section> : null}
 
       <div className="seller-stats compact-seller-stats">
         <Stat label="Active" value={rows.length} />
