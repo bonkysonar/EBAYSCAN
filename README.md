@@ -277,3 +277,9 @@ Browse API search currently powers barcode, catalog-number, and manual text inpu
 
 
 
+# Moving a seller pricing review between browsers
+
+Choose **Copy Checkpoint** in the analyzer containing the completed run. In the destination analyzer, choose **Paste Checkpoint**, paste the copied text, and choose **Import and Save Checkpoint**. This transfers the full queue, evidence timestamps, tags, notes, and proposed prices without reading a local file. The app confirms success only after the replacement queue is saved in that browser. No eBay prices are changed.
+
+The existing CSV/JSON file importer remains available. If the browser cannot read a selected file, it now opens the paste fallback and explains recovery. Plain checkpoint JSON also works in the paste field. Expired comparison evidence is removed on import while review proposals are preserved; timestamps are never refreshed by transfer.
+
