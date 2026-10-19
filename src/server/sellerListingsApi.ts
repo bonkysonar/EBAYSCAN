@@ -17,6 +17,7 @@ type SellerListingsEnv = {
 type PaginationState = {
   pageNumber: number;
   totalPages: number;
+  totalEntries?: number;
 };
 
 export type SellerListingsFetchOptions = {
@@ -25,7 +26,8 @@ export type SellerListingsFetchOptions = {
 };
 
 const ENTRIES_PER_PAGE = 200;
-const MAX_PAGES = 25;
+const MAX_PAGES = 1_000;
+const MAX_PAGES_PER_REQUEST = 5;
 
 export async function fetchSellerActiveListings(
   env: SellerListingsEnv,
@@ -38,6 +40,7 @@ export async function fetchSellerActiveListings(
   let pageNumber = normalizePageNumber(options.pageNumber);
   let totalPages = MAX_PAGES;
   let pageCount = 0;
+  let reportedTotal: number | undefined;
   const maxPages = normalizeMaxPages(options.maxPages);
   let accessToken = await getEbayUserAccessToken(env);
 
@@ -52,6 +55,7 @@ export async function fetchSellerActiveListings(
     listings.push(...parsed.listings);
     warnings.push(...parsed.warnings);
     totalPages = parsed.pagination.totalPages;
+    reportedTotal = parsed.pagination.totalEntries;
     pageNumber += 1;
     pageCount += 1;
     accessToken = await getEbayUserAccessToken(env);
@@ -64,6 +68,8 @@ export async function fetchSellerActiveListings(
   const dedupedListings = dedupeSellerListings(listings);
   return {
     hasMore: pageNumber <= totalPages && pageNumber <= MAX_PAGES,
+    complete: pageNumber > totalPages && totalPages <= MAX_PAGES,
+    reportedTotal,
     listings: dedupedListings,
     nextPageNumber: pageNumber <= totalPages && pageNumber <= MAX_PAGES ? pageNumber : undefined,
     pageCount,
@@ -80,8 +86,8 @@ function normalizePageNumber(value: number | undefined): number {
 }
 
 function normalizeMaxPages(value: number | undefined): number {
-  if (!value || !Number.isFinite(value)) return MAX_PAGES;
-  return Math.min(MAX_PAGES, Math.max(1, Math.floor(value)));
+  if (!value || !Number.isFinite(value)) return MAX_PAGES_PER_REQUEST;
+  return Math.min(MAX_PAGES_PER_REQUEST, Math.max(1, Math.floor(value)));
 }
 
 async function fetchSellerPageWithTokenRetry(
@@ -136,6 +142,7 @@ async function fetchSellerPage(options: {
       "X-EBAY-API-SITEID": options.siteId,
     },
     body,
+    signal: AbortSignal.timeout(25_000),
   });
 
   const text = await response.text();
@@ -154,7 +161,7 @@ export function parseSellerListingsXml(xml: string): {
   const ack = textForTag(xml, "Ack");
   const warnings = textsForTag(xml, "LongMessage").concat(textsForTag(xml, "ShortMessage")).filter(Boolean);
 
-  if (ack && !["Success", "Warning"].includes(ack)) {
+  if (!ack || !["Success", "Warning"].includes(ack)) {
     throw new Error(`eBay seller listings request failed: ${warnings.join("; ") || ack}`);
   }
 
@@ -166,7 +173,7 @@ export function parseSellerListingsXml(xml: string): {
 
   return {
     listings: itemBlocks.map(mapSellerItemBlock).filter((listing): listing is SellerListing => Boolean(listing)),
-    pagination: { pageNumber, totalPages },
+    pagination: { pageNumber, totalPages, totalEntries: parseInteger(textForTag(paginationBlock, "TotalNumberOfEntries")) },
     warnings,
   };
 }
@@ -182,7 +189,7 @@ function mapSellerItemBlock(block: string): SellerListing | null {
   return {
     availableQuantity: parseInteger(textForTag(block, "QuantityAvailable")),
     condition: textForTag(firstTagBlock(block, "ConditionDisplayName") ? block : "", "ConditionDisplayName") ?? textForTag(block, "ConditionID"),
-    currency: currencyForMoneyBlock(currentPriceBlock) ?? "USD",
+    currency: block.match(/<CurrentPrice\b[^>]*currencyID=["']([^"']+)["']/i)?.[1] ?? "UNKNOWN",
     currentPrice,
     customLabel: textForTag(firstTagBlock(block, "SellingManagerDetails") ?? "", "CustomLabel"),
     endTime: textForTag(block, "EndTime"),
@@ -193,7 +200,20 @@ function mapSellerItemBlock(block: string): SellerListing | null {
     sku: textForTag(block, "SKU"),
     startTime: textForTag(block, "StartTime"),
     title,
+    listingType: textForTag(block, "ListingType"),
+    hasVariations: /<Variations[\s>]/i.test(block),
+    shippingPrice: sellerFlatShipping(block),
   };
+}
+
+function sellerFlatShipping(block: string): number | undefined {
+  const shipping = firstTagBlock(block, "ShippingDetails") ?? "";
+  if (!["Flat", "FlatDomesticCalculatedInternational"].includes(textForTag(shipping, "ShippingType") ?? "")) return undefined;
+  const costs = tagBlocks(shipping, "ShippingServiceOptions")
+    .filter((option) => textForTag(option, "LocalPickup") !== "true" && textForTag(option, "ShippingService") !== "LocalPickup")
+    .map((option) => parseMoney(textForTag(option, "ShippingServiceCost")))
+    .filter((cost): cost is number => cost !== null && cost >= 0);
+  return costs.length ? Math.min(...costs) : undefined;
 }
 
 function dedupeSellerListings(listings: SellerListing[]): SellerListing[] {
@@ -241,11 +261,6 @@ function parseInteger(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function currencyForMoneyBlock(block: string | null): string | undefined {
-  if (!block) return undefined;
-  return block.match(/currencyID=["']([^"']+)["']/i)?.[1];
 }
 
 function decodeXml(value: string): string {

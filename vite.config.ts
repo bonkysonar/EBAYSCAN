@@ -12,6 +12,7 @@ import type { ArbitrageImportPayload } from "./src/lib/arbitrage/types";
 import { fetchDiscogsSalesStatsPage } from "./src/server/discogsStatsPage";
 import { readLocalEnv, searchMarketplace } from "./src/server/marketplaceApi";
 import { fetchSellerActiveListings } from "./src/server/sellerListingsApi";
+import { readLocalSellerCheckpoint } from "./src/server/sellerPricingLocalApi";
 import {
   readSoldHistoryIndex,
   searchSoldHistory,
@@ -189,6 +190,18 @@ function ebayLocalApiPlugin(): Plugin {
                 : "Unknown Discogs stats pull error",
           });
         }
+      });
+
+      server.middlewares.use("/api/ebay/seller-pricing-checkpoint", (req, res) => {
+        res.setHeader("Cache-Control", "private, no-store");
+        if (req.method !== "GET") { sendJson(res, 405, { error: "Method not allowed" }); return; }
+        const host = (req.headers.host ?? "").split(":")[0];
+        const origin = req.headers.origin;
+        if (!["localhost", "127.0.0.1"].includes(host) || (origin && origin !== `http://${req.headers.host}`)) {
+          sendJson(res, 403, { error: "Local same-origin access only" }); return;
+        }
+        try { sendJson(res, 200, readLocalSellerCheckpoint()); }
+        catch (error) { sendJson(res, 404, { error: error instanceof Error ? error.message : "Could not load local analysis" }); }
       });
 
       server.middlewares.use("/api/ebay/seller-listings", async (req, res) => {

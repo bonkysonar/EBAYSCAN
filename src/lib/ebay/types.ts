@@ -32,6 +32,10 @@ export type CandidateListing = {
   source: "ebay-mock" | "ebay" | "discogs-mock";
   matchSignals: MatchSignals;
   raw?: unknown;
+  recordGrade?: string;
+  recordGradeSource?: "title" | "description";
+  sellerId?: string;
+  buyingOptions?: string[];
 };
 
 export type MoneyValue = {

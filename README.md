@@ -148,28 +148,41 @@ Enter the same key under Hosted scan access on the page. On a private computer, 
 
 ## Seller Price Analyzer
 
-The Seller Price Analyzer is a separate page at `#/seller-prices`. It does not change the scanner workflow and it does not mutate eBay listings.
+The separate `#/seller-prices` page loads the full active store through eBay's official Trading API. **Analyze All Remaining** processes the complete queue, with two concurrent searches, repeated-query reuse, per-row progress, pause/resume and explicit stops for rate limits or authentication failures. It no longer stops after 25 rows. The browser must remain open while its analysis runs; the local runner below works without a browser.
 
-Optional setup:
+Configure `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` and `EBAY_USER_REFRESH_TOKEN` server-side. A short-lived `EBAY_USER_ACCESS_TOKEN` remains an emergency fallback. Inventory is paginated in five-page chunks; duplicate/missing inventory or a stopped pagination chain cannot be called a complete store pull.
 
-```env
-EBAY_USER_REFRESH_TOKEN=your_user_oauth_refresh_token_here
+Pricing version 4 compares **item price against item price**, before shipping. One Browse request retrieves up to 200 extended results. Searches remove grading/process notes and redundant format keywords; sealed M/M copies use new-condition evidence. Matching excludes own inventory, duplicates, other currencies, conflicting formats/grades/editions, incomplete copies and multi-album offers. Missing disc count is unknown, not one LP. Self-titled albums require additional identity evidence. Explicit description grades can fill missing title grades, but sleeve grades and generic grade promises cannot. Rejection counts explain weak coverage.
+
+The benchmark is the **median of up to ten lowest matched item prices**. Three or four matches can give a tentative recommendation. Supported evidence requires at least five matches from two or more known sellers and a bounded interquartile price spread. Missing seller coverage or a wide spread remains tentative. Faster-sales drafts are **reductions only**, capped at 10% for tentative evidence and 20% for supported evidence, with at least a 5% gap. **Prepare Sale Drafts** preserves existing proposals. Every draft requires pressing, sleeve, shipping, promotion and margin review. Active asking prices are not sold value or demand. No revise/end/relist mutation is implemented; CSVs are not eBay upload files.
+
+The queue uses IndexedDB instead of silently exhausting localStorage. Save errors are visible. Interrupted, legacy and six-hour-old analysis is requeued; inventory changes invalidate previous analysis. Only retained comparator details are saved, without raw API payloads. **Download Checkpoint** and **Import CSV / Checkpoint** transfer work between the runner and UI. Legacy CSVs remain historical review material and cannot authorize automated drafts. Matching imported inventory metadata uses exact item IDs, never a shared title.
+
+### Full-store local run
+
+```powershell
+npm run seller:analyze -- --output="C:\path\to\private-run-folder"
+# If credentials are configured in a separate checkout:
+npm run seller:analyze -- --env-dir="C:\path\to\configured-checkout" --output="C:\path\to\private-run-folder"
+# Continue that exact saved run after an interruption or rate-limit reset:
+npm run seller:analyze -- --resume --output="C:\path\to\private-run-folder"
+# Regenerate review files from saved evidence without making eBay requests:
+npm run seller:analyze -- --resume --report-only --output="C:\path\to\private-run-folder"
 ```
 
-The analyzer pulls active store listings read-only through eBay Trading API `GetMyeBaySelling` via a local/hosted `POST /api/ebay/seller-listings` action, then runs each listing title through the existing active eBay lookup. With `EBAY_USER_REFRESH_TOKEN`, the server mints and caches short-lived user access tokens automatically. `EBAY_USER_ACCESS_TOKEN` is still accepted as a short-lived fallback, but it will expire quickly and should not be the durable production setup. Recommendations compare your current asking price against the active eBay cheapest-10 average:
+The default output is `%LOCALAPPDATA%\RecordScanner\seller-pricing` (or the local `exports` fallback). Use a fresh output folder for a new inventory snapshot; `--resume` keeps the existing snapshot and only reanalyzes unfinished/expired evidence. A run lock prevents overlapping writers to the same checkpoint. After a forced process termination, inspect the lock's PID before removing a stale lock. Ctrl+C requests a graceful pause.
 
-- More than 25% above cheapest-10 average: priced high.
-- More than 20% below cheapest-10 average: possible underpricing.
-- 50+ active comps: crowded.
-- 150+ active comps: very crowded.
+Outputs are `checkpoint.json`, an append-only in-run `progress.jsonl`, `review.csv`, `price-change-drafts.csv` and `summary.json`. `complete` means all snapshot listings received an analysis, including honest `NEEDS_REVIEW` results; pending/error rows produce `partial`, `paused` or `blocked` instead. No scheduled job is installed by this command. Requests stop at an eBay rate limit rather than bypassing it.
 
-The analyzer saves its queue, completed analytics, and tagged change notes in browser localStorage so leaving and returning to `#/seller-prices` does not require reloading active listings. Rows use a compact spreadsheet-style layout; clicking a row opens an analytics panel with comparable active listings, eBay links, and fields to tag proposed price changes. CSV exports include both `sku` and `custom_label`; `sku` falls back to `custom_label` when eBay does not return a separate SKU.
+On local Vite, **Load Latest Local Run** reads the latest checkpoint from the default output directory or dated subfolders. `SELLER_PRICING_OUTPUT_DIR` can select a different private folder. This same-origin loopback reader has no hosted counterpart and never accepts a path from the browser. Hosted use supports checkpoint import instead.
 
-If a long browser analysis has already been exported, use Import Snapshot CSV to restore those analyzed rows without making new eBay Browse calls. Imports support the browser snapshot columns `title`, `item_url`, `meta`, `your_price`, `cheapest_10_average`, `delta`, `active_comps`, `recommendation`, and `reason`. SKU/custom label metadata is preserved when the current browser cache already has matching active listings by item ID or title.
+To reassess a saved store and spend a bounded number of fresh searches on weak matches:
 
-Seller analysis uses a lighter eBay Browse profile than the scanner: it requests the lowest-price active comps first, caps each row at 50 returned comps, skips Discogs, processes 25 rows per run, waits between rows, and auto-pauses on eBay `429 Too many requests`.
+```powershell
+node scripts/reassessSellerPricing.mjs --source="C:\private\prior\checkpoint.json" --output="C:\private\new-run" --refresh-queries=240
+```
 
-Active seller listings are loaded from Trading API in hosted-safe chunks of five eBay pages per request. This keeps Vercel functions under their timeout while still letting the browser assemble the full active inventory before analysis.
+This preserves the source, checks the official daily Browse quota, reserves 60 calls, and distributes searches across new records, zero-match used records and partially matched used records. Shared queries cover duplicate store copies once. `coverage.json` distinguishes newly searched rows from reused observations. Optional `--audit=<audit.json>` and `--research=<research.jsonl>` replay private captured evidence; `--refresh-queries=0` makes no marketplace requests. Reuse retains original observation timestamps and rejects expired evidence. Run the normal runner with `--resume --report-only` against the output directory to generate CSVs.
 
 ## eBay Product Research Link
 

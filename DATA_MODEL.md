@@ -77,40 +77,13 @@ Marketplace candidate returned by a client:
 
 ## Seller Price Analyzer
 
-`SellerListing` is a read-only active eBay store listing:
+`SellerListing` preserves the seller's exact item ID, SKU/custom label, title, current item price and currency, listing type, variation indicator, quantities and dates. Flat shipping is optional; missing or calculated shipping stays unknown. Currency is read from the XML price attribute rather than defaulting all listings to USD.
 
-- `id`
-- `title`
-- `sku`
-- `customLabel`
-- `currentPrice`
-- `currency`
-- `condition`
-- `availableQuantity`
-- `quantitySold`
-- `imageUrl`
-- `itemUrl`
-- `startTime`
-- `endTime`
+`SellerPricingAnalysis` version 4 includes `analyzedAt`, `comparisonBasis: item-price`, `matchedCount`, exact retained `comparableIds`, the median of up to ten lowest matched item prices, percentage difference, status, confidence, seller coverage, rejection counts and reasons. `activeComparableCount` stays null because a raw query total does not prove equivalent-copy supply. The old crowded statuses remain readable for historical CSVs. Active asking prices do not prove sold value or demand.
 
-`SellerPricingAnalysis` compares a seller listing against active eBay comps:
+`AnalyzerRow` separates inventory, evidence, analysis state and user-authored workflow fields (`isTaggedForChange`, `proposedPrice`, `changeNote`). Browser persistence uses IndexedDB; runner persistence uses a private atomic checkpoint plus per-row journal. Only fresh current-version evidence supports review drafts. Changes to inventory invalidate analysis while preserving review notes. The UI retains only the matched benchmark sample and removes raw API payloads.
 
-- `benchmarkPrice`: active eBay cheapest-10 average
-- `activeComparableCount`: eBay reported active match count for the best comparable query
-- `deltaValue`
-- `deltaPercent`
-- `status`: `PRICE_HIGH`, `PRICE_LOW`, `CROWDED_PRICE_HIGH`, `VERY_CROWDED_PRICE_HIGH`, `OK`, or `NEEDS_REVIEW`
-- `reasons`
-
-Seller analyzer rows may also store browser-local workflow fields:
-
-- `isTaggedForChange`
-- `proposedPrice`
-- `changeNote`
-- `searchResult`: cached active eBay analytics for the row
-
-The analyzer is read-only and does not revise live eBay listings. CSV exports include `sku`, `custom_label`, proposed price, change note, pricing recommendation fields, active comp count, and item URL for later bulk-change workflows.
-
+The faster-sales draft policy suggests reductions only when at least three known-grade matches support a benchmark at least 5% below current price. Supported evidence requires at least five matches, at least two known sellers and a bounded price spread; its cap is 20%. Other usable samples are tentative and capped at 10%. Fewer than three matches, unknown own condition, conflicting condition, auctions, variations and mixed lots cannot supply drafts. Explicit description grades retain provenance; unknown grades are never inferred. This is a review proposal, not a profitability claim or live eBay revision. Unknown shipping, cost basis, sleeve condition and exact pressing require review.
 
 ## Retail scanner publication and learning additions
 
