@@ -6,6 +6,7 @@ export class EbayClient implements MarketplaceClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
+      signal: AbortSignal.timeout(60_000),
     });
 
     const payload = await response.json();

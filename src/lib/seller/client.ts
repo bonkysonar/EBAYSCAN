@@ -13,12 +13,20 @@ export class SellerListingsClient {
       latest = await this.listActivePage(pageNumber);
       listings.push(...latest.listings);
       warnings.push(...latest.warnings);
+      if (latest.hasMore && (!latest.nextPageNumber || latest.nextPageNumber <= pageNumber)) {
+        throw new Error("Seller inventory pagination did not advance; the inventory is incomplete.");
+      }
       pageNumber = latest.nextPageNumber ?? 0;
     } while (latest.hasMore && latest.nextPageNumber);
 
     const dedupedListings = dedupeListings(listings);
+    if (latest.complete === false || (latest.reportedTotal !== undefined && dedupedListings.length !== latest.reportedTotal)) {
+      throw new Error(`Incomplete inventory: ${dedupedListings.length} unique listings / ${latest.reportedTotal ?? "unknown"} reported. Refresh before analyzing the full store.`);
+    }
     return {
       hasMore: false,
+      complete: true,
+      reportedTotal: latest.reportedTotal,
       listings: dedupedListings,
       pageCount: undefined,
       source: "ebay-trading",
@@ -33,6 +41,7 @@ export class SellerListingsClient {
       body: JSON.stringify({ maxPages: SELLER_LISTINGS_PAGES_PER_REQUEST, pageNumber }),
       headers: { "Content-Type": "application/json" },
       method: "POST",
+      signal: AbortSignal.timeout(120_000),
     });
     const text = await response.text();
     const payload = parseJsonResponse(text);
@@ -40,6 +49,7 @@ export class SellerListingsClient {
     if (!response.ok) {
       throw new Error(payload.error ?? "Seller listings lookup failed.");
     }
+    if (!Array.isArray(payload.listings) || !Array.isArray(payload.warnings)) throw new Error("Invalid seller inventory response.");
 
     return payload as SellerListingsResult;
   }

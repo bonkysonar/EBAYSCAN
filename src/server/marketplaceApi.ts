@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { mediaGradeFromDescription, mediaGradeFromListing } from "../lib/seller/search.js";
 import type {
   CandidateListing,
   DiscogsMarketSnapshot,
@@ -23,6 +24,9 @@ type EbayItemSummary = {
   condition?: string;
   image?: { imageUrl?: string };
   itemWebUrl?: string;
+  shortDescription?: string;
+  seller?: { username?: string };
+  buyingOptions?: string[];
 };
 
 type EbaySearchResponse = {
@@ -92,8 +96,8 @@ export type MarketplaceApiEnv = {
 let cachedApplicationToken: { token: string; expiresAt: number } | null = null;
 const EBAY_PAGE_LIMIT = 50;
 const EBAY_MAX_RETURNED_LISTINGS_PER_QUERY = 50;
-const SELLER_PRICING_PAGE_LIMIT = 50;
-const SELLER_PRICING_MAX_RETURNED_LISTINGS = 50;
+const SELLER_PRICING_PAGE_LIMIT = 200;
+const SELLER_PRICING_MAX_RETURNED_LISTINGS = 200;
 
 export async function searchMarketplace(input: SearchInput, env: MarketplaceApiEnv): Promise<SearchResult> {
   const marketplaceId = env.EBAY_MARKETPLACE_ID || "EBAY_US";
@@ -117,6 +121,21 @@ export async function searchMarketplace(input: SearchInput, env: MarketplaceApiE
   });
 }
 
+export async function fetchBrowseQuota(env: MarketplaceApiEnv): Promise<{ remaining: number; limit: number; reset: string }> {
+  if (!env.EBAY_CLIENT_ID || !env.EBAY_CLIENT_SECRET) throw new Error("Missing eBay credentials.");
+  const token = await getApplicationToken({ clientId: env.EBAY_CLIENT_ID, clientSecret: env.EBAY_CLIENT_SECRET, ebayEnv: env.EBAY_ENV ?? "production" });
+  const root = env.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
+  const response = await fetch(`${root}/developer/analytics/v1_beta/rate_limit/?api_name=browse&api_context=buy`, {
+    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`eBay quota lookup failed (${response.status}).`);
+  const data = await response.json() as { rateLimits?: Array<{ resources?: Array<{ name: string; rates: Array<{ remaining: number; limit: number; reset: string; timeWindow: number }> }> }> };
+  const rates = data.rateLimits?.flatMap(item => item.resources ?? []).find(item => item.name === "buy.browse")?.rates;
+  const daily = rates?.find(rate => rate.timeWindow === 86400);
+  if (!daily || !Number.isFinite(daily.remaining)) throw new Error("eBay did not return a daily Browse quota.");
+  return { remaining: daily.remaining, limit: daily.limit, reset: daily.reset };
+}
+
 async function getApplicationToken(config: { clientId: string; clientSecret: string; ebayEnv: string }): Promise<string> {
   const now = Date.now();
   if (cachedApplicationToken && cachedApplicationToken.expiresAt > now + 60_000) {
@@ -126,6 +145,7 @@ async function getApplicationToken(config: { clientId: string; clientSecret: str
   const endpointRoot = config.ebayEnv === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
   const credentials = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64");
   const response = await fetch(`${endpointRoot}/identity/v1/oauth2/token`, {
+    signal: AbortSignal.timeout(20_000),
     method: "POST",
     headers: {
       Authorization: `Basic ${credentials}`,
@@ -283,12 +303,15 @@ async function fetchEbaySearchPayload(
   url.searchParams.set("offset", String(offset));
   if (options.searchProfile === "seller-pricing") {
     url.searchParams.set("sort", "price");
+    url.searchParams.set("category_ids", "176985");
+    url.searchParams.set("fieldgroups", "EXTENDED");
   }
   if (options.conditionFilter) {
     url.searchParams.set("filter", options.conditionFilter);
   }
 
   const response = await fetch(url, {
+    signal: AbortSignal.timeout(25_000),
     headers: {
       Authorization: `Bearer ${options.accessToken}`,
       Accept: "application/json",
@@ -308,7 +331,7 @@ async function fetchEbaySearchPayload(
 }
 
 function buildPrimarySearchRequest(input: Exclude<SearchInput, { type: "image" }>): EbaySearchRequest {
-  if (input.type === "manual") return { label: "manual", q: `${input.query} vinyl record` };
+  if (input.type === "manual") return { label: "manual", q: input.searchProfile === "seller-pricing" ? input.query : `${input.query} vinyl record` };
   if (input.type === "catalog") return { label: "catalog number", q: `${input.catalogNumber} vinyl record` };
 
   const barcode = input.barcode.trim();
@@ -737,6 +760,8 @@ function mapEbayItemToListing(item: EbayItemSummary): CandidateListing | null {
 
   const shippingPrice = parseMoney(item.shippingOptions?.[0]?.shippingCost?.value) ?? 0;
   const totalPrice = roundMoney(price + shippingPrice);
+  const titleGrade = mediaGradeFromListing({ title: item.title ?? "", condition: item.condition ?? "" });
+  const descriptionGrade = titleGrade === "Unknown" ? mediaGradeFromDescription(item.shortDescription ?? "") : undefined;
 
   return {
     id: item.itemId ?? item.itemWebUrl ?? item.title ?? crypto.randomUUID(),
@@ -751,6 +776,10 @@ function mapEbayItemToListing(item: EbayItemSummary): CandidateListing | null {
     source: "ebay",
     matchSignals: { titleSimilarity: 0.5 },
     raw: item,
+    recordGrade: titleGrade !== "Unknown" ? titleGrade : descriptionGrade,
+    recordGradeSource: titleGrade !== "Unknown" ? "title" : descriptionGrade ? "description" : undefined,
+    sellerId: item.seller?.username,
+    buyingOptions: item.buyingOptions,
   };
 }
 

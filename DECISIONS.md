@@ -271,3 +271,12 @@ An obligatory undercut of the single cheapest active listing is a liquidation as
 Show net profit and ROI at the cheapest comparable alongside the target, including on the result row. If that downside misses either user minimum, an otherwise automatic BUY becomes REVIEW. The Worth considering list still requires both user floors at the sold-backed target, fresh evidence and its existing demand, supply and purchase checks. This is an explicitly slower pricing choice, not a guaranteed return or a reason to buy a large quantity.
 
 Use a $6 outbound postage allowance for an explicitly identified double LP when no item-specific label cost is supplied; retain higher user defaults and exact cost overrides. This is a packing-weight estimate, shown as such, rather than a claimed postal rate. Buyer-paid postage remains included once in delivered resale proceeds and once as a shipping expense.
+
+
+## 2026-10-19: Full-store seller analysis and faster-sales review drafts
+
+Replace the 25-row manual batch with a resumable full-store queue and a browser-independent local runner. Use two concurrent official Browse searches, shared queries and bounded timeouts; stop on rate limits or credentials failures. Preserve exact item identity and visible save failures; invalidate stale/version-1 results and changed inventory.
+
+Separate seller pricing from scanner culling: compare item prices consistently, require title/condition/grade evidence, exclude own inventory and conflicting formats/currencies, and never use broad fallback matches or query totals as verified crowding. Active asking prices are not sold valuations. Faster-sales drafts are reductions only. Exact pressing, sleeve grade, shipping, promotions, margin and a fresh current-price check remain necessary before a future live revision workflow. No live write endpoint or scheduled automation is implemented.
+
+Version 4 separates evidence confidence from price direction. Three matched copies can support a tentative review recommendation with a 10% cap; five matches from multiple known sellers and a bounded price spread support a 20% cap. The benchmark is a median. This replaces the all-or-nothing ten-copy threshold. A 200-result extended search, explicit media-grade provenance, sealed-grade normalization, self-titled identity guards and separate mixed-lot handling improve coverage without substituting unrelated items. Reassessment preserves observation ages and reports cached versus refreshed coverage; quota is checked before targeted refreshes.

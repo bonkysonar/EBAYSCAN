@@ -7,6 +7,7 @@
     "arbitrage:scan": "node scripts/runRetailArbitrageScan.mjs --skipUpload",
     "arbitrage:research-plan": "node scripts/prepareArbitrageResearchPlan.mjs",
     "arbitrage:upload": "node scripts/uploadLatestArbitrageFinds.mjs",
+    "seller:analyze": "node scripts/runSellerPricing.mjs",
     "sold-history:sync": "node scripts/syncEbaySoldHistory.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

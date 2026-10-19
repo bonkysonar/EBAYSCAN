@@ -256,3 +256,16 @@ Release verification, September 4, 2026: the fresh broad run attempted 127 sourc
 - Confirm three-year New/Vinyl rows match the full artist and album across pressings, exclude other albums/CDs/lots, deduplicate observed rows, and expose a partial sample as a captured-count lower bound. Eleven units supports comparison; ten stays thin. These fields must not supply exact sold-evidence gates, resale economics, or BUY.
 - Prepare from the exact currently published final snapshot. Publish under a new immutable ID; confirm all product IDs, original retail capture dates, source reports, strict sold evidence, sale campaign ledger, and pending research counts survive. Only matching benchmark values may change. Repeating the identical publication succeeds idempotently; a stale baseline, changed acquisition identity, invalid range, or attempted new product must fail without changing latest.
 - In the browser, inspect the price column and expanded provisional details, including currency, shipping exclusion, actual three-year window, partial/full sample label, and captured unit count. Confirm exact pressing evidence remains separately labeled and the status describes an evidence update without implying a retailer rescan.
+
+
+## Full-store seller pricing regression
+
+Run `npx vitest run src/tests/sellerPricing.test.ts`, `npm test`, and `npm run build`.
+
+Verify more than 25 rows finish in one run, no more than two searches are in flight, and repeated queries share one response. Pause and reload must preserve completed rows and resume interrupted ones. A 429/auth failure stops further requests; a partial inventory or non-advancing cursor must not replace the saved store. Refreshing a changed current price invalidates its old analysis.
+
+Confirm item prices are compared before shipping; missing shipping is not free; EUR stays EUR. Exclude own listings in both legacy and Browse ID formats, duplicates, wrong currencies, wrong format/grade and named edition conflicts. Sparse or expired evidence remains review-only, and broad query totals never trigger crowding. Faster-sales drafts never increase prices, never cut more than 20%, preserve user-entered prices and do not appear for weak evidence. Confirm the displayed comparator tiles are the exact retained sample.
+
+Run `src/tests/sellerMatchingV4.test.ts` for sealed M/M versus New, unspecified multi-disc albums versus mixed-album bundles, self-titled identity, explicit description grades versus sleeve grades, missing covers, apostrophe normalization, a single 200-result extended request and robust medians. Three/four matches, unknown seller coverage and wide spreads must stay tentative with a 10% cap; supported evidence needs five matches from at least two known sellers. Fewer than three matches cannot generate drafts. CSVs and UI must show confidence separately from price direction.
+
+Load a full-store checkpoint in the browser, filter and page through results, prepare drafts, export filtered CSV and reload. Verify IndexedDB preserves notes and proposals, errors remain distinct from analyzed counts, expired evidence requeues and local-run loading is available only on loopback. The CLI should leave a review CSV, separate draft CSV, explicit completion status and no active lock after a normal exit. `--resume --report-only` must not call eBay.
