@@ -178,11 +178,17 @@ export function updateResearchSession(cwd, token, action, value = {}, now = Date
 export function researchBrowserDecision(session, observation) {
   const block = code => ({ action: "stop", code, blockerCode: code });
   if (observation.disconnected) return block("browser_disconnected");
-  const matches = (observation.browsers ?? []).filter(browser => browser.profileName === session.binding.profileName &&
+  // The browser connector may omit its optional profile label. The previously
+  // authorized extension instance still identifies the profile; research also
+  // requires a fresh visible seller check below. Never fall back to a name or
+  // numeric browser handle when the durable instance identity is unavailable.
+  const matches = (observation.browsers ?? []).filter(browser =>
     browser.metadata?.extensionInstanceId === session.binding.extensionInstanceId);
   if (!matches.length) return block("profile_unavailable");
   if (matches.length !== 1) return block("profile_ambiguous");
   const browser = matches[0];
+  if (browser.profileName != null && browser.profileName !== "" && browser.profileName !== session.binding.profileName)
+    return block("profile_unavailable");
   if (observation.browserId !== undefined && String(observation.browserId) !== String(browser.id)) return block("profile_unavailable");
   if (observation.challenge) return block("interactive_challenge");
   if (observation.authenticationRequired) return block("authentication_required");

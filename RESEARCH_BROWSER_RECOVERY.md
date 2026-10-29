@@ -1,6 +1,6 @@
 # Seller Hub research recovery
 
-Browser tabs and numeric browser handles are temporary. The durable identity is the authorized profile name plus extension-instance metadata, followed by the visibly verified seller handle. The operational manifest is `exports/arbitrage-finds/research-session.json`, outside every learning store. It contains no passwords, cookies, account pages, listing evidence or buyer data.
+Browser tabs and numeric browser handles are temporary. The durable identity is the previously authorized extension-instance metadata, followed by the visibly verified seller handle. A reported profile name must match the authorized profile; an omitted optional profile label does not discard an otherwise unique exact extension match. It permits selecting a task-owned tab for seller verification, never skipping the visible seller check. A missing or different extension, conflicting profile name, or duplicate extension match still blocks. The operational manifest is `exports/arbitrage-finds/research-session.json`, outside every learning store. It contains no passwords, cookies, account pages, listing evidence or buyer data.
 
 ## One attempt
 
