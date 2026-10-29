@@ -45,7 +45,11 @@ export function buildPersistentResearchQueue(payload, { captures = {}, checkpoin
   for (const [key, entry] of Object.entries(state.entries ?? {})) {
     if (/^[a-f0-9]{64}$/.test(key) && Number(now) - Date.parse(entry.lastSeenAt) <= 30 * DAY) nextState[key] = safeState(entry);
   }
-  const tasks = [], editionReviews = [], sourcing = [];
+  const editionReviewOutcomes = Object.fromEntries(Object.entries(state.editionReviewOutcomes ?? {}).filter(([key, value]) =>
+    /^[a-f0-9]{64}$/.test(key) && ["unconfirmed_unpriced", "incompatible_unpriced"].includes(value?.outcome) &&
+    Number(now) - Date.parse(value.reviewedAt) >= 0 && Number(now) - Date.parse(value.reviewedAt) <= 30 * DAY)
+    .map(([key, value]) => [key, { outcome: value.outcome, reviewedAt: iso(value.reviewedAt) }]));
+  const tasks = [], editionReviews = [], reviewedEditions = [], sourcing = [];
   for (const group of groups.values()) {
     const pages = pagesByQuery.get(researchQueryKey(group.query)) ?? [];
     const evidence = group.targets.map(find => {
@@ -57,7 +61,13 @@ export function buildPersistentResearchQueue(payload, { captures = {}, checkpoin
       }, {}, timestamp) : null;
       const result = { find, research, priced };
       if (research.status === "no_rows" && pages.some(({ page, quality }) => quality.windowVerified && page.rows.length)) {
-        editionReviews.push({ findId: find.id, query: group.query, sourceId: find.sourceId, reason: "no_confirmed_edition_match", action: "Compare retailer barcode/catalog number and pressing details with the captured listings; do not borrow another edition's price." });
+        // A review applies only to this offer identity and this observed evidence.
+        // New retailer identity or fresh captures require a new review.
+        const reviewId = hash(JSON.stringify([find.id, find.artist, find.title, find.sourceListingTitle, find.barcode, find.catalogNumber,
+          find.variant, find.releaseIdentity, pages.filter(({ quality }) => quality.windowVerified).map(({ page }) => [page.capturedAt, page.rows])]));
+        const review = { reviewId, findId: find.id, query: group.query, sourceId: find.sourceId, reason: "no_confirmed_edition_match", action: "Compare retailer barcode/catalog number and pressing details with the captured listings; do not borrow another edition's price." };
+        if (editionReviewOutcomes[reviewId]) reviewedEditions.push({ ...review, ...editionReviewOutcomes[reviewId] });
+        else editionReviews.push(review);
       }
       if (priced && priced.recommendedMaxPurchasePrice > 0 && research.velocityStatus === "verified_window_totals") {
         sourcing.push({ findId: find.id, query: group.query, sourceId: find.sourceId, sourceUrl: find.sourceUrl,
@@ -87,10 +97,20 @@ export function buildPersistentResearchQueue(payload, { captures = {}, checkpoin
     pending: tasks.filter(task => task.status === "pending").length,
     completeWithRedactedRows: tasks.filter(task => task.status === "complete" && task.evidenceIncomplete).length,
     retryLater: tasks.filter(task => task.retryAfter).length, scheduled: entries.length,
-    deferred: Math.max(0, actionable.length - entries.length), editionReviews: editionReviews.length,
+    deferred: Math.max(0, actionable.length - entries.length), editionReviews: editionReviews.length, reviewedEditions: reviewedEditions.length,
   };
-  return { checkpoint: imported, state: { version: 1, updatedAt: timestamp, entries: nextState },
-    plan: { version: 2, runId: payload.runId, createdAt: timestamp, entries, completed: tasks.filter(task => task.status === "complete"), retryLater: tasks.filter(task => task.retryAfter), editionReviews, sourcing, summary, status: "ready" } };
+  const intervalHours = Math.max(0, (Number(now) - Date.parse(state.updatedAt)) / 3600000) || null;
+  const newlyCollected = tasks.reduce((count, task) => count + Math.max(0, (nextState[task.taskId].collectionCount ?? 0) - (state.entries?.[task.taskId]?.collectionCount ?? 0)), 0);
+  const freshnessLosses = tasks.filter(task => task.status !== "complete" && state.entries?.[task.taskId]?.status === "complete").length;
+  const rate = intervalHours >= 1 / 60 ? newlyCollected / intervalHours : null;
+  const metrics = { intervalHours, newlyCollected, freshnessLosses, completedWindowsPerHour: rate,
+    // Wall-clock interval rate includes downtime; this is not an active-collector benchmark.
+    estimatedHoursRemaining: rate > 0 ? (summary.pending + summary.repair + summary.refresh) / rate : null,
+    collectionHistoryCount: tasks.filter(task => nextState[task.taskId].lastCollectedAt).length,
+    oldestPendingAt: tasks.filter(task => task.status !== "complete").map(task => task.firstSeenAt).sort()[0] ?? null,
+    freshnessOutpacingCollection: intervalHours !== null && freshnessLosses > newlyCollected };
+  return { checkpoint: imported, state: { version: 1, updatedAt: timestamp, entries: nextState, editionReviewOutcomes },
+    plan: { version: 2, runId: payload.runId, createdAt: timestamp, entries, completed: tasks.filter(task => task.status === "complete"), retryLater: tasks.filter(task => task.retryAfter), editionReviews, reviewedEditions, sourcing, summary, metrics, status: "ready" } };
 
   function addTask(group, pages, evidence, periodDays) {
     const taskId = hash(`${researchQueryKey(group.query)}:${periodDays}`);
@@ -109,7 +129,9 @@ export function buildPersistentResearchQueue(payload, { captures = {}, checkpoin
     const retryAfter = retryAt > Number(now) ? new Date(retryAt).toISOString() : null;
     nextState[taskId] = { firstSeenAt: prior.firstSeenAt ?? timestamp, lastSeenAt: timestamp,
       lastAttemptAt, lastAttemptRevision: revision ?? null, attemptCount, status, reasonCodes,
-      lastAcceptedAt: iso(accepted?.page.capturedAt), periodDays };
+      lastAcceptedAt: iso(accepted?.page.capturedAt), periodDays,
+      lastCollectedAt: iso(accepted?.page.capturedAt) ?? prior.lastCollectedAt ?? null,
+      collectionCount: (prior.collectionCount ?? 0) + (accepted && iso(accepted.page.capturedAt) !== prior.lastCollectedAt ? 1 : 0) };
     const url = buildEbayProductResearchUrl(group.query, { dayRange: periodDays });
     tasks.push({ taskId, query: group.query, periodDays, url, status, reasonCodes,
       repairs: accepted ? [] : latest?.quality.repairs ?? [], retryAfter, lane: group.lane, order: group.order,
@@ -133,5 +155,8 @@ function safeState(entry) {
   return { firstSeenAt: iso(entry.firstSeenAt), lastSeenAt: iso(entry.lastSeenAt), lastAttemptAt: iso(entry.lastAttemptAt),
     lastAttemptRevision: /^[a-f0-9]{64}$/.test(entry.lastAttemptRevision) ? entry.lastAttemptRevision : null,
     attemptCount: Math.max(0, Math.min(10000, Number(entry.attemptCount) || 0)),
-    lastAcceptedAt: iso(entry.lastAcceptedAt), periodDays: [90,365].includes(entry.periodDays) ? entry.periodDays : 90 };
+    lastAcceptedAt: iso(entry.lastAcceptedAt), lastCollectedAt: iso(entry.lastCollectedAt ?? entry.lastAcceptedAt),
+    collectionCount: Math.max(0, Number(entry.collectionCount) || 0),
+    status: ["complete", "pending", "repair", "refresh"].includes(entry.status) ? entry.status : null,
+    periodDays: [90,365].includes(entry.periodDays) ? entry.periodDays : 90 };
 }

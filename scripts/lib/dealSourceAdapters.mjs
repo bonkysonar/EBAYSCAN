@@ -168,11 +168,15 @@ export function splitDealArtistTitle(rawTitle) {
   const cleaned = cleanText(
     String(rawTitle ?? "")
       .replace(/^(?:(?:\[[^\]]+\]|\([^)]*\))\s*)+/g, "")
+      .replace(/^\$\s*[0-9][0-9,.]*\*?\s+(?:Amazon|Walmart|Target)(?:\.com)?\s*[:|–—-]?\s+/i, "")
+      .replace(/^\$\s*[0-9][0-9,.]*\*?\s*\|\s*/, "")
       .replace(/\s+(?:@|[-–—])?\s*\$\s*[0-9][0-9,.]*(?:\s.*)?$/i, "")
       .replace(/\s+[-–—]\s*$/, "")
+      .replace(/\s+(?:at|@)\s+(?:Amazon|Walmart|Target)(?:\.com)?\s*$/i, "")
       .replace(/\s*\|\s*direct\b.*$/i, ""),
   );
-  const parts = cleaned.match(/^(.{2,100}?)\s+(?:[-–—])\s+(.{2,})$/);
+  const parts = cleaned.match(/^(.{2,100}?)\s+(?:[-–—])\s+(.{2,})$/) ??
+    cleaned.match(/^([^:]{2,100}):\s+(.{2,})$/);
   const quotedParts = parts
     ? null
     : cleaned.match(/^(.{2,100}?)\s+["“]([^"”]{2,})["”](?:\s|$)/);

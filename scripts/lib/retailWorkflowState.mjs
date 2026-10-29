@@ -3,6 +3,36 @@ import { buildProductResearchPlan, bestEvidenceForEntry, researchCheckpointCompl
 // Size of a work batch, never a ceiling on which offers must be completed.
 export const WORKFLOW_RESEARCH_LIMIT = 240;
 
+/** Research cannot keep an acquisition snapshot alive indefinitely. The next
+ * scan may reuse valid sales evidence, but must observe current retail offers. */
+export function assertWorkflowDraftFresh(draft, now = Date.now()) {
+  const age = Number(new Date(now)) - Date.parse(draft?.createdAt);
+  if (!Number.isFinite(age) || age < -300000 || age > 24 * 3600000)
+    throw new Error("This retail draft is expired or has an invalid observation time. Start a fresh scan; fresh saved research can be reused for rediscovered offers without refreshing its timestamps.");
+}
+
+/** Persist actionable failure categories, never raw child output, URLs,
+ * credentials, marketplace content or a command's argument values. */
+export function workflowFailure(error, state = "unknown") {
+  const text = String(error?.message ?? "");
+  const rules = [
+    [/edition reviews/i, "edition_review_pending", "Exact edition reviews still need explicit unpriced or verified outcomes."],
+    [/Research incomplete/i, "research_incomplete", "Selected research still has pending, failed, deferred, or expired checks."],
+    [/expired|stale|invalid observation time/i, "evidence_expired", "The acquisition draft or required evidence expired; start a fresh scan."],
+    [/lease|mutex|writer busy/i, "research_ownership", "The research session needs valid ownership before this step can write."],
+    [/401|403|unauthoriz|credential|token/i, "access_denied", "A service denied access or required credentials are unavailable."],
+    [/429|rate.limit/i, "rate_limited", "A service rate limit stopped this step; retain progress and retry later."],
+    [/timeout|timed out|deadline|ETIMEDOUT/i, "request_timeout", "A request exceeded its time limit; coverage remains unverified."],
+    [/network|ENOTFOUND|ECONN|fetch failed/i, "network_failure", "A service request failed; retain the last verified publication."],
+    [/another scan|wrong run|wrong-run|mismatch|does not identify/i, "run_mismatch", "The context, draft, or checkpoint does not identify the same run."],
+    [/validat|publishable|coverage/i, "validation_failed", "The final artifact did not pass the required publication validation."],
+  ];
+  const [, code, message] = rules.find(([pattern]) => pattern.test(text)) ??
+    [null, "workflow_step_failed", "A workflow step failed. Inspect the local command output before retrying."];
+  const step = /^scripts\/[A-Za-z0-9_-]+\.mjs$/.test(error?.workflowStep ?? "") ? error.workflowStep : null;
+  return { code, message, stage: step ?? (["running", "research", "validated", "published", "partial"].includes(state) ? state : "unknown") };
+}
+
 /** A browser recovery is a new bounded refresh, never a resumed or broad scan. */
 export function browserRecoveryScan({ observations, observationsPath, previousScan, previousScanPath, now = Date.now() }) {
   if (!observationsPath || !previousScanPath) throw new Error("Browser recovery requires --browserObservations and --previousScan paths.");
@@ -77,6 +107,7 @@ export function researchProgress(draft, checkpoint = {}, now = new Date()) {
 }
 
 export function assertResearchReady(progress, queue = {}) {
+  if (Number(queue.editionReviews ?? 0) > 0) throw new Error(`Research incomplete: ${queue.editionReviews} edition reviews need explicit outcomes; unconfirmed editions remain unpriced.`);
   if (progress.status === "not_needed" && !(queue.tasks > 0)) return;
   const unfinished = Number(queue.pending ?? 0) + Number(queue.repair ?? 0) + Number(queue.refresh ?? 0);
   if (!progress.complete || unfinished || Number(queue.deferred ?? 0) > 0) {

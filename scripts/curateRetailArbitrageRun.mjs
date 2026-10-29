@@ -1,4 +1,5 @@
 import { createMarketplaceAlbumDemandIndex } from "./lib/marketplaceAlbumDemand.mjs";
+import { beginResearchWrite } from "./lib/retailResearchSession.mjs";
 import { createAlbumPriceBenchmarkIndex } from "./lib/albumPriceBenchmark.mjs";
 import { revalidateCandidateLocalSold } from "./lib/localSoldEvidence.mjs";
 import { browserVerifiedRetailOffer } from "./lib/browserRetailVerification.mjs";
@@ -26,6 +27,7 @@ import {
 
 const [sourceArgument, rawResearchArgument, requestedDateStamp] =
   process.argv.slice(2);
+beginResearchWrite();
 const pendingOnly = rawResearchArgument === "--pending";
 if (!sourceArgument || !rawResearchArgument) {
   throw new Error(
@@ -170,6 +172,7 @@ const finalPayload = {
   ...payload,
   createdAt: scanCreatedAt,
   researchCandidates: undefined,
+  discoveryCandidates: undefined,
   funnel,
   curatedAt,
   evaluatedAt: curatedAt,

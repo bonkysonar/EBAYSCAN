@@ -3,9 +3,10 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { admittedSourceIds, browserRecoveryScan, freshWorkflowDraftSummary, researchProgress, scannerOutputPath } from "../../scripts/lib/retailWorkflowState.mjs";
+import { admittedSourceIds, assertResearchReady, assertWorkflowDraftFresh, browserRecoveryScan, freshWorkflowDraftSummary, researchProgress, scannerOutputPath, workflowFailure } from "../../scripts/lib/retailWorkflowState.mjs";
 import { buildProductResearchPlan } from "../../scripts/lib/productResearchCuration.mjs";
 import { mergeVerifiedSourceUpdates } from "../server/retailSourceUpdates";
+import { acquireResearchSession, readResearchSession, updateResearchSession } from "../../scripts/lib/retailResearchSession.mjs";
 
 const at = "2026-09-05T00:00:00.000Z";
 const find = { id: "record", artist: "Mother Love Bone", title: "Shine", purchasePrice: 10, sourceId: "shop", sourceName: "Shop", sourceUrl: "https://shop.example/products/shine", capturedAt: at };
@@ -16,6 +17,111 @@ const verifiedCapture = { query, status: "complete", capturedAt: at, condition: 
   url: `https://www.ebay.com/sh/research?keywords=${encodeURIComponent(query)}&conditionId=1000&categoryId=176985&tabName=SOLD&dayRange=90`, rows: [] };
 
 describe("retail workflow state", () => {
+  it("retains failure cause and stage without leaking raw output or credentials", () => {
+    const failure = workflowFailure({ message: "Workflow failed: HTTP 403 https://secret.example/?token=private-token Authorization: Bearer private-key", workflowStep: "scripts/runRetailArbitrageScan.mjs" }, "running");
+    expect(failure).toMatchObject({ code: "access_denied", stage: "scripts/runRetailArbitrageScan.mjs" });
+    expect(JSON.stringify(failure)).not.toMatch(/secret\.example|private-token|private-key|Authorization/);
+    expect(workflowFailure({ message: "Research incomplete: 1/12 offers completed" }, "research")).toMatchObject({ code: "research_incomplete", stage: "research" });
+    expect(workflowFailure({ message: "Unknown error containing private data", workflowStep: "https://secret.example/?token=private" }, "untrusted-value")).toMatchObject({ code: "workflow_step_failed", stage: "unknown" });
+  });
+  it("expires acquisition drafts before slow research can hold discovery indefinitely", () => {
+    expect(() => assertWorkflowDraftFresh(draft, at)).not.toThrow();
+    expect(() => assertWorkflowDraftFresh(draft, "2026-09-06T00:00:00Z")).not.toThrow();
+    expect(() => assertWorkflowDraftFresh(draft, "2026-09-06T00:00:01Z")).toThrow("Start a fresh scan");
+    expect(() => assertWorkflowDraftFresh({ ...draft, createdAt: "invalid" }, at)).toThrow("invalid observation time");
+    expect(() => assertWorkflowDraftFresh({ ...draft, createdAt: "2026-09-05T01:00:00Z" }, at)).toThrow("invalid observation time");
+  });
+
+  it("still blocks publication when any selected research remains pending or deferred", () => {
+    const pending = researchProgress(draft, { runId: draft.runId, entries: [] }, new Date(at));
+    expect(() => assertResearchReady(pending)).toThrow("Research incomplete");
+    const complete = researchProgress(draft, { runId: draft.runId, entries: [{ findId: find.id, runs: [verifiedCapture] }] }, new Date(at));
+    expect(() => assertResearchReady(complete, { deferred: 1 })).toThrow("Research incomplete");
+    expect(() => assertResearchReady(complete, { deferred: 0 })).not.toThrow();
+    expect(() => assertResearchReady(complete, { editionReviews: 1 })).toThrow("edition reviews");
+    expect(() => assertResearchReady(complete, { editionReviews: 0, reviewedEditions: 1 })).not.toThrow();
+  });
+
+  it("honors --full despite a recent unfinished workflow and leaves its evidence intact", () => {
+    const fixture = workflowFixture();
+    try {
+      const before = readFileSync(fixture.draftPath, "utf8");
+      const result = fixture.run(["--full", "--localOnly"]);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
+      const context = JSON.parse(readFileSync(fixture.contextPath, "utf8"));
+      expect(context.supersededByRunId).toBe("fresh-run");
+      expect(readFileSync(fixture.draftPath, "utf8")).toBe(before);
+      const fresh = JSON.parse(readFileSync(join(fixture.exportDir, "fresh-draft.json"), "utf8"));
+      expect(fresh.researchCandidates).toEqual([]);
+      expect(fresh.researchBacklog).toMatchObject({ deferredCount: 1, carriedCount: 0 });
+      expect(JSON.parse(readFileSync(join(fixture.workspace, "scanner-arguments.json"), "utf8"))).toContain("--skipUpload");
+    } finally { fixture.cleanup(); }
+  });
+
+  it("rejects an expired explicit resume or finish before any research or publication work", () => {
+    const fixture = workflowFixture("2026-09-05T00:00:00Z");
+    try {
+      const before = readFileSync(fixture.contextPath, "utf8");
+      for (const option of ["resume", "finish"]) {
+        const result = fixture.run([`--${option}=${fixture.contextPath}`, "--localOnly"]);
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("Start a fresh scan");
+        expect(readFileSync(fixture.contextPath, "utf8")).toBe(before);
+      }
+      expect(readdirSync(fixture.workspace)).not.toContain("steps.jsonl");
+    } finally { fixture.cleanup(); }
+  });
+
+  it.each([["--full"], ["--sources=shop"]])("rolls an owned retained session into a deliberate new scan %s", (...scanArgs) => {
+    const fixture = workflowFixture();
+    try {
+      const session = acquireResearchSession(fixture.workspace, { ownerThreadId: "recovery-test", binding: {
+        profileName: "Test profile", extensionInstanceId: "test-extension", expectedSellerHandle: "test-seller",
+      } });
+      updateResearchSession(fixture.workspace, session.ownerToken, "bind", { contextPath: fixture.contextPath });
+      const priorBytes = readFileSync(fixture.draftPath, "utf8");
+      const result = fixture.run([...scanArgs, "--localOnly"], { RETAIL_RESEARCH_OWNER: session.ownerToken });
+      expect(result.status, result.stderr).toBe(0);
+      const rolled = readResearchSession(fixture.workspace);
+      expect(rolled?.workflowRunId).toBe("fresh-run");
+      expect(rolled?.binding).toEqual(session.binding);
+      expect(readFileSync(fixture.draftPath, "utf8")).toBe(priorBytes);
+    } finally { fixture.cleanup(); }
+  });
+
+  it("validates a local-only final without posting status or uploading even when credentials exist", () => {
+    const fixture = workflowFixture();
+    try {
+      // No research is necessary for this source-only fixture. Real records
+      // still pass assertResearchReady before curation and uploader validation.
+      writeFileSync(fixture.draftPath, JSON.stringify({ runId: "prior-run", phase: "scan", createdAt: new Date().toISOString(), researchCandidates: [], finds: [], sourceReports: [] }));
+      const result = fixture.run([`--finish=${fixture.contextPath}`, "--localOnly"]);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
+      const steps = readFileSync(join(fixture.workspace, "steps.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+      const uploads = steps.filter(step => step.step === "upload");
+      expect(uploads).toHaveLength(1);
+      expect(uploads[0].args).toContain("--dryRun");
+      const context = JSON.parse(readFileSync(fixture.contextPath, "utf8"));
+      expect(context.status).toBe("validated");
+      expect(context.validatedAt).toBeTruthy();
+      expect(context.publishedAt).toBeUndefined();
+    } finally { fixture.cleanup(); }
+  });
+
+  it("records an actionable reason when selected research blocks finish", () => {
+    const fixture = workflowFixture();
+    try {
+      const result = fixture.run([`--finish=${fixture.contextPath}`, "--localOnly"]);
+      expect(result.status).not.toBe(0);
+      const context = JSON.parse(readFileSync(fixture.contextPath, "utf8"));
+      expect(context).toMatchObject({ status: "failed", failure: { code: "research_incomplete", stage: "research" } });
+      expect(context.failure.failedAt).toBeTruthy();
+      expect(JSON.stringify(context.failure)).not.toContain("test-token");
+      expect(readFileSync(join(fixture.workspace, "steps.jsonl"), "utf8")).not.toContain("upload");
+    } finally { fixture.cleanup(); }
+  });
   it("starts browser recovery as a bounded refresh from exact prior evidence", () => {
     const previousScan = { ...draft, phase: "final", sourceReports: [{ id: "old" }] };
     const input = { previousScan, previousScanPath: "prior-final.json", observationsPath: "visible-pages.json", now: at,
@@ -132,3 +238,51 @@ describe("retail workflow state", () => {
     expect(admittedSourceIds(payload)).toEqual(admitted.sourceUpdates!.updatedSourceIds);
   });
 });
+
+function workflowFixture(createdAt = new Date().toISOString()) {
+  const workspace = mkdtempSync(join(tmpdir(), "retail-workflow-lifecycle-"));
+  const exportDir = join(workspace, "exports", "arbitrage-finds");
+  mkdirSync(exportDir, { recursive: true });
+  mkdirSync(join(workspace, "scripts"));
+  const draftPath = join(exportDir, "prior-draft.json");
+  const checkpointPath = join(exportDir, "research-checkpoint-prior-run.json");
+  const contextPath = join(exportDir, "workflow-1.json");
+  writeFileSync(draftPath, JSON.stringify({ ...draft, runId: "prior-run", phase: "scan", createdAt }));
+  writeFileSync(checkpointPath, JSON.stringify({ runId: "prior-run", entries: [] }));
+  writeFileSync(contextPath, JSON.stringify({ runId: "prior-run", status: "research", mode: "full", draftPath, checkpointPath }));
+  writeFileSync(join(workspace, "scripts", "enrichRetailReleaseIdentity.mjs"), 'console.log("{}");');
+  writeFileSync(join(workspace, "scripts", "prepareArbitrageResearchPlan.mjs"), `
+    import { appendFileSync } from "node:fs";
+    appendFileSync("steps.jsonl", JSON.stringify({step:"plan"}) + "\\n");
+    console.log(JSON.stringify({outputPath:"mock-plan.json", queueSummary:{tasks:0,pending:0,deferred:0}}));
+  `);
+  writeFileSync(join(workspace, "scripts", "runRetailArbitrageScan.mjs"), `
+    import { writeFileSync } from "node:fs";
+    import { resolve } from "node:path";
+    const outputPath = resolve("exports/arbitrage-finds/fresh-draft.json");
+    writeFileSync("scanner-arguments.json", JSON.stringify(process.argv.slice(2)));
+    writeFileSync(outputPath, JSON.stringify({runId:"fresh-run", phase:"scan", createdAt:new Date().toISOString(), researchCandidates:[], finds:[], sourceReports:[]}));
+    console.log(JSON.stringify({outputPath}));
+  `);
+  writeFileSync(join(workspace, "scripts", "curateRetailArbitrageRun.mjs"), `
+    import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
+    import { resolve } from "node:path";
+    const payload = JSON.parse(readFileSync(process.argv[2], "utf8"));
+    const finalPath = resolve("exports/arbitrage-finds/final.json");
+    writeFileSync(finalPath, JSON.stringify({...payload, phase:"final", runQuality:{publishable:true}}));
+    appendFileSync("steps.jsonl", JSON.stringify({step:"curate"}) + "\\n");
+    console.log(JSON.stringify({finalPath}));
+  `);
+  writeFileSync(join(workspace, "scripts", "uploadLatestArbitrageFinds.mjs"), `
+    import { appendFileSync } from "node:fs";
+    appendFileSync("steps.jsonl", JSON.stringify({step:"upload",args:process.argv.slice(2)}) + "\\n");
+    if (!process.argv.includes("--dryRun")) throw new Error("Live upload attempted");
+  `);
+  return { workspace, exportDir, draftPath, contextPath,
+    run: (args: string[], extraEnv: Record<string, string> = {}) => spawnSync(process.execPath, [join(process.cwd(), "scripts", "runRetailWorkflow.mjs"), ...args], {
+      cwd: workspace, encoding: "utf8", windowsHide: true, timeout: 10000,
+      env: { ...process.env, ARBITRAGE_UPLOAD_URL: "http://127.0.0.1:1/api/arbitrage/upload", ARBITRAGE_UPLOAD_TOKEN: "test-token", ...extraEnv },
+    }),
+    cleanup: () => rmSync(workspace, { recursive: true, force: true }),
+  };
+}

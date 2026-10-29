@@ -1192,7 +1192,76 @@ describe("canonical arbitrage evaluation", () => {
     expect(result.decision).toBe("REJECT");
     expect(result.candidateTier).toBe("REJECT");
     expect(result.candidateScore).toBe(0);
+    expect(result.reasonCodes).toContain("ECONOMICS_HARD_FAIL");
   });
+
+  it("keeps a loss caused by the default inbound allowance in review", () => {
+    const find = validatedFind({
+      purchasePrice: 12.99,
+      costs: {},
+      soldEvidence: { ...validatedFind().soldEvidence, conservativeResalePrice: 29.44 },
+    });
+    const estimate = evaluateOpportunity(find, {}, NOW);
+    const quoted = evaluateOpportunity({ ...find, costs: { inboundShipping: 5 } }, {}, NOW);
+    expect(estimate.expectedNetProfit).toBe(-2.47);
+    expect(estimate.decision).toBe("REVIEW");
+    expect(estimate.candidateTier).toBe("C");
+    expect(estimate.reasonCodes).toContain("INBOUND_SHIPPING_UNCONFIRMED");
+    expect(estimate.reasonCodes).toContain("ECONOMICS_ESTIMATE_UNCONFIRMED");
+    expect(estimate.reasonCodes).not.toContain("ECONOMICS_HARD_FAIL");
+    expect(estimate.reasons.join(" ")).toContain("unconfirmed $5.00 allowance");
+    expect(quoted.expectedNetProfit).toBe(estimate.expectedNetProfit);
+    expect(quoted.decision).toBe("REJECT");
+    expect(quoted.reasonCodes).toContain("ECONOMICS_HARD_FAIL");
+  });
+
+  it.each([
+    { label: "candidate sold prices", soldEvidence: { status: "candidate" } },
+    { label: "stale sold prices", soldEvidence: { capturedAt: "2026-05-01T10:00:00.000Z" } },
+    { label: "wrong condition", soldEvidence: { condition: "used" } },
+    { label: "unconfirmed edition", soldEvidence: { editionMatchConfirmed: false } },
+    { label: "unverified retailer offer", purchaseOfferVerification: "discovery_lead" },
+    { label: "stale retailer offer", capturedAt: "2026-05-01T10:00:00.000Z" },
+  ] as const)("does not make $label a definitive economics rejection", ({ label: _label, soldEvidence, ...overrides }) => {
+    const result = evaluateOpportunity({
+      ...validatedFind({ purchasePrice: 30 }),
+      ...overrides,
+      soldEvidence: { ...validatedFind().soldEvidence, ...soldEvidence },
+    }, {}, NOW);
+    expect(result.expectedNetProfit).toBeLessThan(0);
+    expect(result.decision).toBe("REVIEW");
+    expect(result.candidateTier).toBe("C");
+    expect(result.reasonCodes).toContain("ECONOMICS_ESTIMATE_UNCONFIRMED");
+    expect(result.reasonCodes).not.toContain("ECONOMICS_HARD_FAIL");
+  });
+
+  it("keeps an advertised Little Creatures lead visible when row prices conflict with unconfirmed edition evidence", () => {
+    const result = evaluateOpportunity(validatedFind({
+      artist: "Talking Heads", title: "Little Creatures", purchasePrice: 9.99,
+      costs: {}, activeEvidence: undefined, purchaseOfferVerification: "discovery_lead",
+      soldEvidence: { ...validatedFind().soldEvidence, status: "candidate", matchConfidence: 0.65,
+        conservativeResalePrice: null, unitsSold90Days: null, editionMatchConfirmed: false },
+      ebayResearchRows: [{ avgSoldPrice: 21.52, avgShipping: 0.18, totalSold: 24 }],
+    } as Partial<ArbitrageFind>), {}, NOW);
+    expect(result.expectedNetProfit).toBe(-5.13);
+    expect(result.decision).toBe("REVIEW");
+    expect(result.candidateTier).toBe("C");
+    expect(result.gates.purchaseOffer).toBe(false);
+    expect(result.gates.soldEvidence).toBe(false);
+    expect(result.reasonCodes).not.toContain("ECONOMICS_HARD_FAIL");
+  });
+
+  it.each(["artistMatchConfirmed", "albumMatchConfirmed", "editionMatchConfirmed"] as const)(
+    "does not approve profitable evidence with an explicit false %s flag", (field) => {
+      const result = evaluateOpportunity(validatedFind({
+        soldEvidence: { ...validatedFind().soldEvidence, [field]: false },
+      }), {}, NOW);
+      expect(result.expectedNetProfit).toBeGreaterThan(0);
+      expect(result.gates.soldEvidence).toBe(false);
+      expect(result.decision).toBe("REVIEW");
+      expect(result.candidateTier).not.toBe("A");
+    },
+  );
 
   it("itemizes every configured acquisition and selling cost", () => {
     const ledger = buildCostLedger(

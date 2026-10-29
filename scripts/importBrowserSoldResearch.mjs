@@ -2,7 +2,9 @@ import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { importBrowserSoldResearch } from "./lib/browserSoldResearch.mjs";
 import { createAlbumPriceBenchmarkIndex } from "./lib/albumPriceBenchmark.mjs";
+import { beginResearchWrite } from "./lib/retailResearchSession.mjs";
 
+beginResearchWrite();
 const [draftArgument, captureArgument] = process.argv.slice(2);
 if (!draftArgument) throw new Error("Usage: node scripts/importBrowserSoldResearch.mjs <scan-json> [browser-product-research.json]");
 const draftPath=resolve(draftArgument);

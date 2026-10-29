@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { publicationConfiguration, publicationRequest } from "./lib/retailPublicationClient.mjs";
+import { beginResearchWrite } from "./lib/retailResearchSession.mjs";
 
 const WORKSPACE = process.cwd();
 const FINDS_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
@@ -17,7 +18,7 @@ const args = new Map(
     return [key, valueParts.length ? valueParts.join("=") : "true"];
   }),
 );
-if (!args.has("dryRun")) publicationConfiguration();
+if (!args.has("dryRun")) { beginResearchWrite(); publicationConfiguration(); }
 
 const selected = args.get("file")
   ? readExplicitFinalPayload(args.get("file"))

@@ -79,6 +79,7 @@ export type RankableCandidate = RecordCandidateSource & {
   sourceListingTitle?: string | null;
   sourceName?: string;
   sourceOriginalPrice?: number | null;
+  sourcePublishedAt?: string | null;
   sourceRetailType?: string | null;
   sourceUrl?: string | null;
   shopifyVariantTitle?: string | null;
@@ -257,7 +258,7 @@ export function sourceMetadataScore(source: RecordCandidateSource): number;
 
 export function selectResearchCandidates<T extends RankableCandidate>(
   candidates: T[],
-  options?: { limit?: number },
+  options?: { limit?: number; freshDealShare?: number; uniqueAlbums?: boolean; now?: number | string | Date },
 ): {
   selected: Array<
     T & {
@@ -273,6 +274,8 @@ export function selectResearchCandidates<T extends RankableCandidate>(
     explorationSelectedCount: number;
     unprovenDeferredCount: number;
     unusedResearchCapacity: number;
+    freshDealSelectedCount: number;
+    duplicateAlbumDeferredCount: number;
     byDiscoveryLane: Record<string, number>;
   };
 };

@@ -3,7 +3,7 @@ import { shippingOfferScenario } from "./shippingOffer.mjs";
 import { checkoutBasketScenario } from "./checkoutBasket.mjs";
 import { resalePricing, sellingCostsForFormat } from "./resalePricing.mjs";
 
-export const EVALUATION_VERSION = 14;
+export const EVALUATION_VERSION = 15;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -259,12 +259,14 @@ export function evaluateOpportunity(
   const evidenceFreshness = marketEvidenceFreshness && offerFreshness;
   const soldConditionMatches =
     sold.condition === expectedSoldCondition(find.condition);
+  const soldIdentityConfirmed = !["artistMatchConfirmed", "albumMatchConfirmed", "editionMatchConfirmed"]
+    .some((field) => find.soldEvidence?.[field] === false);
   const soldEvidence =
     sold.status === "validated" &&
     sold.units90 !== null &&
     sold.latestSaleDate !== null &&
     sold.velocityValidated &&
-    soldConditionMatches;
+    soldConditionMatches && soldIdentityConfirmed;
   const activeEvidence =
     (active.status === "available" || active.status === "no_results") &&
     active.searchComplete &&
@@ -272,6 +274,14 @@ export function evaluateOpportunity(
   const matchConfidence =
     sold.matchConfidence >= settings.minBuyMatchConfidence &&
     active.matchConfidence >= settings.minBuyMatchConfidence;
+  // A default shipping allowance is useful for a conservative scenario, but
+  // cannot prove that a retailer offer loses money. Likewise, provisional or
+  // mismatched sold rows must not bypass the evidence checks via a hard reject.
+  const inboundShippingKnown = Boolean(verifiedCheckoutBasket) ||
+    finiteNonNegative(find.costs?.inboundShipping) !== null;
+  const economicsEvidenceVerified = soldEvidence && activeEvidence &&
+    marketEvidenceFreshness && matchConfidence && offerFreshness &&
+    purchaseOfferVerified && inboundShippingKnown;
   const strategyOptions = buildStrategyOptions({
     activeSupplyMonths,
     costLedger,
@@ -347,6 +357,8 @@ export function evaluateOpportunity(
     currencyConversionRequired,
     demand,
     economics,
+    economicsEvidenceVerified,
+    inboundShippingKnown,
     estimatedDaysToSell,
     lowestActiveMarketPrice,
     priority,
@@ -995,6 +1007,8 @@ function decideOpportunity(context) {
     currencyConversionRequired,
     demand,
     economics,
+    economicsEvidenceVerified,
+    inboundShippingKnown,
     estimatedDaysToSell,
     lowestActiveMarketPrice,
     priority,
@@ -1013,12 +1027,13 @@ function decideOpportunity(context) {
     strategyOptions,
     supply,
   } = context;
-  const knownEconomicsHardFail =
+  const estimatedEconomicsLoss =
     !currencyConversionRequired &&
     resalePrice !== null &&
     costLedger.expectedNetProfit !== null &&
     (costLedger.expectedNetProfit < 0 ||
       (costLedger.roiRatio !== null && costLedger.roiRatio < 0));
+  const knownEconomicsHardFail = estimatedEconomicsLoss && economicsEvidenceVerified;
   const knownSupplyHardFail =
     activeEvidence &&
     soldEvidence &&
@@ -1059,6 +1074,10 @@ function decideOpportunity(context) {
   }
 
   const missingEvidence = [];
+  if (estimatedEconomicsLoss && !economicsEvidenceVerified) {
+    missingEvidence.push("ECONOMICS_ESTIMATE_UNCONFIRMED");
+    if (!inboundShippingKnown) missingEvidence.push("INBOUND_SHIPPING_UNCONFIRMED");
+  }
   if (sourceCurrencyUnknown) missingEvidence.push("SOURCE_CURRENCY_UNKNOWN");
   else if (currencyConversionRequired)
     missingEvidence.push("SOURCE_CURRENCY_UNCONVERTED");
@@ -1306,6 +1325,16 @@ function describeDecision(context) {
   if (reasonCodes.includes("ECONOMICS_HARD_FAIL")) {
     reasons.push(
       "The conservative scenario loses money, so no margin/velocity tradeoff can rescue it.",
+    );
+  }
+  if (reasonCodes.includes("ECONOMICS_ESTIMATE_UNCONFIRMED")) {
+    reasons.push(
+      "The loss estimate uses incomplete evidence or unconfirmed acquisition costs; verify the exact edition, current offer and shipping before ruling out this deal.",
+    );
+  }
+  if (reasonCodes.includes("INBOUND_SHIPPING_UNCONFIRMED")) {
+    reasons.push(
+      `Inbound shipping uses an unconfirmed ${money(costLedger.inboundShipping)} allowance; check the retailer's actual shipping or pickup terms.`,
     );
   }
   if (reasonCodes.includes("SUPPLY_HARD_FAIL")) {

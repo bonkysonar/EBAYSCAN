@@ -9,8 +9,10 @@ import {
 import { dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { publicationPreflight, publicationRequest } from "./lib/retailPublicationClient.mjs";
+import { createRetailAttempt, retailAttemptStatus } from "./lib/retailAttemptStatus.mjs";
+import { beginResearchWrite, readResearchSession, updateResearchSession } from "./lib/retailResearchSession.mjs";
 import { resumableResearchWorkflow, carryUnfinishedResearch, carryResearchCheckpoint } from "./lib/retailResearchBacklog.mjs";
-import { admittedSourceIds, assertResearchReady, browserRecoveryScan, freshWorkflowDraftSummary, researchProgress, scannerOutputPath, WORKFLOW_RESEARCH_LIMIT } from "./lib/retailWorkflowState.mjs";
+import { admittedSourceIds, assertResearchReady, assertWorkflowDraftFresh, browserRecoveryScan, freshWorkflowDraftSummary, researchProgress, scannerOutputPath, workflowFailure, WORKFLOW_RESEARCH_LIMIT } from "./lib/retailWorkflowState.mjs";
 const cwd = process.cwd(),
   dir = join(cwd, "exports", "arbitrage-finds");
 for (const line of (existsSync(".env.local")
@@ -28,6 +30,7 @@ const args = new Map(
   }),
 );
 if (args.has("preflight")) {
+  if (args.has("localOnly")) throw new Error("--localOnly does not contact the publication service; omit --preflight.");
   try {
     console.log(JSON.stringify(await publicationPreflight(), null, 2));
     process.exit(0);
@@ -36,27 +39,44 @@ if (args.has("preflight")) {
     process.exit(1);
   }
 }
+beginResearchWrite();
 mkdirSync(dir, { recursive: true });
 const cadencePath = join(dir, "workflow-cadence.json");
 const cadence = existsSync(cadencePath)
   ? JSON.parse(readFileSync(cadencePath, "utf8"))
   : {};
-if (args.has("finish") && ["browserOnly", "browserObservations", "previousScan", "sources", "webDiscovery", "reviewedOffers"].some((name) => args.has(name)))
+if (args.has("finish") && ["full", "browserOnly", "browserObservations", "previousScan", "sources", "webDiscovery", "reviewedOffers"].some((name) => args.has(name)))
   throw new Error("Browser retailer recovery must start a new workflow; these scan options cannot change an existing draft.");
 if (args.has("previousScan") && !args.has("browserOnly")) throw new Error("--previousScan requires a new --browserOnly recovery workflow.");
 if (args.has("sources") && (args.has("full") || args.has("browserOnly"))) throw new Error("Explicit sources require a separate bounded refresh.");
-let context = args.has("finish")
-  ? JSON.parse(readFileSync(resolve(String(args.get("finish"))), "utf8"))
+if (args.has("finish") && args.has("resume")) throw new Error("Choose either --resume or --finish.");
+if (args.has("resume") && ["full", "browserOnly", "browserObservations", "previousScan", "sources", "webDiscovery", "reviewedOffers"].some(name => args.has(name)))
+  throw new Error("Resume cannot start a replacement scan; use --full without --resume.");
+const contextArgument = args.get("finish") ?? args.get("resume");
+let context = contextArgument
+  ? JSON.parse(readFileSync(resolve(String(contextArgument)), "utf8"))
   : null;
-if (context) context.contextPath = resolve(String(args.get("finish")));
+if (context) {
+  context.contextPath = resolve(String(contextArgument));
+  if (context.publishedAt || context.supersededByRunId) throw new Error("This workflow is already published or superseded.");
+  const savedDraft = JSON.parse(readFileSync(context.draftPath, "utf8"));
+  if (savedDraft.runId !== context.runId || savedDraft.phase !== "scan") throw new Error("Workflow context does not identify its unpublished scan draft.");
+  assertWorkflowDraftFresh(savedDraft);
+}
 const standaloneRefresh = ["browserOnly", "sources", "previousScan"].some(name => args.has(name));
 let priorWorkflows = [];
+const session = readResearchSession(cwd);
+const attempt = session ? { id: session.ownerAttemptId, startedAt: session.attemptStartedAt } : createRetailAttempt();
 try {
-priorWorkflows = !context && !standaloneRefresh ? readUnfinishedWorkflows() : [];
-if (!context && !standaloneRefresh) {
-  const pending = resumableResearchWorkflow(priorWorkflows);
+priorWorkflows = !context ? readUnfinishedWorkflows() : [];
+if (!args.has("finish") && !args.has("full") && !standaloneRefresh) {
+  const pending = context ? { context } : resumableResearchWorkflow(priorWorkflows);
   if (pending) {
     context = pending.context;
+    const savedDraft = JSON.parse(readFileSync(context.draftPath, "utf8"));
+    if (savedDraft.runId !== context.runId || savedDraft.phase !== "scan") throw new Error("Resume context does not identify its unpublished scan draft.");
+    readCheckpoint(context.checkpointPath, context.runId);
+    if (session) updateResearchSession(cwd, process.env.RETAIL_RESEARCH_OWNER, "bind", { contextPath: context.contextPath });
     context.resumedAt = new Date().toISOString();
     importBrowserResearch();
     prepareResearchPlan();
@@ -170,9 +190,9 @@ if (!context && !standaloneRefresh) {
     prepareResearchPlan();
     context.researchProgress = researchProgress(JSON.parse(readFileSync(context.draftPath, "utf8")), readCheckpoint(context.checkpointPath, draft.runId));
     writeFileSync(contextPath, JSON.stringify(context, null, 2));
-    // Retire a prior context only after its unfinished offers, checkpoint and
-    // new context are durably saved. This prevents a completed handoff from
-    // reintroducing the same old backlog every subsequent day.
+    // Retire prior contexts only after the fresh cohort and reusable checkpoint
+    // are durable. Historical drafts/checkpoints remain intact for audit; their
+    // unrediscovered offers are explicitly deferred, never counted as completed.
     const superseded = new Set(draft.researchBacklog.supersededRunIds);
     for (const prior of priorWorkflows.filter(prior => superseded.has(prior.draft.runId))) {
       const path = prior.context.contextPath;
@@ -199,6 +219,8 @@ if (!context && !standaloneRefresh) {
   if (args.has("finish")) {
     const draft = JSON.parse(readFileSync(context.draftPath, "utf8"));
     if (draft.runId !== context.runId || draft.phase !== "scan") throw new Error("Workflow context does not identify this unpublished scan draft.");
+    assertWorkflowDraftFresh(draft);
+    if (session) updateResearchSession(cwd, process.env.RETAIL_RESEARCH_OWNER, "bind", { contextPath: context.contextPath });
     importBrowserResearch();
     const checkpointPath = args.has("research") ? argumentPath("research") : context.checkpointPath;
     const research = checkpointPath && existsSync(checkpointPath) ? checkpointPath : "--pending";
@@ -209,8 +231,8 @@ if (!context && !standaloneRefresh) {
     await status("research");
     assertResearchReady(context.researchProgress, context.researchQueue);
     if (context.researchProgress.planned > 0) {
-      // Refresh the whole carried cohort, including offers beyond the initial
-      // scan batch. The enrichment command reuses only current complete checks.
+      // Refresh the selected current cohort. The enrichment command reuses
+      // only current complete checks.
       const active = run(["scripts/enrichArbitrageActiveEbay.mjs",
         "--file=" + relative(cwd, context.draftPath), "--pages=100"], true);
       process.stdout.write(active.stdout);
@@ -235,7 +257,7 @@ if (!context && !standaloneRefresh) {
       "--file=" + curated.finalPath,
       "--dryRun",
     ]);
-    run([
+    if (!args.has("localOnly")) run([
       "scripts/uploadLatestArbitrageFinds.mjs",
       "--file=" + curated.finalPath,
     ]);
@@ -243,8 +265,9 @@ if (!context && !standaloneRefresh) {
     context.updatedSourceCount = context.updatedSourceIds.length;
     context.finalPath = curated.finalPath;
     context.publicationMode = final.publicationMode;
-    context.publishedAt = new Date().toISOString();
-    await status(partial ? "partial" : "published", final.funnel);
+    if (args.has("localOnly")) context.validatedAt = new Date().toISOString();
+    else context.publishedAt = new Date().toISOString();
+    await status(args.has("localOnly") ? "validated" : partial ? "partial" : "published", final.funnel);
     console.log(
       JSON.stringify(
         {
@@ -254,6 +277,7 @@ if (!context && !standaloneRefresh) {
           funnel: final.funnel,
           updatedSourceCount: context.updatedSourceCount,
           researchProgress: context.researchProgress,
+          localOnly: args.has("localOnly"),
         },
         null,
         2,
@@ -261,7 +285,10 @@ if (!context && !standaloneRefresh) {
     );
   }
 } catch (error) {
-  if (context) await status("failed").catch(() => {});
+  if (context) {
+    context.failure = { ...workflowFailure(error, context.status), failedAt: new Date().toISOString() };
+    await status("failed").catch(() => {});
+  }
   throw error;
 }
 function argumentPath(name) {
@@ -320,10 +347,13 @@ function run(command, capture = false) {
     windowsHide: true,
     maxBuffer: 20 * 1024 * 1024,
   });
-  if (result.status !== 0)
-    throw new Error(
+  if (result.status !== 0) {
+    const error = new Error(
       `Workflow step ${command[0]} failed: ${result.stderr ?? result.error ?? result.status}`,
     );
+    error.workflowStep = command[0];
+    throw error;
+  }
   return result;
 }
 function latestArtifact(draftOnly = false, after = 0) {
@@ -343,12 +373,18 @@ function latestArtifact(draftOnly = false, after = 0) {
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
 }
 async function status(state, funnel) {
+  if (state !== "failed") delete context.failure;
   context.status = state;
   context.updatedAt = new Date().toISOString();
+  context.lastAttempt = attempt;
   writeFileSync(context.contextPath, JSON.stringify(context, null, 2));
-  if (!process.env.ARBITRAGE_UPLOAD_TOKEN)
+  if (session && context.draftPath && context.checkpointPath && !context.publishedAt) {
+    updateResearchSession(cwd, process.env.RETAIL_RESEARCH_OWNER, "bind", { contextPath: context.contextPath });
+    context.browserRecovery = JSON.parse(readFileSync(context.contextPath, "utf8")).browserRecovery;
+  }
+  if (args.has("localOnly") || !process.env.ARBITRAGE_UPLOAD_TOKEN)
     return;
-  const body = { ...context, status: state, funnel };
+  const body = retailAttemptStatus(context, attempt, state, funnel);
   try {
     await publicationRequest(
       "/api/arbitrage/operations",

@@ -14,6 +14,8 @@ export type ResearchProgress = {
 export function admittedSourceIds(payload: { sourceReports?: Array<Record<string, unknown>> }): string[];
 export function researchProgress(draft: any, checkpoint?: any, now?: Date): ResearchProgress;
 export function assertResearchReady(progress: ResearchProgress, queue?: Record<string, number>): void;
+export function assertWorkflowDraftFresh(draft: any, now?: Date | number | string): void;
+export function workflowFailure(error: unknown, state?: string): { code: string; message: string; stage: string };
 export function browserRecoveryScan(input: { observations: any; observationsPath: string; previousScan: any; previousScanPath: string; now?: Date | number | string }): { mode: "refresh"; previousRunId: string; sourceIds: string[]; scanArgs: string[] };
 export function scannerOutputPath(stdout: string): string;
 export function freshWorkflowDraftSummary(draft: any, context: { startedAt: string; previousRunId?: string }): { runId: string; sourceCount: number };

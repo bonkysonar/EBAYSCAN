@@ -1,4 +1,5 @@
 import { retailOperations } from "./src/server/retailOperationsApi";
+import { readRetailDealRadar } from "./src/server/retailDealRadarApi";
 import { type IncomingMessage, type ServerResponse } from "node:http";
 import react from "@vitejs/plugin-react";
 import { type Plugin } from "vite";
@@ -29,6 +30,12 @@ function ebayLocalApiPlugin(): Plugin {
     name: "record-scanner-ebay-local-api",
     configureServer(server) {
       Object.assign(process.env, readLocalEnv(process.cwd()));
+      server.middlewares.use("/api/arbitrage/deal-radar", async (req, res) => {
+        res.setHeader("Cache-Control", "private, no-store");
+        if (req.method !== "GET") { sendJson(res, 405, { error: "Method not allowed" }); return; }
+        try { sendJson(res, 200, await readRetailDealRadar()); }
+        catch { sendJson(res, 503, { error: "Live deal discovery is temporarily unavailable" }); }
+      });
       server.middlewares.use("/api/arbitrage/operations", async (req, res) => {
         try {
           const action =

@@ -4,6 +4,8 @@ node_modules/
 # builds
 dist/
 exports/
+outputs/retail-recovery-audit/
+outputs/test-temp/
 *.tsbuildinfo
 .vercel/
 

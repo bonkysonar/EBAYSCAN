@@ -1,4 +1,6 @@
 import { buildPersistentResearchQueue } from "./lib/persistentResearchQueue.mjs";
+import { atomicJson, beginResearchWrite, readResearchSession, sessionPath } from "./lib/retailResearchSession.mjs";
+import { researchProgress } from "./lib/retailWorkflowState.mjs";
 import {
   existsSync,
   readFileSync,
@@ -10,6 +12,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
+beginResearchWrite();
 const WORKSPACE = process.cwd();
 const FINDS_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
 const requestedPath = process.argv[2];
@@ -54,14 +57,30 @@ const plan = {
 };
 const outputName = `product-research-plan-${safeFilePart(runId)}.json`;
 const outputPath = join(FINDS_DIR, outputName);
+const session = readResearchSession(WORKSPACE);
+const context = session?.workflowRunId === payload.runId ? JSON.parse(readFileSync(session.contextPath, "utf8")) : null;
+if (context && (resolve(context.draftPath) !== sourcePath || resolve(context.checkpointPath) !== checkpointPath))
+  throw new Error("Plan paths do not match the exact owned workflow");
 mkdirSync(FINDS_DIR, { recursive: true });
 for (const [path, value] of [[checkpointPath,queue.checkpoint],[statePath,queue.state],[outputPath,plan]]) {
   writeFileSync(`${path}.tmp`, JSON.stringify(value, null, 2));
   renameSync(`${path}.tmp`, path);
 }
+if (context) {
+  context.planPath = outputPath;
+  context.researchQueue = plan.summary;
+  context.researchProgress = researchProgress(payload, queue.checkpoint);
+  context.updatedAt = new Date().toISOString();
+  session.nextTaskId = entries[0]?.taskId ?? null;
+  session.updatedAt = context.updatedAt;
+  if (context.browserRecovery) context.browserRecovery.nextTaskId = session.nextTaskId;
+  atomicJson(session.contextPath, context);
+  atomicJson(sessionPath(WORKSPACE), session);
+}
 
 console.log(
-  JSON.stringify({ entries: entries.length, outputPath, sourcePath, checkpointPath, queueSummary: plan.summary }, null, 2),
+  JSON.stringify({ entries: entries.length, outputPath, sourcePath, checkpointPath, queueSummary: plan.summary, metrics: plan.metrics,
+    ...(context ? { researchProgress: context.researchProgress } : {}) }, null, 2),
 );
 
 function latestRawScanPath() {
