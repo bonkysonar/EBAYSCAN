@@ -25,6 +25,17 @@ function findFor(title: string): ArbitrageFind {
 }
 
 describe("active eBay edition matching", () => {
+  it("never uses vinyl-themed artwork as matching active stock or a resale quote", () => {
+    const profile = buildActiveSearchProfile({ ...findFor("Fontaines D.C. Dogrel Vinyl LP"), artist: "Fontaines D.C.", title: "Dogrel", identityStatus: "resolved" })!;
+    for (const title of [
+      "Fontaines D.C. Dogrel 2019 Vinyl Record LP Album Concept Wall Art Print",
+      "Fontaines D.C. Dogrel Vinyl LP Album Cover Art Print",
+      "Fontaines D.C. Dogrel Vinyl Record Framed Print",
+      "Fontaines D.C. Dogrel Vinyl Record Poster",
+    ]) expect(matchActiveListing(title, profile), title).toMatchObject({ matched: false, reasons: ["blocked-product-type"] });
+    expect(matchActiveListing("Fontaines D.C. Dogrel New Sealed Vinyl LP", profile).matched).toBe(true);
+  });
+
   it("accepts explicit self-titled identity without treating promotional suffixes as an album", () => {
     const profile = buildActiveSearchProfile({ ...findFor("Unruly Child - S/T Red 2-LP Set"), artist: "Unruly Child", title: "Unruly Child", identityStatus: "resolved" })!;
     for (const listing of [

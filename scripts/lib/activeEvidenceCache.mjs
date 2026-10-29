@@ -1,7 +1,7 @@
 import { buildActiveSearchProfile } from '../../src/lib/arbitrage/activeEbayMatching.mjs';
 
 export const ACTIVE_EVIDENCE_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
-const fields = [
+export const ACTIVE_EVIDENCE_FIELDS = Object.freeze([
   'ebayActiveSearchStatus', 'ebayActiveMatchingVersion', 'ebayActiveDestinationKey',
   'ebayActiveProfileKey', 'ebayActiveSearchUpdatedAt', 'ebayActiveSearchKeyword',
   'ebayActiveSearchUrl', 'ebayActiveSearchVariants', 'activeListingCount',
@@ -10,7 +10,8 @@ const fields = [
   'ebayActiveRawListingsInspected', 'ebayActiveSearchComplete', 'exactActiveListingCount',
   'lowestActivePrice', 'lowestActivePriceDestinationVerified', 'lowestActiveItemPrice',
   'lowestActiveShippingPrice', 'lowestActiveTitle', 'lowestActiveUrl', 'ebayActiveListings',
-];
+]);
+const fields = ACTIVE_EVIDENCE_FIELDS;
 
 function key(profile, options) {
   return JSON.stringify([options.matchingVersion, options.destinationKey, profile]);

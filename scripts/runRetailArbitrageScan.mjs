@@ -80,6 +80,7 @@ import {
   inferRetailArtist,
   inferRetailTitle,
   parseRetailProductPrices,
+  parseAcousticSoundsListingIdentity,
 } from "./lib/retailListingParsing.mjs";
 import { discoverRetailCatalogLinks, isMissingRetailPage } from "./lib/retailCatalogDiscovery.mjs";
 import { discoverRetailPaginationLinks, discoverNewestForumPages } from "./lib/retailPagination.mjs";
@@ -337,7 +338,9 @@ const marketplaceAlbumDemandIndex = createMarketplaceAlbumDemandIndex(
 const browserObservationAssessment = args.get("browserObservations")
   ? assessBrowserRetailObservations(JSON.parse(readFileSync(resolve(args.get("browserObservations")), "utf8")), sourceCatalog, capturedAt)
   : { pages: [], diagnostics: [], summary: { total: 0, accepted: 0, expired: 0, rejected: 0 } };
-const browserObservations = browserObservationAssessment.pages;
+// Exact retailer checks for a discovery lead verify that selected offer during
+// curation. They cannot stand in for a publisher catalog or seed a broad scan.
+const browserObservations = browserObservationAssessment.pages.filter(page => !page.retailerOfferEvidence);
 if (browserObservationAssessment.diagnostics.length)
   console.log("Browser observation intake: " + JSON.stringify(browserObservationAssessment.summary));
 const browserPagesByUrl = new Map(browserObservations.map((page) => [browserObservationUrl(page.url), page]));
@@ -479,7 +482,10 @@ const sourceScanResults = await mapWithConcurrency(
 for (const result of sourceScanResults) {
   Object.assign(result.report, browserSourceDiagnostics(browserObservations, result.report.id));
   sourceReports.push(result.report);
-  allCandidates.push(...result.candidates);
+  allCandidates.push(...result.candidates.map(candidate => ({
+    ...candidate,
+    ...(parseAcousticSoundsListingIdentity(candidate.sourceListingTitle, candidate) ?? {}),
+  })));
   allSaleEvents.push(...result.saleEvents);
 }
 

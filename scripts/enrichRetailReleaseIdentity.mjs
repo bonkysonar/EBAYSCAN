@@ -4,6 +4,7 @@ import { getEbayApplicationToken, verifyEbayPurchaseCandidateDetails } from "./l
 import { retailEligibility } from "./lib/retailIdentity.mjs";
 import { resolveRetailBarcodeIdentity, RETAIL_BARCODE_IDENTITY_VERSION } from "./lib/retailBarcodeIdentity.mjs";
 import { beginResearchWrite } from "./lib/retailResearchSession.mjs";
+import { repairRetailCandidateIdentity } from "./lib/retailIdentityRepairs.mjs";
 
 beginResearchWrite();
 // Read-only API repair for the retained research pool. A listing's promotional
@@ -15,13 +16,26 @@ if (payload.phase !== "scan") throw new Error("Identity repair requires an unpub
 if (existsSync(".env.local")) process.loadEnvFile(".env.local");
 const pool = payload.researchCandidates ?? payload.finds ?? [];
 const now = Date.now();
+const browserPath = resolve('exports/arbitrage-finds/browser-source-observations.json');
+const browserCaptures = existsSync(browserPath) ? JSON.parse(readFileSync(browserPath, 'utf8')) : {};
+let localRepairs = 0;
+for (const rows of [pool, ...(pool === payload.finds ? [] : [payload.finds ?? []])]) {
+  for (let index = 0; index < rows.length; index++) {
+    const repaired = repairRetailCandidateIdentity(rows[index], browserCaptures, new Date(now));
+    if (JSON.stringify(repaired) !== JSON.stringify(rows[index])) { rows[index] = repaired; localRepairs++; }
+  }
+}
+if (localRepairs) {
+  payload.localIdentityProgress = { updated: localRepairs, checkedAt: new Date(now).toISOString() };
+  writeFileSync(`${path}.tmp`, JSON.stringify(payload, null, 2)); renameSync(`${path}.tmp`, path);
+}
 const identityVersion = 2;
 const queue = pool.filter(find => find.sourceId === "ebay-purchase" &&
   retailEligibility(find.releaseIdentityStatus === 'rejected' ? {...find,physicalFormatConfirmed:undefined} : find).eligible &&
   !(find.releaseIdentityVersion === identityVersion && ["resolved", "unknown", "rejected"].includes(find.releaseIdentityStatus) && now - Date.parse(find.releaseIdentityCheckedAt) >= -300000 && now - Date.parse(find.releaseIdentityCheckedAt) < 24 * 3600000));
 const retailerQueue = pool.filter(find => find.shopifyVariantId && (find.identityStatus === 'unresolved' || !find.artist || /^unknown artist$/i.test(find.artist)) && retailEligibility(find).eligible &&
   !(find.retailIdentityVersion === RETAIL_BARCODE_IDENTITY_VERSION && ['resolved','unknown'].includes(find.retailIdentityStatus) && now - Date.parse(find.retailIdentityCheckedAt) >= -300000 && now - Date.parse(find.retailIdentityCheckedAt) < 24 * 3600000));
-if (!queue.length && !retailerQueue.length) { console.log(JSON.stringify({ checked: 0, pending: 0 })); process.exit(0); }
+if (!queue.length && !retailerQueue.length) { console.log(JSON.stringify({ checked: 0, pending: 0, localRepairs })); process.exit(0); }
 const endpointRoot = process.env.EBAY_ENV === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
 const auth = await getEbayApplicationToken({ endpointRoot, env: process.env, fetchImpl: fetch });
 if (!auth.available) throw new Error(auth.reason);

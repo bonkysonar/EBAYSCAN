@@ -49,6 +49,34 @@ export function inferRetailTitle(value) {
   return cleanRetailTitle(splitRetailArtistTitle(value).title);
 }
 
+/** Acoustic Sounds prints Artist / Album, including colons inside subtitles.
+ * Keep this publisher convention out of the generic collaboration parser. */
+export function parseAcousticSoundsListingIdentity(value, source = {}) {
+  const sourceId = source.sourceId ?? source.id;
+  const sourceUrl = source.sourceUrl ?? source.url ?? source.baseUrl;
+  let publisherHost = false;
+  if (sourceUrl) {
+    try {
+      const url = new URL(sourceUrl);
+      publisherHost = url.protocol === "https:" && !url.username && !url.password && !url.port &&
+        /^(?:www\.|store\.)?acousticsounds\.com$/i.test(url.hostname);
+      if (!publisherHost) return null;
+    } catch { return null; }
+  }
+  if (sourceId !== "acoustic-sounds" && !publisherHost) return null;
+  const text = cleanRetailText(value);
+  const parts = text.split(/\s+\/\s+/);
+  // Several delimiters might describe multiple performers or a split release.
+  // They need structured metadata instead of guessing which slash is the album.
+  if (parts.length !== 2 || parts[0].length < 2 || parts[0].length > 100) return null;
+  const artist = cleanRetailArtist(parts[0]);
+  const release = parts[1].trim();
+  const formatSuffix = release.search(/\s+(?:(?:\d{2,3}\s*(?:grams?|g)\s+)(?:(?:clarity|super|colou?red|black)\s+)?(?:vinyl|(?:[1-9]\s*)?lp)\b|(?:[1-9]\s*)?lp(?:\s+record)?\b|vinyl\s+record\b)/i);
+  const title = (formatSuffix < 0 ? release : release.slice(0, formatSuffix)).trim();
+  if (artist.length < 2 || title.length < 2 || /^(?:unknown artist|vinyl|records?)$/i.test(artist)) return null;
+  return { artist, title, retailEditionText: release, identityStatus: "resolved", identitySource: "acoustic_sounds_listing" };
+}
+
 function splitRetailArtistTitle(value) {
   const source = cleanRetailText(value)
     .replace(/^best\s+seller\s+/i, "")

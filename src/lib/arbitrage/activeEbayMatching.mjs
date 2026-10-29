@@ -1,4 +1,4 @@
-import { isMarketplaceNonRecordTitle } from "./marketplaceProductClassification.mjs";
+import { isMarketplaceNonRecordTitle, isRecordArtworkMerchandiseTitle } from "./marketplaceProductClassification.mjs";
 import { buildBaseResearchQuery, normalizeResearchArtist, normalizeResearchTitle } from "./soldResearchLinks.mjs";
 import { retailEligibility } from "../../../scripts/lib/retailIdentity.mjs";
 
@@ -205,7 +205,8 @@ export function matchActiveListing(title, profile) {
   if (
     !listingTitle ||
     BLOCKED_PRODUCT_PATTERN.test(listingTitle) ||
-    isMarketplaceNonRecordTitle(listingTitle)
+    isMarketplaceNonRecordTitle(listingTitle) ||
+    isRecordArtworkMerchandiseTitle(listingTitle, profile)
   ) {
     return {
       confidence: "low",

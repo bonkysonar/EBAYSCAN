@@ -1,9 +1,10 @@
 import { retailEligibility } from "../../../scripts/lib/retailIdentity.mjs";
+import { retailerBrowserOfferIsCurrent } from "../../../scripts/lib/retailBrowserOfferEvidence.mjs";
 import { shippingOfferScenario } from "./shippingOffer.mjs";
 import { checkoutBasketScenario } from "./checkoutBasket.mjs";
 import { resalePricing, sellingCostsForFormat } from "./resalePricing.mjs";
 
-export const EVALUATION_VERSION = 15;
+export const EVALUATION_VERSION = 16;
 
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -245,9 +246,13 @@ export function evaluateOpportunity(
     soldEvidenceAge <= settings.maxEvidenceAgeDays &&
     activeEvidenceAge <= settings.maxEvidenceAgeDays;
   const offerAge = ageInDays(find.capturedAt, now);
+  const retailerBrowserObservation = find.retailObservationMethod === "visible_browser_retailer_offer" ||
+    find.retailerOfferObservation !== undefined;
+  const retailerBrowserEvidenceCurrent = !retailerBrowserObservation || retailerBrowserOfferIsCurrent(find, now);
   const offerFreshness =
-    offerAge !== null && offerAge <= settings.maxOfferAgeDays;
-  const purchaseOfferVerified = !shippingScenario && (!find.checkoutQuote || Boolean(verifiedCheckoutBasket)) &&
+    offerAge !== null && offerAge <= (retailerBrowserObservation ? Math.min(settings.maxOfferAgeDays, 0.25) : settings.maxOfferAgeDays) &&
+    retailerBrowserEvidenceCurrent;
+  const purchaseOfferVerified = retailerBrowserEvidenceCurrent && !shippingScenario && (!find.checkoutQuote || Boolean(verifiedCheckoutBasket)) &&
     ["direct_retailer", "official_api"].includes(
       String(find.purchaseOfferVerification ?? "")
         .trim()
@@ -406,6 +411,7 @@ export function evaluateOpportunity(
     marketEvidenceFreshness,
     offerAge,
     offerFreshness,
+    retailerBrowserObservation,
     purchaseOfferVerified,
     reasonCodes,
     recommendedMaxPurchasePrice,
@@ -1177,6 +1183,7 @@ function describeDecision(context) {
     marketEvidenceFreshness,
     offerAge,
     offerFreshness,
+    retailerBrowserObservation,
     purchaseOfferVerified,
     priority,
     profitPer30Days,
@@ -1299,7 +1306,9 @@ function describeDecision(context) {
   }
   if (!offerFreshness) {
     reasons.push(
-      `The retailer offer must be dated within ${settings.maxOfferAgeDays} days (offer ${
+      retailerBrowserObservation
+        ? "The exact retailer browser observation must match this offer and be no more than six hours old; recheck the selected product, price, seller and availability before buying."
+        : `The retailer offer must be dated within ${settings.maxOfferAgeDays} days (offer ${
         offerAge === null ? "undated or future-dated" : `${offerAge}d`
       }); refresh the source price and availability before buying.`,
     );

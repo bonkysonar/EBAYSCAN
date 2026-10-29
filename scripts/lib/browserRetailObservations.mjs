@@ -1,4 +1,5 @@
 import { validatedCheckoutQuote } from "../../src/lib/arbitrage/checkoutBasket.mjs";
+import { validateRetailerOfferPage } from "./retailBrowserOfferEvidence.mjs";
 const MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const host = (value) =>
   new URL(value).hostname.toLowerCase().replace(/^www\./, "");
@@ -42,6 +43,11 @@ export function validateBrowserRetailObservations(
       throw new Error("Invalid browser observation time");
     // Expired archive entries cannot supply evidence and need no product repair.
     if (age > MAX_AGE_MS) return null;
+    if (page.retailerOfferEvidence) {
+      const offer = validateRetailerOfferPage(page, now);
+      if (!offer) throw new Error("Exact retailer offer is missing current selected-product evidence");
+      return { ...offer, title: String(page.title ?? offer.productHeadingText).slice(0, 300), links: [] };
+    }
     const url = new URL(page.url);
     if (
       url.protocol !== "https:" || url.username || url.password ||
@@ -293,7 +299,7 @@ function validateProductEvidence(page) {
 
 export function browserProductCandidates(pages, source, stableId) {
   const products = pages
-    .filter((page) => page.sourceId === source.id && page.productEvidence)
+    .filter((page) => page.sourceId === source.id && page.productEvidence && !page.retailerOfferEvidence)
     .map((page) => {
       const evidence = page.productEvidence;
       return {
@@ -333,7 +339,7 @@ export function browserProductCandidates(pages, source, stableId) {
       };
     });
   const cards = pages
-    .filter((page) => page.sourceId === source.id)
+    .filter((page) => page.sourceId === source.id && !page.retailerOfferEvidence)
     .flatMap((page) =>
       (page.catalogProducts ?? [])
         .filter((card) => card.available !== false)
@@ -421,6 +427,7 @@ function observedSkuIdentity(candidate) {
 }
 
 export function browserObservationPage(page) {
+  if (page.retailerOfferEvidence) throw new Error("An exact retailer offer is not a source catalog page");
   const html = `<html><head><title>${escape(page.title)}</title></head><body>${page.visibleText
     .split(/\n+/)
     .filter(Boolean)
@@ -440,7 +447,7 @@ export function browserObservationPage(page) {
 }
 
 export function browserSourceDiagnostics(pages, sourceId) {
-  const selected = pages.filter((page) => page.sourceId === sourceId);
+  const selected = pages.filter((page) => page.sourceId === sourceId && !page.retailerOfferEvidence);
   return selected.length
     ? {
         browserObservationCount: selected.length,

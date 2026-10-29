@@ -23,7 +23,7 @@ const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_MAX_QUERIES = Number.POSITIVE_INFINITY;
 const ACTIVE_REFRESH_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
-export const ACTIVE_MATCHING_VERSION = 7;
+export const ACTIVE_MATCHING_VERSION = 8;
 
 const args = new Map(
   process.argv

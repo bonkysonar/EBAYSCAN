@@ -1,6 +1,7 @@
 import { normalizeResearchArtist, normalizeResearchTitle } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 import { retailEligibility } from "./retailIdentity.mjs";
 import { validatedCheckoutQuote } from "../../src/lib/arbitrage/checkoutBasket.mjs";
+import { verifyRetailerBrowserOffer } from "./retailBrowserOfferEvidence.mjs";
 
 const key = (value) => String(value ?? "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]/g, "");
 const isRoughTrade = (url) => /^(?:www\.)?roughtrade\.com$/.test(url.hostname);
@@ -17,10 +18,15 @@ const urlVariant = (url) => url.searchParams.get("variant") || (isRoughTrade(url
 export function browserVerifiedRetailOffer(find, captures, now = new Date()) {
   if (captures?.captureMethod !== "visible_browser") return null;
   for (const page of captures.pages ?? []) {
+    if (page.retailerOfferEvidence) {
+      const verified = verifyRetailerBrowserOffer(find, page, now);
+      if (verified) return verified;
+      continue;
+    }
     const p = page.productEvidence;
     if (!p || page.sourceId !== find.sourceId || page.outcome !== "available") continue;
     const age = Number(now) - Date.parse(page.capturedAt);
-    if (!(age >= -300000 && age <= 86400000)) continue;
+    if (!(age >= -300000 && age <= 6 * 3600000)) continue;
     const text = String(page.visibleText).split(/You may also like|Recently viewed/i)[0];
     let purchaseBlock = text.split(/\bDescription\b|\bTracklist\b|\bShips on\b/i)[0];
     try {

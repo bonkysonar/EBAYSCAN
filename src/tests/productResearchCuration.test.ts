@@ -4,6 +4,7 @@ import {
   researchCheckpointComplete,
   curateResearchForFind,
   productResearchRowMatchScore,
+  resetPressingActiveEvidence,
   researchVariants,
 } from "../../scripts/lib/productResearchCuration.mjs";
 
@@ -18,6 +19,44 @@ const find = {
 };
 
 describe("generic Product Research curation", () => {
+  it("excludes record-themed wall-art prints and posters from sold comparables", () => {
+    const record = { ...find, artist: "Fontaines D.C.", title: "Dogrel", sourceListingTitle: "Fontaines D.C. Dogrel Vinyl LP" };
+    for (const title of [
+      "Fontaines D.C. Dogrel 2019 Vinyl Record LP Album Concept Wall Art Print",
+      "Fontaines D.C. Dogrel Vinyl LP Album Cover Art Print",
+      "Fontaines D.C. Dogrel Vinyl Record Framed Print",
+      "Fontaines D.C. Dogrel Vinyl Record Poster",
+    ]) expect(productResearchRowMatchScore(record, title), title).toBe(0);
+    expect(productResearchRowMatchScore(record, "Fontaines D.C. Dogrel New Sealed Vinyl LP")).toBeGreaterThan(.68);
+  });
+
+  it("preserves legitimate record names that contain art, print, wall or poster", () => {
+    for (const title of ["The Wall", "Wall Art", "Wall Art Print", "Poster", "Art Print"])
+      expect(productResearchRowMatchScore({ ...find, artist: "Audit Artist", title, sourceListingTitle: `Audit Artist ${title} Vinyl LP` },
+        `Audit Artist ${title} New Sealed Vinyl LP`), title).toBeGreaterThan(.68);
+    const namedPoster = { ...find, artist: "Audit Artist", title: "Poster", sourceListingTitle: "Audit Artist Poster Vinyl LP" };
+    expect(productResearchRowMatchScore(namedPoster, "Audit Artist Poster Album Poster")).toBe(0);
+  });
+
+  it("clears every prior-edition active observation without changing saved input or unrelated evidence", () => {
+    const fields = ["ebayActiveSearchStatus", "ebayActiveMatchingVersion", "ebayActiveDestinationKey", "ebayActiveProfileKey",
+      "ebayActiveSearchUpdatedAt", "ebayActiveSearchKeyword", "ebayActiveSearchUrl", "ebayActiveSearchVariants", "activeListingCount",
+      "activeListingCountIsExactMatch", "activeEvidence", "ebayActiveEditionIdentity", "ebayActiveMatchConfidence",
+      "ebayActiveExcludedSourceListingCount", "ebayActiveRawListingsInspected", "ebayActiveSearchComplete", "exactActiveListingCount",
+      "lowestActivePrice", "lowestActivePriceDestinationVerified", "lowestActiveItemPrice", "lowestActiveShippingPrice", "lowestActiveTitle",
+      "lowestActiveUrl", "ebayActiveListings", "ebayActiveSearchError"];
+    const original = { ...find, ...Object.fromEntries(fields.map(field => [field, "old-edition-evidence"])),
+      retailEditionText: "New observed red vinyl", soldEvidence: { status: "validated" }, purchasePrice: 12,
+      retailVerification: { status: "verified" } };
+    const saved = structuredClone(original);
+    const reset = resetPressingActiveEvidence(original);
+    for (const field of fields) expect(reset).not.toHaveProperty(field);
+    expect(reset).toMatchObject({ artist: find.artist, title: find.title, purchasePrice: 12,
+      retailEditionText: "New observed red vinyl", soldEvidence: { status: "validated" }, retailVerification: { status: "verified" } });
+    expect(original).toEqual(saved);
+    expect(reset).not.toBe(original);
+  });
+
   it("does not use another album's sales for a self-titled record", () => {
     const self = { ...find, artist: "Nothing, Nowhere.", title: "The Nothing, Nowhere. Exclusive LP", sourceListingTitle: "The Nothing, Nowhere. Exclusive LP" };
     for (const other of ["nothing,nowhere. - Trauma Factory - 2021 New Sealed Vinyl", "Nothing Nowhere Reaper X Ruiner Vinyl LP", "nothing,nowhere. Dark Magic Vinyl LP"]) expect(productResearchRowMatchScore(self, other)).toBe(0);

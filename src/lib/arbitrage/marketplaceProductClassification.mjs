@@ -5,6 +5,19 @@ export function isMarketplaceNonRecordTitle(value) {
   return NON_RECORD_MARKETPLACE_PRODUCT.test(normalizeMarketplaceProductText(value));
 }
 
+const ART_MERCHANDISE_PATTERN = /\b(?:wall\s+art\s+(?:prints?|posters?|canvas)|(?:concept|album(?:\s+cover)?|framed|canvas)\s+(?:wall\s+)?art\s+prints?|(?:framed|canvas)\s+prints?|posters?)\b/i;
+
+/** Merchandise wording outside the known release name cannot be an LP comp. */
+export function isRecordArtworkMerchandiseTitle(value, identity = {}) {
+  let remainder = ` ${normalizeMarketplaceProductText(value).toLowerCase()} `;
+  // Preserve albums or artists actually named "Poster" or "Wall Art Print".
+  for (const name of [identity.artist, identity.title]) {
+    const phrase = normalizeMarketplaceProductText(name).toLowerCase();
+    if (phrase) remainder = remainder.replace(` ${phrase} `, " ");
+  }
+  return ART_MERCHANDISE_PATTERN.test(remainder);
+}
+
 function normalizeMarketplaceProductText(value) {
   return String(value ?? "")
     .normalize("NFKD")

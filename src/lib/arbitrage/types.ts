@@ -228,6 +228,12 @@ export type ArbitrageFind = {
     advertisedPrice?: number;
     expectedPrice?: number;
     currency?: string;
+    captureMethod?: string;
+    retailerId?: string;
+    productId?: string;
+    condition?: string;
+    sellerText?: string;
+    fulfillerText?: string;
   };
   learningEvidenceRevision?: string;
   learningSuppressed?: boolean;
@@ -263,7 +269,8 @@ export type ArbitrageFind = {
   candidateTier?: ArbitrageCandidateTier;
   capturedAt: string;
   retailObservedAt?: string;
-  retailObservationMethod?: "visible_browser" | "visible_browser_catalog" | "public_page_reader";
+  retailObservationMethod?: "visible_browser" | "visible_browser_catalog" | "visible_browser_retailer_offer" | "public_page_reader";
+  retailerOfferObservation?: Record<string, unknown>;
   retailObservationUrl?: string;
   condition?: string;
   conservativeResalePrice?: number | null;
