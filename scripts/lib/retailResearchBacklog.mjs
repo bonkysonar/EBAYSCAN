@@ -9,12 +9,12 @@ export function resumableResearchWorkflow(workflows, now = Date.now()) {
   }).sort((a, b) => Date.parse(a.draft.createdAt) - Date.parse(b.draft.createdAt))[0] ?? null;
 }
 
-/** Carry unpublished offers without refreshing prices or times. Base research
- * completion cannot discard an annual follow-up or an unpublished decision. */
+/** A new scan owns a fresh, bounded acquisition cohort. Historical offers stay
+ * in their original drafts; matching research is reused separately below. */
 export function carryUnfinishedResearch(draft, workflows, now = new Date()) {
   const pool = [...(draft.researchCandidates ?? (draft.finds ?? []).filter(find => find.opportunityType !== "sitewide_sale"))];
   const ids = new Set(pool.map(find => find.id));
-  const carried = [];
+  const deferred = new Map();
   const supersededRunIds = [];
   for (const prior of unfinished(workflows).sort((a,b) => Date.parse(b.draft.createdAt) - Date.parse(a.draft.createdAt))) {
     if (prior.draft.runId === draft.runId) continue;
@@ -22,13 +22,18 @@ export function carryUnfinishedResearch(draft, workflows, now = new Date()) {
     const oldPool = prior.draft.researchCandidates ?? prior.draft.finds ?? [];
     const byId = new Map(oldPool.map(find => [find.id, find]));
     for (const plan of buildProductResearchPlan(oldPool)) {
-      if (ids.has(plan.findId)) continue;
-      ids.add(plan.findId);
-      pool.push(byId.get(plan.findId));
-      carried.push({ findId: plan.findId, previousRunId: prior.draft.runId });
+      if (ids.has(plan.findId) || deferred.has(plan.findId)) continue;
+      const offer = byId.get(plan.findId);
+      const age = Number(new Date(now)) - Date.parse(offer.capturedAt);
+      deferred.set(plan.findId, { findId: plan.findId, previousRunId: prior.draft.runId,
+        reason: !Number.isFinite(age) || age < -300000 || age > 2 * 86400000 ? "offer_stale" : "not_rediscovered" });
     }
   }
-  return { ...draft, researchCandidates: pool, researchBacklog: { carriedCount: carried.length, carried, supersededRunIds } };
+  return { ...draft, researchCandidates: pool, researchBacklog: {
+    policy: "current_scan_only", carriedCount: 0, carried: [],
+    deferredCount: deferred.size, staleOfferCount: [...deferred.values()].filter(row => row.reason === "offer_stale").length,
+    deferred: [...deferred.values()], supersededRunIds,
+  } };
 }
 
 /** Re-import observed runs by query into the new cohort. Never relabel an old

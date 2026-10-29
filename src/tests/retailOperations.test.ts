@@ -9,6 +9,7 @@ import {
 } from "../server/retailOperationsApi";
 import { applyRetailLearning } from "../../scripts/lib/retailLearning.mjs";
 import { selectDecisionList } from "../lib/arbitrage/decisionList.mjs";
+import { createRetailAttempt, retailAttemptStatus } from "../../scripts/lib/retailAttemptStatus.mjs";
 import type {
   ArbitrageFind,
   ArbitrageImportPayload,
@@ -60,6 +61,22 @@ afterEach(() => {
   else process.env.BLOB_READ_WRITE_TOKEN = previousBlob;
 });
 describe("retailer update and review contracts", () => {
+  it("reports a new invocation of old research without weakening stale-attempt rejection", async () => {
+    process.env.ARBITRAGE_UPLOAD_TOKEN = "test-secret";
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    const cwd = mkdtempSync(join(tmpdir(), "retail-resume-status-"));
+    directories.push(cwd);
+    const context = { runId: "old-data-run", startedAt: "2020-01-01T00:00:00Z", draftPath: "original.json" };
+    const before = JSON.stringify(context);
+    const first = createRetailAttempt(new Date(Date.now() - 10000).toISOString());
+    const second = createRetailAttempt(new Date(Date.now() - 1000).toISOString());
+    await retailOperations(cwd, "POST", retailAttemptStatus(context, first, "research"), "test-secret");
+    await retailOperations(cwd, "POST", retailAttemptStatus(context, second, "research"), "test-secret");
+    await expect(retailOperations(cwd, "POST", retailAttemptStatus(context, first, "failed"), "test-secret"))
+      .rejects.toMatchObject({ statusCode: 409 });
+    expect(await retailOperations(cwd, "GET", null)).toMatchObject({ runId: context.runId, startedAt: second.startedAt });
+    expect(JSON.stringify(context)).toBe(before);
+  });
   it("persists bounded research progress and cannot label an all-pending run complete", async () => {
     process.env.ARBITRAGE_UPLOAD_TOKEN = "test-secret";
     delete process.env.BLOB_READ_WRITE_TOKEN;

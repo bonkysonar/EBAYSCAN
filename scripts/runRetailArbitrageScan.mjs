@@ -1,6 +1,8 @@
 import { applyRetailLearning } from "./lib/retailLearning.mjs";
+import { beginResearchWrite } from "./lib/retailResearchSession.mjs";
 import { publicationRequest } from "./lib/retailPublicationClient.mjs";
 import { discoverVinylPriceDrop } from "./lib/vinylPriceDropDiscovery.mjs";
+import { discoverSlickdealsFeeds } from "./lib/dealFeedDiscovery.mjs";
 import { webSaleDiscovery } from "./lib/webSaleDiscovery.mjs";
 import { createAlbumDemandIndex } from "./lib/albumDemand.mjs";
 import { createMarketplaceAlbumDemandIndex } from "./lib/marketplaceAlbumDemand.mjs";
@@ -14,7 +16,7 @@ import {
 import { shopifyIdentity, retailEligibility } from "./lib/retailIdentity.mjs";
 import { readShopifyAjaxCatalog } from "./lib/shopifyAjaxCatalog.mjs";
 import { prefetchShopifyCatalog } from "./lib/shopifyFeedPreflight.mjs";
-import { validateBrowserRetailObservations, browserObservationUrl, browserObservationPage, browserSourceDiagnostics, browserProductCandidates, preferObservedSkuCandidates } from "./lib/browserRetailObservations.mjs";
+import { assessBrowserRetailObservations, browserObservationUrl, browserObservationPage, browserSourceDiagnostics, browserProductCandidates, preferObservedSkuCandidates } from "./lib/browserRetailObservations.mjs";
 import { reviewedRetailOffers } from "./lib/reviewedRetailOffers.mjs";
 import { spawnSync } from "node:child_process";
 import {
@@ -106,6 +108,7 @@ import {
   evaluateOpportunity,
 } from "../src/lib/arbitrage/evaluateOpportunity.mjs";
 
+beginResearchWrite();
 const WORKSPACE = process.cwd();
 const DEFAULT_OUTPUT_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
 const SOLD_INDEX_PATH = join(
@@ -137,7 +140,9 @@ const DEFAULT_FETCH_RETRIES = 2;
 const DEFAULT_FETCH_RETRY_DELAY_MS = 1_000;
 const DEFAULT_HOST_DELAY_MS = 650;
 const DEFAULT_GENERIC_MAX_PAGES = 5;
-const DEFAULT_MAX_RESEARCH_POOL_SIZE = Number.POSITIVE_INFINITY;
+// Finish useful current offers before their prices and market evidence expire.
+// The full discovery pool remains in the local draft, outside required research.
+const DEFAULT_MAX_RESEARCH_POOL_SIZE = 12;
 const DEFAULT_RESEARCH_POOL_MULTIPLIER = 3;
 const DEFAULT_SHOPIFY_COLLECTION_LANES = 6;
 const DEFAULT_SHOPIFY_MAX_PAGES = 10;
@@ -151,7 +156,7 @@ const DEFAULT_EBAY_PURCHASE_MAX_PAGES_PER_LANE = 4;
 const DEFAULT_EBAY_PURCHASE_PAGE_SIZE = 100;
 const DEFAULT_ACTIVE_ENRICHMENT_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_SOLD_HISTORY_SYNC_TIMEOUT_MS = 30 * 60 * 1000;
-const SCANNER_VERSION = "retail-arbitrage-scanner/4";
+const SCANNER_VERSION = "retail-arbitrage-scanner/5";
 
 loadLocalEnv(LOCAL_ENV_PATH);
 
@@ -329,9 +334,12 @@ const marketplaceAlbumDemandIndex = createMarketplaceAlbumDemandIndex(
   existsSync(marketplaceResearchPath) ? JSON.parse(readFileSync(marketplaceResearchPath, "utf8")) : {},
   capturedAt,
 );
-const browserObservations = args.get("browserObservations")
-  ? validateBrowserRetailObservations(JSON.parse(readFileSync(resolve(args.get("browserObservations")), "utf8")), sourceCatalog, capturedAt)
-  : [];
+const browserObservationAssessment = args.get("browserObservations")
+  ? assessBrowserRetailObservations(JSON.parse(readFileSync(resolve(args.get("browserObservations")), "utf8")), sourceCatalog, capturedAt)
+  : { pages: [], diagnostics: [], summary: { total: 0, accepted: 0, expired: 0, rejected: 0 } };
+const browserObservations = browserObservationAssessment.pages;
+if (browserObservationAssessment.diagnostics.length)
+  console.log("Browser observation intake: " + JSON.stringify(browserObservationAssessment.summary));
 const browserPagesByUrl = new Map(browserObservations.map((page) => [browserObservationUrl(page.url), page]));
 const reviewedOffers = args.get("reviewedOffers") ? reviewedRetailOffers(JSON.parse(readFileSync(resolve(args.get("reviewedOffers")), "utf8")), capturedAt) : [];
 const runId = `scan-${timestampForFile(capturedAt)}`;
@@ -508,6 +516,9 @@ const researchSelection =
         enrichedProducts.filter(isHighSignalProductFind),
         {
           limit: researchPoolProductLimit,
+          freshDealShare: 1 / 3,
+          uniqueAlbums: true,
+          now: capturedAt,
         },
       );
 const researchProductFinds = researchSelection.selected;
@@ -557,6 +568,17 @@ const scored = [...saleEventFinds, ...researchProductFinds].sort(
 );
 
 let payload = {
+  browserObservationIntake: { summary: browserObservationAssessment.summary, diagnostics: browserObservationAssessment.diagnostics },
+  discoveryCandidates: enrichedProducts,
+  researchCohort: {
+    version: 1,
+    policy: scanMode === "comprehensive" ? "explicit_comprehensive" : "fresh_bounded_shortlist",
+    discovered: enrichedProducts.length,
+    selected: researchProductFinds.length,
+    deferred: Math.max(0, enrichedProducts.length - researchProductFinds.length),
+    freshDealSelected: researchSelection.diagnostics.freshDealSelectedCount ?? 0,
+    limit: Number.isFinite(researchPoolProductLimit) ? researchPoolProductLimit : null,
+  },
   discoveryAudit: webDiscovery,
   createdAt: capturedAt,
   finds: scored,
@@ -824,6 +846,11 @@ async function scanSource(source) {
 
 function sourceAdapterFor(source) {
   return [
+    {
+      id: "slickdeals-publisher-feed",
+      matches: (candidate) => candidate.id === "slickdeals-vinyl-records",
+      scan: scanSlickdealsFeeds,
+    },
     {
       id: "vinyl-price-drop",
       matches: (candidate) => candidate.id === "vinyl-price-drop",
@@ -2762,6 +2789,29 @@ async function scanReddit(source) {
     candidates: dedupeCandidates(candidates),
     pageReports,
     saleEvents,
+  };
+}
+
+async function scanSlickdealsFeeds(source) {
+  const discovery = await discoverSlickdealsFeeds({ fetchPage, now: capturedAt });
+  const candidates = discovery.outcomes.flatMap(deal => {
+    if (deal.status !== "discovery_lead") return [];
+    const candidate = discoveryDealToCandidate(source, deal);
+    deal.candidateId = candidate?.id ?? null;
+    if (!candidate) deal.status = "identity_or_format_excluded";
+    return candidate ? [candidate] : [];
+  });
+  return {
+    candidates: dedupeCandidates(candidates),
+    saleEvents: [],
+    pageReports: discovery.pages,
+    adapterStats: { ...discovery.stats, candidateCount: candidates.length, dealOutcomes: discovery.outcomes },
+    sourceStatus: discovery.pages.some(page => page.status === "available") ? "partial" : "error",
+    reportFields: {
+      scanComplete: false,
+      evidenceScope: "bounded_publisher_feeds_not_retailer_verification",
+      coverageStopReason: "discovery_only_not_retailer_verification",
+    },
   };
 }
 

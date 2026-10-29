@@ -13,6 +13,9 @@ export function validateBrowserRetailObservations(
   sources: Array<Record<string, any>>,
   now?: string,
 ): BrowserRetailObservation[];
+export function assessBrowserRetailObservations(
+  payload: unknown, sources: Array<Record<string, any>>, now?: string,
+): { pages: BrowserRetailObservation[]; diagnostics: Array<{ index: number; sourceId: string | null; reason: string; detail?: string }>; summary: { total: number; accepted: number; expired: number; rejected: number } };
 export function browserObservationPage(page: BrowserRetailObservation): {
   html: string;
   url: string;

@@ -1,5 +1,6 @@
 import { retailEligibility, hasResearchableRetailIdentity } from "./retailIdentity.mjs";
 import { researchDemand } from "./albumDemand.mjs";
+import { buildSoldResearchQueryVariants } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 
 const NAVIGATION_LABEL =
   /^(?:all|back|browse|cart|clearance|contact|deals?|discover|explore|featured|filter\s+amazon(?:\s+by\s+price)?|home|learn\s+more|log\s*in|lps?|menu|more|new|new\s+releases|next|previous|records?|sale|search|shop|shop\s+(?:all|now)|sign\s+in|specials?|view\s+(?:all|details|more)|vinyl)[\s!\u2192\u203a\u00bb]*$/i;
@@ -1134,7 +1135,11 @@ function isVerifiedDirectUsNewRetailOffer(find) {
 
 function isCredibleSlickdealsResearchLead(find) {
   const purchasePrice = finitePositive(find.purchasePrice);
-  if (purchasePrice === null || purchasePrice > 20) return false;
+  if (purchasePrice === null || purchasePrice > 30) return false;
+  if (purchasePrice > 20) {
+    const age = Date.now() - Date.parse(find.sourcePublishedAt);
+    if (!(age >= -300000 && age <= 48 * 3600000)) return false;
+  }
   if (!isUsCountry(find.sourceCountry)) return false;
   if (
     String(find.sourceCurrency ?? "")
@@ -1149,7 +1154,7 @@ function isCredibleSlickdealsResearchLead(find) {
   if (!VINYL_FORMAT.test(String(find.sourceListingTitle ?? find.title ?? "")))
     return false;
   try {
-    const url = new URL(String(find.sourceUrl ?? ""));
+    const url = new URL(String(find.discoveryUrl?.includes("slickdeals.net/f/") ? find.discoveryUrl : find.sourceUrl ?? ""));
     return (
       /(?:^|\.)slickdeals\.net$/i.test(url.hostname) &&
       /^\/f\/\d+/i.test(url.pathname)
@@ -1308,7 +1313,7 @@ import { isMarketplaceNonRecordTitle } from "../../src/lib/arbitrage/marketplace
  * A research slot is not a recommendation. Never require our own inventory
  * history before asking whether the broader market buys a record.
  */
-export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_INFINITY } = {}) {
+export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_INFINITY, freshDealShare = 0, uniqueAlbums = false, now = Date.now() } = {}) {
   const requestedLimit = Number.isFinite(limit)
     ? Math.max(0, Math.floor(limit))
     : candidates.length;
@@ -1334,6 +1339,7 @@ export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_I
       const a = left.researchDemand,
         b = right.researchDemand;
       return (
+        (uniqueAlbums && freshDealShare > 0 ? Number(isFreshDeal(right)) - Number(isFreshDeal(left)) : 0) ||
         Number(b.observed) - Number(a.observed) ||
         Number(b.recentUnits > 0) - Number(a.recentUnits > 0) ||
         Math.min(12, b.recentUnits) - Math.min(12, a.recentUnits) ||
@@ -1344,27 +1350,38 @@ export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_I
       );
     });
   const seen = new Set();
+  const albums = new Set();
   const unique = ranked.filter(candidate => {
     const identity = candidateSelectionIdentity(candidate, candidateSourceId(candidate));
     if (seen.has(identity)) return false;
     seen.add(identity);
+    const album = buildSoldResearchQueryVariants(candidate)[0]?.query.toLowerCase();
+    if (uniqueAlbums && album && albums.has(album)) return false;
+    if (album) albums.add(album);
     return true;
   });
-  const observed = unique.filter(candidate => candidate.researchDemand.observed);
-  const unproven = unique.filter(candidate => !candidate.researchDemand.observed);
+  const freshEvents = unique.filter(isFreshDeal)
+    .sort((a, b) => Date.parse(b.sourcePublishedAt) - Date.parse(a.sourcePublishedAt));
+  const eventSlots = Math.min(requestedLimit, Math.ceil(requestedLimit * Math.max(0, Math.min(1, freshDealShare))));
+  const events = sourceBalanced(freshEvents, eventSlots);
+  const eventIds = new Set(events.map(candidate => candidate.id));
+  const remaining = unique.filter(candidate => !eventIds.has(candidate.id));
+  const observed = remaining.filter(candidate => candidate.researchDemand.observed);
+  const unproven = remaining.filter(candidate => !candidate.researchDemand.observed);
+  const remainingLimit = requestedLimit - events.length;
   // Reserve half for discovery; lend unused observed-demand capacity back to
   // discovery instead of silently leaving 239 of 240 research slots unused.
   explorationLimit = Math.min(unproven.length, Math.max(
-    Math.floor(requestedLimit / 2), requestedLimit - observed.length,
+    Math.floor(remainingLimit / 2), remainingLimit - observed.length,
   ));
   const exploration = sourceBalanced(unproven, explorationLimit);
-  const explorationCount = exploration.length;
-  const proven = sourceBalanced(observed, requestedLimit - explorationCount);
+  const explorationCount = exploration.length + events.filter(candidate => !candidate.researchDemand.observed).length;
+  const proven = sourceBalanced(observed, remainingLimit - exploration.length);
   // A time-bounded browser session must reach new offers in its first few
   // searches, not only after every familiar record has been researched.
   const selected = [];
-  for (let index = 0; index < Math.max(proven.length, exploration.length); index++) {
-    for (const candidate of [proven[index], exploration[index]]) {
+  for (let index = 0; index < Math.max(events.length, proven.length, exploration.length); index++) {
+    for (const candidate of [events[index], proven[index], exploration[index]]) {
       if (candidate) {
         candidate.researchOrder = selected.length;
         selected.push(candidate);
@@ -1392,6 +1409,8 @@ export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_I
     diagnostics: {
       ...diagnostics,
       researchAllocationVersion: 2,
+      freshDealSelectedCount: events.length,
+      duplicateAlbumDeferredCount: uniqueAlbums ? ranked.length - unique.length : 0,
       observedDemandCandidateCount: ranked.filter(
         (candidate) => candidate.researchDemand.observed,
       ).length,
@@ -1411,6 +1430,12 @@ export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_I
       ),
     },
   };
+
+  function isFreshDeal(candidate) {
+    const age = Number(new Date(now)) - Date.parse(candidate.sourcePublishedAt);
+    return candidate.purchaseOfferVerification === "discovery_lead" &&
+      age >= -300000 && age <= 48 * 3600000 && Number(candidate.purchasePrice) <= 30;
+  }
 }
 
 function sourceBalanced(candidates, limit) {

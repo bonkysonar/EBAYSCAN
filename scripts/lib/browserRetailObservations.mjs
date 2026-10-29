@@ -34,15 +34,17 @@ export function validateBrowserRetailObservations(
   const bySource = new Map(sources.map((source) => [source.id, source]));
   const retailerHosts = new Set(sources.filter((source) => source.group !== "Discovery sources").map((source) => host(source.url ?? source.baseUrl)));
   return payload.pages.map((page) => {
+    if (!page || typeof page !== "object") throw new Error("Invalid browser observation");
     const source = bySource.get(page.sourceId);
+    if (!source) throw new Error("Unknown source or stale browser observation: " + page.sourceId);
     const age = Date.parse(now) - Date.parse(page.capturedAt);
-    if (!source || !Number.isFinite(age) || age < -300000)
-      throw new Error(
-        `Unknown source or stale browser observation: ${page.sourceId}`,
-      );
+    if (!Number.isFinite(age) || age < -300000)
+      throw new Error("Invalid browser observation time");
+    // Expired archive entries cannot supply evidence and need no product repair.
+    if (age > MAX_AGE_MS) return null;
     const url = new URL(page.url);
     if (
-      url.protocol !== "https:" ||
+      url.protocol !== "https:" || url.username || url.password ||
       host(url) !== host(source.url ?? source.baseUrl) ||
       privateRetailUrl(url)
     )
@@ -112,7 +114,40 @@ export function validateBrowserRetailObservations(
       ...(selectedVariantEvidence ? {selectedVariantEvidence} : {}),
       ...(catalogProducts.length ? { catalogProducts, role: "catalog" } : {}),
     };
-  }).filter((page) => Date.parse(now) - Date.parse(page.capturedAt) <= MAX_AGE_MS);
+  }).filter(Boolean);
+}
+
+/** Preserve the archive while admitting only individually verified fresh pages.
+ * Exclusions are diagnostics, never verified products or healthy coverage. */
+export function assessBrowserRetailObservations(payload, sources, now = new Date().toISOString()) {
+  if (payload?.version !== 1 || payload.captureMethod !== "visible_browser" ||
+      !Array.isArray(payload.pages) || !Number.isFinite(Date.parse(now)))
+    throw new Error("Unsupported browser observation document");
+  const sourceIds = new Set(sources.map(source => source.id));
+  const pages = [], diagnostics = [];
+  for (const [index, page] of payload.pages.entries()) {
+    const sourceId = /^[a-z0-9-]{1,100}$/.test(page?.sourceId ?? "") ? page.sourceId : null;
+    const age = Date.parse(now) - Date.parse(page?.capturedAt);
+    let reason, detail;
+    if (!Number.isFinite(age) || age < -300000) reason = "invalid_time";
+    else if (age > MAX_AGE_MS) reason = "expired";
+    else if (!sourceIds.has(sourceId)) reason = "unconfigured_lead";
+    else if (page.outcome === "access_failed") reason = "access_failed";
+    else {
+      try {
+        pages.push(...validateBrowserRetailObservations({ ...payload, pages: [page] }, sources, now));
+      } catch (error) {
+        reason = "invalid_evidence";
+        detail = String(error.message).slice(0, 200);
+      }
+    }
+    if (reason) diagnostics.push({ index, sourceId, reason, ...(detail ? { detail } : {}) });
+  }
+  return { pages, diagnostics, summary: {
+    total: payload.pages.length, accepted: pages.length,
+    expired: diagnostics.filter(item => item.reason === "expired").length,
+    rejected: diagnostics.filter(item => item.reason !== "expired").length,
+  } };
 }
 
 function validateSelectedVariantEvidence(page) {

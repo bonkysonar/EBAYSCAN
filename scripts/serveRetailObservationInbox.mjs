@@ -2,6 +2,11 @@ import { createServer } from "node:http";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { assessSoldCapture, mergeSoldCaptures } from "./lib/soldCaptureQuality.mjs";
+import { assessBrowserRetailObservations } from "./lib/browserRetailObservations.mjs";
+import { readRetailObservationCatalog } from "./lib/retailObservationCatalog.mjs";
+import { atomicJson, beginResearchWrite } from "./lib/retailResearchSession.mjs";
+
+const observationSources = await readRetailObservationCatalog();
 
 const port = Number(
   process.argv.find((arg) => arg.startsWith("--port="))?.split("=")[1] ?? 4319,
@@ -30,6 +35,7 @@ createServer(async (req, res) => {
     res.writeHead(405).end();
     return;
   }
+  let release;
   try {
     let body = "";
     for await (const chunk of req) {
@@ -56,6 +62,7 @@ createServer(async (req, res) => {
     const targetPath = discovery ? resolve(dirname(outputPath), "browser-web-discovery.json") : research
       ? resolve(dirname(outputPath), "browser-product-research.json")
       : outputPath;
+    release = beginResearchWrite();
     const previous = existsSync(targetPath)
       ? JSON.parse(readFileSync(targetPath, "utf8")).pages
       : [];
@@ -68,19 +75,22 @@ createServer(async (req, res) => {
       ).values(),
     ];
     mkdirSync(dirname(targetPath), { recursive: true });
-    writeFileSync(
-      targetPath,
-      JSON.stringify(
-        { version: 1, captureMethod: "visible_browser", pages },
-        null,
-        2,
-      ),
+    const intake = !research && !discovery
+      ? assessBrowserRetailObservations({ version: 1, captureMethod: "visible_browser", pages }, observationSources)
+      : null;
+    atomicJson(targetPath,
+        { version: 1, captureMethod: "visible_browser", pages,
+          ...(intake ? { intake: { assessedAt: new Date().toISOString(), summary: intake.summary, diagnostics: intake.diagnostics } } : {}) },
     );
     const escape = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
     const quality = research ? incoming.map(entry => {
       const result = assessSoldCapture(entry);
       return `<li>${escape(entry.query)}: ${result.status === "complete" ? "Complete verified capture" : "Saved for repair"}${result.repairs.length ? `<ul>${result.repairs.map(text => `<li>${escape(text)}</li>`).join("")}</ul>` : ""}</li>`;
-    }).join("") : "";
+    }).join("") : intake
+      ? `<li>Archive retained: ${intake.summary.accepted} usable fresh pages, ${intake.summary.expired} expired, ${intake.summary.rejected} excluded for review.</li>` +
+        assessBrowserRetailObservations({ version: 1, captureMethod: "visible_browser", pages: incoming }, observationSources).diagnostics
+          .map(item => `<li>${escape(item.sourceId ?? "Unknown source")}: ${escape(item.reason)}${item.detail ? ": " + escape(item.detail) : ""}. Saved as evidence only; not verified coverage.</li>`).join("")
+      : "";
     res
       .writeHead(200, { "content-type": "text/html; charset=utf-8" })
       .end(
@@ -90,7 +100,7 @@ createServer(async (req, res) => {
     res
       .writeHead(400, { "content-type": "text/plain; charset=utf-8" })
       .end(error.message);
-  }
+  } finally { release?.(); }
 }).listen(port, "127.0.0.1", () =>
   console.log(
     `Retail observation inbox: http://127.0.0.1:${port}; output ${outputPath}`,

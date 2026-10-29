@@ -48,7 +48,7 @@ export function retailEligibility(find = {}) {
     digital.test(variant) ||
     (digital.test(title) &&
       !vinyl.test(variant) &&
-      !/vinyl\s*\+\s*(?:mp3|download)/i.test(title))
+      !physicalRecordWithDigitalBonus(title))
   )
     return { eligible: false, reason: "digital_product" };
   if (
@@ -62,6 +62,15 @@ export function retailEligibility(find = {}) {
   if (/\bpre[ -]?order\b/i.test(text) || find.preorder === true)
     return { eligible: false, reason: "preorder" };
   return { eligible: true, reason: null };
+}
+
+// AutoRip/download bonuses do not turn an explicitly physical record into a
+// digital product. A selected digital SKU still fails above, as does a title
+// offering only the download code from a vinyl purchase.
+function physicalRecordWithDigitalBonus(title) {
+  return vinyl.test(title) &&
+    !/\b(?:digital|download|mp3|code)\s*[- ]?only\b|\b(?:no|without)\s+(?:physical\s+)?(?:vinyl|lp|record)\b/i.test(title) &&
+    /\b(?:vinyl|lp)\b\s*(?:[),]\s*)?(?:\+|&|with\b|w\s*\/|includes?\b)\s*(?:(?:free|bonus|autorip|digital)\s+)*(?:mp3|download|digital\s+(?:album|copy))\b/i.test(title);
 }
 
 export function retailRecordFormat(find = {}) {

@@ -71,6 +71,12 @@ export function RetailScanStatus({
       ) : null}
       {attempt?.message ? <p role="status">{attempt.message}</p> : null}
       {payload?.researchProgress ? <ResearchSummary label="Published report" progress={payload.researchProgress} /> : null}
+      {payload?.researchCohort ? (
+        <p aria-label="Daily research shortlist">
+          Latest scan shortlist: {payload.researchCohort.selected} offers selected from {payload.researchCohort.discovered} discovered offers.
+          {" "}{payload.researchCohort.deferred} were outside this research shortlist; they are not completed checks.
+        </p>
+      ) : null}
       {attempt?.researchProgress ? <ResearchSummary label="Latest attempt" progress={attempt.researchProgress} /> : null}
       {queue ? (
         <p aria-label="Research queue">

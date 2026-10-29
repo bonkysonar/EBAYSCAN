@@ -6,6 +6,7 @@ import {
   decisionListBlockerLabels,
 } from "../lib/arbitrage/decisionList.mjs";
 import { RetailScanStatus } from "./RetailScanStatus";
+import { RetailDealRadar } from "./RetailDealRadar";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
 import { retailEligibility } from "../../scripts/lib/retailIdentity.mjs";
@@ -460,6 +461,7 @@ export function RetailArbitrage() {
         <div className="warning-box">{latestMessage}</div>
       ) : null}
       <RetailScanStatus payload={latestPayload} />
+      <RetailDealRadar />
 
       <details className="panel retail-diagnostics">
         <summary>

@@ -1270,7 +1270,7 @@ describe("arbitrage pages", () => {
 async function render(component: React.ReactNode) {
   const publicationFetch = globalThis.fetch;
   vi.stubGlobal("fetch", ((...args: Parameters<typeof fetch>) =>
-    String(args[0]).includes("/operations")
+    /\/(?:operations|deal-radar)/.test(String(args[0]))
       ? Promise.resolve(jsonResponse({ status: "unknown" }))
       : publicationFetch(...args)) as typeof fetch);
   container = document.createElement("div");

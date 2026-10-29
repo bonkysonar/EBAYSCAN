@@ -538,6 +538,15 @@ export type ArbitrageImportPayload = {
     newRetailerLeads: Array<{ url: string; title: string; status: string; capturedAt: string }>;
   };
   researchProgress?: ArbitrageResearchProgress;
+  researchCohort?: {
+    version: 1;
+    policy: string;
+    discovered: number;
+    selected: number;
+    deferred: number;
+    freshDealSelected: number;
+    limit: number | null;
+  };
   latestUpdateResearchProgress?: ArbitrageResearchProgress;
   latestUpdateResearchQueue?: ArbitrageResearchQueue;
   researchQueue?: ArbitrageResearchQueue;

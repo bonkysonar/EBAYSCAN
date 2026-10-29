@@ -11,6 +11,7 @@ import {
 } from "../src/lib/arbitrage/activeEbayMatching.mjs";
 import { getEbayApplicationToken } from "./lib/ebayPurchaseDiscovery.mjs";
 import { mergeActiveEvidenceCache, reuseActiveEvidence } from "./lib/activeEvidenceCache.mjs";
+import { beginResearchWrite } from "./lib/retailResearchSession.mjs";
 
 const WORKSPACE = process.cwd();
 const FINDS_DIR = join(WORKSPACE, "exports", "arbitrage-finds");
@@ -45,6 +46,7 @@ const isMain = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(pro
 if (isMain) await main();
 
 async function main() {
+  beginResearchWrite();
   const latestPath = args.get("file") ? join(WORKSPACE, args.get("file")) : latestFindsPath();
   const payload = JSON.parse(readFileSync(latestPath, "utf8"));
   const researchFinds = payload.researchCandidates ?? payload.finds;

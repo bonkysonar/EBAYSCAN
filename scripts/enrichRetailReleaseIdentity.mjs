@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { getEbayApplicationToken, verifyEbayPurchaseCandidateDetails } from "./lib/ebayPurchaseDiscovery.mjs";
 import { retailEligibility } from "./lib/retailIdentity.mjs";
 import { resolveRetailBarcodeIdentity, RETAIL_BARCODE_IDENTITY_VERSION } from "./lib/retailBarcodeIdentity.mjs";
+import { beginResearchWrite } from "./lib/retailResearchSession.mjs";
 
+beginResearchWrite();
 // Read-only API repair for the retained research pool. A listing's promotional
 // suffix must not become the album sent to sold research.
 const path = resolve(process.argv[2] ?? "");

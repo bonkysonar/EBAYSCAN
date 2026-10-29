@@ -22,6 +22,16 @@ describe("retail arbitrage source catalog", () => {
     expect(activeIds.has("reddit-vgm-vinyl")).toBe(false);
   });
 
+  it("uses the working newest publisher feed and retires the stale Cheap Vinyl articles", () => {
+    const slickdeals = getActiveRetailSources().find(source => source.id === "slickdeals-vinyl-records")!;
+    const url = new URL(slickdeals.baseUrl);
+    expect(url.searchParams.get("q")).toBe("vinyl");
+    expect(url.searchParams.get("rss")).toBe("1");
+    expect(url.searchParams.has("search")).toBe(false);
+    expect(slickdeals.priority).toBe(1);
+    expect(getActiveRetailSources().some(source => source.id === "cheap-vinyl")).toBe(false);
+  });
+
   it("keeps the MVD retail outlet active while distributor-only entries remain excluded", () => {
     const activeIds = new Set(vinylShopSources.map((source) => source.id));
     expect(activeIds.has("mvd-shop")).toBe(true);

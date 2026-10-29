@@ -14,6 +14,25 @@ const captures = { captureMethod: "visible_browser", pages: [page] };
 const draft = { phase: "scan", runId: "scan-one", researchCandidates: [find] };
 
 describe("persistent sold research", () => {
+  it("retains historical collection separately from expired decision evidence", () => {
+    const first = buildPersistentResearchQueue(draft, { captures, now });
+    const second = buildPersistentResearchQueue(draft, { captures, state: first.state, now: new Date("2026-10-10T14:00:00Z") });
+    expect(second.plan.summary).toMatchObject({ reused: 0, refresh: 1 });
+    expect(second.plan.metrics).toMatchObject({ collectionHistoryCount: 1, newlyCollected: 0, freshnessLosses: 1, freshnessOutpacingCollection: true });
+    expect(second.checkpoint.entries).toHaveLength(0);
+  });
+  it("records terminal unpriced edition reviews and reopens them when evidence changes", () => {
+    const coloredDraft = { ...draft, researchCandidates: [{ ...find, sourceListingTitle: "Example Artist Actual Album Red Vinyl LP" }] };
+    const blue = { ...captures, pages: [{ ...page, rows: [{ ...row, title: "Example Artist Actual Album Blue Vinyl LP" }] }] };
+    const first = buildPersistentResearchQueue(coloredDraft, { captures: blue, now });
+    const reviewId = first.plan.editionReviews[0].reviewId;
+    first.state.editionReviewOutcomes = { [reviewId]: { outcome: "incompatible_unpriced", reviewedAt: now.toISOString() } };
+    const second = buildPersistentResearchQueue(coloredDraft, { captures: blue, state: first.state, now });
+    expect(second.plan.summary).toMatchObject({ editionReviews: 0, reviewedEditions: 1 });
+    expect(second.plan.completed[0].targets[0].evidence.exactPrice).toBeNull();
+    const refreshed = { ...blue, pages: [{ ...blue.pages[0], capturedAt: now.toISOString() }] };
+    expect(buildPersistentResearchQueue(coloredDraft, { captures: refreshed, state: second.state, now }).plan.editionReviews).toHaveLength(1);
+  });
   it("reuses one capture across fresh run IDs and retailer offers without repeating the search", () => {
     const first = buildPersistentResearchQueue(draft, { captures, now });
     const second = buildPersistentResearchQueue({ ...draft, runId: "scan-two", researchCandidates: [{ ...find, id: "new-id" }, { ...find, id: "another-shop", sourceId: "retailer-two" }] }, { captures, state: first.state, now });
