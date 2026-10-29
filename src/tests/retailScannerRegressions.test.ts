@@ -69,7 +69,7 @@ describe("real retail scanner failure regressions", () => {
     expect(selectDecisionList([before], { now: Date.parse(at) })).toHaveLength(
       0,
     );
-    expect(after.expectedNetProfit).toBe(8.49);
+    expect(after.expectedNetProfit).toBe(10.23); // Current 3% promotion; the advertised checkout offer still requires confirmation.
     expect(after.decision).toBe("REVIEW");
     expect(selectDecisionList([after], { now: Date.parse(at) })).toHaveLength(
       1,

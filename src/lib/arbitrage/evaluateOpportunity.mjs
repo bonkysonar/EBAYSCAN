@@ -26,7 +26,8 @@ export const defaultArbitrageSettings = Object.freeze({
   defaultOtherSellingCosts: 0,
   defaultOutboundShipping: 4.39,
   defaultPackaging: 1,
-  defaultPromotedListingRate: 0.06,
+  // Current owner policy for the scanner's new/sealed inventory (2026-10-28).
+  defaultPromotedListingRate: 0.03,
   defaultReturnsReserveAmount: 0,
   defaultReturnsReserveRate: 0.03,
   fastTurnMaxDaysToSell: 45,

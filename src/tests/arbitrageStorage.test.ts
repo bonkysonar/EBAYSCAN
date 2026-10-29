@@ -20,10 +20,17 @@ describe("arbitrage cost settings migration", () => {
     }));
     expect(loadArbitrageSettings()).toMatchObject({
       defaultMarketplaceFeeFixed: 0.4, defaultMarketplaceFeeRate: 0.127,
-      defaultOutboundShipping: 4.39, defaultPromotedListingRate: 0.06,
+      defaultOutboundShipping: 4.39, defaultPromotedListingRate: 0.03,
       defaultBuyerSalesTaxRatePercent: 9.5,
       combinedOrderRecords: 8, combinedOrderShipping: 10,
     });
+  });
+
+  it("preserves a saved explicit 6% promotion allowance", () => {
+    localStorage.setItem(key, JSON.stringify({ defaultPromotedListingRate: 0.06, defaultBuyerSalesTaxRatePercent: 9.5 }));
+    expect(loadArbitrageSettings().defaultPromotedListingRate).toBe(0.06);
+    saveArbitrageSettings({ ...loadArbitrageSettings(), defaultPromotedListingRate: 0.06 });
+    expect(loadArbitrageSettings().defaultPromotedListingRate).toBe(0.06);
   });
 
   it("preserves customized costs and does not remigrate saved current settings", () => {
