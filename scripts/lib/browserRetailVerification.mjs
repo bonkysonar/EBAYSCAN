@@ -1,4 +1,4 @@
-import { normalizeResearchArtist, normalizeResearchTitle } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
+import { buildBaseResearchQuery, normalizeResearchArtist, normalizeResearchTitle } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 import { retailEligibility } from "./retailIdentity.mjs";
 import { validatedCheckoutQuote } from "../../src/lib/arbitrage/checkoutBasket.mjs";
 import { verifyRetailerBrowserOffer } from "./retailBrowserOfferEvidence.mjs";
@@ -28,7 +28,7 @@ export function browserObservedRetailIdentity(find, captures, now = new Date()) 
     const text = String(page.visibleText).split(/you may also like|you might also like|recently viewed|related products|recommended products|customers also (?:bought|viewed)|frequently bought together/i)[0];
     if (!key(normalizeResearchArtist(p.artist)) || !key(normalizeResearchTitle(p.title)) ||
         key(normalizeResearchArtist(p.artist)) !== key(normalizeResearchArtist(find.artist)) ||
-        key(normalizeResearchTitle(p.title)) !== key(normalizeResearchTitle(find.title)) ||
+        key(buildBaseResearchQuery(p.artist, p.title)) !== key(buildBaseResearchQuery(find.artist, find.title)) ||
         !key(text).includes(key(p.artist)) || !key(text).includes(key(p.title)) ||
         !browserProductRecordFormatSupported(p.format, text)) continue;
     try {

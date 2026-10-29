@@ -124,12 +124,12 @@ describe("Rough Trade exact selected-variant browser evidence", () => {
 describe("exact retail offers observed in the browser", () => {
   it("repairs pressing identity without inventing currency or a purchasable offer", () => {
     const editionText = "Limited edition translucent milk white double A-side 7” featuring the new mixes of The Beatles’ Anthology-associated hit singles:\nSide A: Free As A Bird (2025 mix)\nSide AA: Real Love (2025 mix)";
-    const candidate = { ...find, sourceId: "capitol-records-store", artist: "The Beatles", title: 'Free as a Bird/Real Love 7"',
+    const candidate = { ...find, sourceId: "capitol-records-store", artist: "The Beatles", title: 'Beatles - Free as a Bird/Real Love 7"',
       sourceUrl: "https://shop.capitolmusic.com/products/beatles-free-as-a-bird-real-love-7?variant=52362875044024", shopifyVariantId: "52362875044024", barcode: null,
       retailEditionText: "Unconfirmed older pressing", sourceCurrency: null, purchaseOfferVerification: "discovery_lead", costs: { inboundShipping: 5 } };
     const observed = { sourceId: candidate.sourceId, url: candidate.sourceUrl, outcome: "available", capturedAt: now.toISOString(),
       visibleText: `ARTIST:\nTHE BEATLES\nBEATLES - FREE AS A BIRD/REAL LOVE 7"\n$17.00\nShips on: November 3, 2026\nAdd to cart\nDESCRIPTION\n${editionText}`,
-      productEvidence: { artist: candidate.artist, title: candidate.title, format: '7"', price: 17, currency: "USD", available: true, variantId: candidate.shopifyVariantId, editionText },
+      productEvidence: { artist: candidate.artist, title: 'Free as a Bird/Real Love 7"', format: '7"', price: 17, currency: "USD", available: true, variantId: candidate.shopifyVariantId, editionText },
     };
     const capture = { captureMethod: "visible_browser", pages: [observed] };
     const repaired = browserObservedRetailIdentity(candidate, capture, now);
