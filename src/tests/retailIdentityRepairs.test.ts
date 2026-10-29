@@ -29,6 +29,22 @@ describe('observed retail identity repair before research', () => {
       conservativeResalePrice: 25, activeEvidence: { status: 'available', searchComplete: true } };
     expect(repairRetailCandidateIdentity(original)).toBe(original);
   });
+  it('uses observed edition metadata without upgrading an unverified purchase offer', () => {
+    const at = new Date().toISOString();
+    const url = 'https://shop.example/products/album?variant=123';
+    const edition = 'Limited edition milk white vinyl';
+    const find = { sourceId: 'example-store', sourceUrl: url, shopifyVariantId: '123', artist: 'Example Artist', title: 'Actual Album',
+      purchasePrice: 12.75, purchaseOfferVerification: 'discovery_lead', capturedAt: at,
+      conservativeResalePrice: 40, activeEvidence: { status: 'available', searchComplete: true } };
+    const page = { sourceId: find.sourceId, url, capturedAt: at, outcome: 'available',
+      visibleText: `Example Artist\nActual Album\n$17.00\nShips on: November 3, 2026\nAdd to cart\nDescription\n${edition}`,
+      productEvidence: { artist: find.artist, title: find.title, format: 'Vinyl', price: 17, currency: 'USD', available: true, variantId: '123', editionText: edition } };
+    const repaired = repairRetailCandidateIdentity(find, { version: 1, captureMethod: 'visible_browser', pages: [page] });
+    expect(repaired).toMatchObject({ retailEditionText: edition, purchasePrice: 12.75, purchaseOfferVerification: 'discovery_lead',
+      capturedAt: at, conservativeResalePrice: null });
+    expect(repaired.retailVerification).toBeUndefined();
+    expect(repaired.activeEvidence).toBeUndefined();
+  });
   it('repairs an unpublished draft through the guarded CLI without requiring an API request', () => {
     const workspace = mkdtempSync(join(tmpdir(), 'retail-identity-repair-'));
     try {

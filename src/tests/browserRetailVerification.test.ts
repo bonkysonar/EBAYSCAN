@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browserVerifiedRetailOffer } from "../../scripts/lib/browserRetailVerification.mjs";
+import { browserObservedRetailIdentity, browserVerifiedRetailOffer } from "../../scripts/lib/browserRetailVerification.mjs";
 
 const now = new Date("2026-09-05T01:00:00.000Z");
 const find = {
@@ -122,6 +122,57 @@ describe("Rough Trade exact selected-variant browser evidence", () => {
 });
 
 describe("exact retail offers observed in the browser", () => {
+  it("repairs pressing identity without inventing currency or a purchasable offer", () => {
+    const editionText = "Limited edition translucent milk white double A-side 7” featuring the new mixes of The Beatles’ Anthology-associated hit singles:\nSide A: Free As A Bird (2025 mix)\nSide AA: Real Love (2025 mix)";
+    const candidate = { ...find, sourceId: "capitol-records-store", artist: "The Beatles", title: 'Free as a Bird/Real Love 7"',
+      sourceUrl: "https://shop.capitolmusic.com/products/beatles-free-as-a-bird-real-love-7?variant=52362875044024", shopifyVariantId: "52362875044024", barcode: null,
+      retailEditionText: "Unconfirmed older pressing", sourceCurrency: null, purchaseOfferVerification: "discovery_lead", costs: { inboundShipping: 5 } };
+    const observed = { sourceId: candidate.sourceId, url: candidate.sourceUrl, outcome: "available", capturedAt: now.toISOString(),
+      visibleText: `ARTIST:\nTHE BEATLES\nBEATLES - FREE AS A BIRD/REAL LOVE 7"\n$17.00\nShips on: November 3, 2026\nAdd to cart\nDESCRIPTION\n${editionText}`,
+      productEvidence: { artist: candidate.artist, title: candidate.title, format: '7"', price: 17, currency: "USD", available: true, variantId: candidate.shopifyVariantId, editionText },
+    };
+    const capture = { captureMethod: "visible_browser", pages: [observed] };
+    const repaired = browserObservedRetailIdentity(candidate, capture, now);
+    expect(repaired).toEqual({ ...candidate, retailEditionText: editionText });
+    expect(browserObservedRetailIdentity(repaired, capture, now)).toBe(repaired);
+    expect(browserVerifiedRetailOffer(candidate, capture, now)).toBeNull();
+    for (const patch of [
+      { url: observed.url.replace("52362875044024", "999") },
+      { sourceId: "another-store" },
+      { url: observed.url.replace("beatles-free-as-a-bird-real-love-7", "another-record") },
+      { capturedAt: "2026-09-04T18:59:59.999Z" },
+      { productEvidence: { ...observed.productEvidence, artist: "Another Artist" } },
+      { productEvidence: { ...observed.productEvidence, title: "Another Album" } },
+      { productEvidence: { ...observed.productEvidence, editionText: undefined } },
+    ]) expect(browserObservedRetailIdentity(candidate, { ...capture, pages: [{ ...observed, ...patch }] }, now)).toBe(candidate);
+  });
+  it("carries a selected product's observed pressing description without changing purchase checks", () => {
+    const editionText = "Limited edition translucent milk white double A-side 7” featuring the new mixes of The Beatles’ Anthology-associated hit singles:\nSide A: Free As A Bird (2025 mix)\nSide AA: Real Love (2025 mix)";
+    const product = {
+      ...find, artist: "The Beatles", title: "Free As A Bird/Real Love", sourceId: "capitol-records",
+      sourceUrl: "https://shop.capitolmusic.com/products/beatles-free-as-a-bird-real-love-7?variant=52362875044024",
+      shopifyVariantId: "52362875044024", barcode: null, retailEditionText: "Older generic pressing",
+    };
+    const buy = 'The Beatles\nFree As A Bird/Real Love 7"\nPrice $17.00 USD\nAdd to cart';
+    const observed = { sourceId: product.sourceId, url: product.sourceUrl, outcome: "available", capturedAt: now.toISOString(),
+      purchaseBlockText: buy, visibleText: `${buy}\nDescription\n${editionText}\nEarlier releases were also issued on CD.\nYou may also like\nOther Product (Red Vinyl)`,
+      productEvidence: { artist: product.artist, title: product.title, format: '7"', price: 17, currency: "USD", available: true, variantId: product.shopifyVariantId, editionText },
+    };
+    const result = browserVerifiedRetailOffer(product, { captureMethod: "visible_browser", pages: [observed] }, now);
+    expect(result).toMatchObject({ retailEditionText: editionText, purchasePrice: 17, retailVerification: { status: "verified" } });
+    for (const changed of [
+      { productEvidence: { ...observed.productEvidence, editionText: "Invented blue pressing" } },
+      { productEvidence: { ...observed.productEvidence, editionText: "Other Product (Red Vinyl)" } },
+      { url: observed.url.replace("52362875044024", "999") },
+      { url: observed.url.replace("beatles-free-as-a-bird-real-love-7", "another-record") },
+      { productEvidence: { ...observed.productEvidence, format: "7 inch CD" } },
+    ]) expect(browserVerifiedRetailOffer(product, { captureMethod: "visible_browser", pages: [{ ...observed, ...changed }] }, now)).toBeNull();
+  });
+  it("preserves existing edition metadata when the observation supplies none", () => {
+    const candidate = { ...find, retailEditionText: "Existing exact pressing" };
+    expect(verify({}, candidate)?.retailEditionText).toBe("Existing exact pressing");
+    expect(verify({ productEvidence: { ...page.productEvidence, editionText: "Invented pressing" } }, candidate)).toBeNull();
+  });
   it("accepts a fresh matching product, variant, displayed sale price and currency", () => {
     expect(verify()).toMatchObject({
       purchasePrice: 14.99,

@@ -1,5 +1,5 @@
 import { parseAcousticSoundsListingIdentity } from './retailListingParsing.mjs';
-import { browserVerifiedRetailOffer } from './browserRetailVerification.mjs';
+import { browserObservedRetailIdentity, browserVerifiedRetailOffer } from './browserRetailVerification.mjs';
 import { resetPressingSoldEvidence, resetPressingActiveEvidence } from './productResearchCuration.mjs';
 
 // Apply observed identity before research planning and active-market searches.
@@ -7,6 +7,7 @@ import { resetPressingSoldEvidence, resetPressingActiveEvidence } from './produc
 export function repairRetailCandidateIdentity(find, browserCaptures = {}, now = new Date()) {
   const parsed = parseAcousticSoundsListingIdentity(find.sourceListingTitle, find);
   let repaired = parsed ? { ...find, ...parsed } : find;
+  repaired = browserObservedRetailIdentity(repaired, browserCaptures, now);
   repaired = browserVerifiedRetailOffer(repaired, browserCaptures, now) ?? repaired;
   const albumChanged = repaired.artist !== find.artist || repaired.title !== find.title;
   const pressingChanged = repaired.retailEditionText !== find.retailEditionText || repaired.barcode !== find.barcode;

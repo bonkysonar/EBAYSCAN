@@ -4,7 +4,8 @@ const MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const DISCOVERY_SOURCES = new Set(["reddit-vinyl-deals", "slickdeals-vinyl-records", "vinyl-price-drop"]);
 const sourceHosts = { "reddit-vinyl-deals": "reddit.com", "slickdeals-vinyl-records": "slickdeals.net", "vinyl-price-drop": "vinylpricedrop.com" };
 const key = value => String(value ?? "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]/g, "");
-const artistKey = value => key(normalizeResearchArtist(value).replace(/^the\s+/i, ""));
+const artistKey = value => /^\s*various(?:\s+artists?)?\s*$/i.test(String(value ?? ""))
+  ? "variousartists" : key(normalizeResearchArtist(value).replace(/^the\s+/i, ""));
 const fresh = (at, now) => { const age = Number(new Date(now)) - Date.parse(at); return Number.isFinite(age) && age >= -300000 && age <= MAX_AGE_MS; };
 const safeUrl = value => {
   try {
@@ -149,10 +150,11 @@ export function validateRetailerOfferPage(page, now = new Date()) {
 export function verifyRetailerBrowserOffer(find, page, now = new Date()) {
   const observed = validateRetailerOfferPage(page, now);
   if (!observed || observed.sourceId !== find.sourceId ||
-      artistKey(find.artist) !== artistKey(observed.productEvidence.artist) ||
       key(normalizeResearchTitle(find.title)) !== key(normalizeResearchTitle(observed.productEvidence.title))) return null;
   const identity = retailerProductIdentity(observed.url), original = retailerProductIdentity(find.sourceUrl);
   const exactDirect = original?.key === identity.key;
+  const missingArtist = !String(find.artist ?? "").trim() || /^unknown\s+artist$/i.test(String(find.artist).trim());
+  if (missingArtist ? !exactDirect : artistKey(find.artist) !== artistKey(observed.productEvidence.artist)) return null;
   let exactFollowedLink = false;
   try {
     exactFollowedLink = Boolean(observed.discoveryLinkEvidence && safeUrl(find.sourceUrl)?.href === observed.discoveryLinkEvidence.sourceUrl);
@@ -162,6 +164,7 @@ export function verifyRetailerBrowserOffer(find, page, now = new Date()) {
       (find.barcode && observed.productEvidence.barcode && String(find.barcode) !== observed.productEvidence.barcode)) return null;
   const p = observed.productEvidence, e = observed.retailerOfferEvidence;
   return { ...find, sourceUrl: observed.url,
+    ...(missingArtist ? { artist: p.artist, identityStatus: "resolved", identitySource: "browser_product" } : {}),
     discoveryUrl: find.discoveryUrl ?? (exactFollowedLink ? find.sourceUrl : undefined),
     physicalFormatConfirmed: true, recordFormat: p.format, retailVariantTitle: e.editionText ?? p.format,
     retailEditionText: [observed.productHeadingText, e.editionText].filter(Boolean).join(" "),

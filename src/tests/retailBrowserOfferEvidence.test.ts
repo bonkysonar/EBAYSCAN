@@ -129,4 +129,24 @@ describe("exact retailer offers observed after feed discovery", () => {
     const verified: any = verifyRetailerBrowserOffer(find, page, now);
     for (const patch of [{ purchasePrice: 1 }, { sourceUrl: "https://www.amazon.com/dp/B000ABCDEF" }, { sourceCurrency: "CAD" }, { condition: "used" }, { available: false }, { physicalFormatConfirmed: false }, { costs: { inboundShipping: 0 } }, { retailObservationMethod: "visible_browser" }, { retailObservedAt: "2026-10-29T13:31:00.000Z" }, { retailerSellerName: "Other Seller" }]) expect(retailerBrowserOfferIsCurrent({ ...verified, ...patch }, now)).toBe(false);
   });
+  it("resolves only a missing artist from the observed byline of the exact direct product", () => {
+    const observed = copy();
+    observed.artistText = "Various Artists Format: Vinyl";
+    observed.visibleText = observed.visibleText.replaceAll("Black Crowes Format: Vinyl", observed.artistText);
+    observed.productEvidence.artist = "Various Artists";
+    observed.retailerOfferEvidence.selectedFormatText = observed.artistText;
+    for (const artist of ["Unknown Artist", "", undefined]) {
+      const result: any = verifyRetailerBrowserOffer({ ...find, artist }, observed, now);
+      expect(result).toMatchObject({ artist: "Various Artists", identityStatus: "resolved", identitySource: "browser_product" });
+      expect(retailerBrowserOfferIsCurrent(result, now)).toBe(true);
+    }
+    for (const candidate of [
+      { ...find, artist: "Known Other Artist" },
+      { ...find, artist: "Unknown Artist", sourceUrl: "https://www.amazon.com/dp/B000ABCDEF" },
+      { ...find, artist: "Unknown Artist", title: "Different Album" },
+    ]) expect(verifyRetailerBrowserOffer(candidate, observed, now)).toBeNull();
+    const discussion = "https://www.reddit.com/r/VinylDeals/comments/abc123/record/";
+    const followed = { ...observed, discoveryLinkEvidence: { sourceUrl: discussion, linkUrl: page.url, resolvedUrl: page.url, capturedAt: now, linkText: "Amazon", visibleText: "Amazon" } };
+    expect(verifyRetailerBrowserOffer({ ...find, artist: "Unknown Artist", sourceUrl: discussion }, followed, now)).toBeNull();
+  });
 });

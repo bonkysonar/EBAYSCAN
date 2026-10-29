@@ -5,6 +5,7 @@ import {
   browserSourceDiagnostics,
   browserProductCandidates,
   preferObservedSkuCandidates,
+  browserProductRecordFormatSupported,
 } from "../../scripts/lib/browserRetailObservations.mjs";
 import { reconcileSaleCampaigns } from "../../scripts/lib/saleCampaignLifecycle.mjs";
 import { extractRetailCampaigns } from "../../scripts/lib/campaignOffers.mjs";
@@ -31,6 +32,22 @@ const document = (pages: unknown[]) => ({
   pages,
 });
 describe("visible browser retail observations", () => {
+  it("preserves a bounded visible product edition and rejects invented or recommended-product metadata", () => {
+    const editionText = "Limited edition translucent milk white double A-side 7” featuring the new mixes of The Beatles’ Anthology-associated hit singles:\nSide A: Free As A Bird (2025 mix)\nSide AA: Real Love (2025 mix)";
+    const buy = 'The Beatles\nFree As A Bird/Real Love 7"\nPrice $17.00 USD\nAdd to cart';
+    const exact = { ...page, outcome: "available", url: "https://shop.example/products/beatles-single?variant=11", title: "The Beatles Free As A Bird/Real Love", capturedAt: now,
+      purchaseBlockText: buy, visibleText: `${buy}\nDescription\n${editionText}\nEarlier CD releases had different mixes.\nRecommended products\nOther Product (Red Vinyl)`,
+      productEvidence: { artist: "The Beatles", title: "Free As A Bird/Real Love", format: '7"', price: 17, currency: "USD", available: true, variantId: "11", editionText },
+    };
+    const accepted = validateBrowserRetailObservations(document([exact]), sources, now);
+    expect(accepted[0].productEvidence.editionText).toBe(editionText);
+    expect(browserProductCandidates(accepted, sources[0], () => "beatles")[0].retailEditionText).toBe(editionText);
+    for (const invalid of ["Invented pressing", "Other Product (Red Vinyl)", "", "x".repeat(1001)])
+      expect(() => validateBrowserRetailObservations(document([{ ...exact, productEvidence: { ...exact.productEvidence, editionText: invalid } }]), sources, now)).toThrow(/edition/);
+    expect(browserProductRecordFormatSupported('7"', '7" photo frame')).toBe(false);
+    expect(browserProductRecordFormatSupported('7"', '7"\nSide A: Song One\nSide AA: Song Two')).toBe(true);
+    expect(browserProductRecordFormatSupported('7"', '7"\nYou may also like\nSide A: Other Song\nSide B: Other Song')).toBe(false);
+  });
   it("allows Carter album URLs while excluding actual private storefront routes", () => {
     const card = { artist: "Carter Burwell", title: "Carol", format: "LP", price: 30, url: "https://shop.example/products/carter-burwell-carol-lp", visibleText: "Carter Burwell Carol LP $30.00" };
     const catalog = { ...page, outcome: "available", title: "Carol LP", url: card.url, visibleText: card.visibleText, catalogProducts: [card] };

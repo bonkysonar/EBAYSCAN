@@ -229,10 +229,36 @@ function visiblePriceMatches(text, price) {
   return new RegExp(`(?:^|[^\\d.,])${token}(?!\\d|[.,]\\d)`).test(text);
 }
 
+const productVisibleText = (text) => String(text ?? "").split(/you may also like|you might also like|recently viewed|related products|recommended products|customers also (?:bought|viewed)|frequently bought together/i)[0];
+
+/** An optional pressing excerpt comes from this product, never recommendation cards. */
+export function browserProductEditionText(page) {
+  const edition = page.productEvidence?.editionText;
+  if (edition === undefined) return undefined;
+  if (typeof edition !== "string" || !edition.trim() || edition.length > 1000 ||
+      !productVisibleText(page.visibleText).includes(edition) ||
+      /(?:^|\n)\s*(?:deliver(?:ing)? to|shipping address|billing address|account|email|phone|credit card)\s*:/i.test(edition))
+    throw new Error("Browser product edition is not a bounded visible product excerpt");
+  return edition;
+}
+
+/** Some singles state 7-inch plus A/B sides without repeating the word vinyl. */
+export function browserProductRecordFormatSupported(format, visibleText) {
+  if (/\b(?:cd|compact disc|cassette|dvd|blu[- ]?ray)\b/i.test(format ?? "")) return false;
+  const text = productVisibleText(visibleText);
+  if (/\b(?:vinyl|(?:\d+\s*[x×-]?\s*)?lps?)\b/i.test(format ?? "") && /\b(?:vinyl|(?:\d+\s*[x×-]?\s*)?lps?)\b/i.test(text)) return true;
+  const size = String(format ?? "").match(/\b(7|10|12)\s*(?:[ -]?inch\b|["”])/i)?.[1];
+  if (!size || !new RegExp(`\\b${size}\\s*(?:[ -]?inch\\b|["”])`, "i").test(text)) return false;
+  return /\b(?:vinyl|record|lp)\b/i.test(text) ||
+    /\bdouble[ -]a[ -]side\b/i.test(text) ||
+    (/\bside\s+a\s*:/i.test(text) && /\bside\s+(?:b|aa)\s*:/i.test(text));
+}
+
 function validateProductEvidence(page) {
   const evidence = page.productEvidence;
   if (!evidence) return null;
   const selected = validateSelectedVariantEvidence(page);
+  const editionText = browserProductEditionText(page);
   const identityText = typeof page.purchaseBlockText === "string" && page.visibleText.includes(page.purchaseBlockText) ? page.purchaseBlockText : page.visibleText;
   const purchaseText = selected?.visibleText ?? identityText;
   const text = purchaseText.replace(/\s+/g, " ").toLowerCase();
@@ -269,8 +295,8 @@ function validateProductEvidence(page) {
   )
     throw new Error("Browser product availability missing");
   if (
-    !/\b(?:vinyl|\d?lp)\b/i.test(evidence.format ?? "") ||
-    !/\b(?:vinyl|\d?lp)\b/.test(text)
+    !browserProductRecordFormatSupported(evidence.format, purchaseText) &&
+    !browserProductRecordFormatSupported(evidence.format, [identityText, editionText].filter(Boolean).join("\n"))
   )
     throw new Error("Browser product format missing");
   if (
@@ -284,6 +310,7 @@ function validateProductEvidence(page) {
     artist: evidence.artist,
     title: evidence.title,
     format: evidence.format,
+    ...(editionText !== undefined ? { editionText } : {}),
     price: evidence.price,
     originalPrice: evidence.originalPrice ?? null,
     currency: evidence.currency,
@@ -326,6 +353,7 @@ export function browserProductCandidates(pages, source, stableId) {
         sku: evidence.sku,
         shopifyVariantId: evidence.variantId,
         shopifyVariantTitle: evidence.format,
+        ...(evidence.editionText !== undefined ? { retailEditionText: evidence.editionText } : {}),
         quantityAvailable: evidence.quantityAvailable,
         ...(page.checkoutQuote ? { checkoutQuote: page.checkoutQuote } : {}),
         capturedAt: page.capturedAt,
