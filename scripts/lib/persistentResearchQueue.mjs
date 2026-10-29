@@ -63,8 +63,11 @@ export function buildPersistentResearchQueue(payload, { captures = {}, checkpoin
       if (research.status === "no_rows" && pages.some(({ page, quality }) => quality.windowVerified && page.rows.length)) {
         // A review applies only to this offer identity and this observed evidence.
         // New retailer identity or fresh captures require a new review.
-        const reviewId = hash(JSON.stringify([find.id, find.artist, find.title, find.sourceListingTitle, find.barcode, find.catalogNumber,
-          find.variant, find.releaseIdentity, pages.filter(({ quality }) => quality.windowVerified).map(({ page }) => [page.capturedAt, page.rows])]));
+        const reviewIdentity = [find.id, find.artist, find.title, find.sourceListingTitle, find.barcode, find.catalogNumber,
+          find.variant, find.releaseIdentity, pages.filter(({ quality }) => quality.windowVerified).map(({ page }) => [page.capturedAt, page.rows])];
+        // Keep legacy identities stable when no observed pressing text exists.
+        if (find.retailEditionText) reviewIdentity.push({ retailEditionText: find.retailEditionText });
+        const reviewId = hash(JSON.stringify(reviewIdentity));
         const review = { reviewId, findId: find.id, query: group.query, sourceId: find.sourceId, reason: "no_confirmed_edition_match", action: "Compare retailer barcode/catalog number and pressing details with the captured listings; do not borrow another edition's price." };
         if (editionReviewOutcomes[reviewId]) reviewedEditions.push({ ...review, ...editionReviewOutcomes[reviewId] });
         else editionReviews.push(review);
