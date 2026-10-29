@@ -37,13 +37,22 @@ export function createRetailDealRadar({ fetchImpl = fetch, now = Date.now }: { f
         publisher: "Slickdeals", discussionUrl: deal.discussionUrl, retailerUrl: deal.directUrl });
     }
     items.sort((left, right) => Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
+    const seenRetailerUrls = new Set<string>();
+    const distinctItems = items.filter(item => {
+      // Multiple discussion threads can point to the same exact retailer SKU.
+      // Keep the newest thread; unknown URLs and distinct variants stay separate.
+      if (!item.retailerUrl) return true;
+      if (seenRetailerUrls.has(item.retailerUrl)) return false;
+      seenRetailerUrls.add(item.retailerUrl);
+      return true;
+    });
     const successCount = result.pages.filter(page => page.status === "available").length;
     cached = {
       version: 1,
       status: successCount === result.pages.length ? "available" : successCount ? "partial" : "unavailable",
       checkedAt: new Date(time).toISOString(),
       expiresAt: new Date(time + CACHE_MS).toISOString(),
-      items: items.slice(0, MAX_ITEMS),
+      items: distinctItems.slice(0, MAX_ITEMS),
       sources: result.pages.map(page => ({ url: page.requestedUrl, status: page.status === "available" ? "available" : "error",
         reason: page.status === "available" ? null : page.failureKind === "invalid_feed" ? "Publisher returned an invalid feed" : page.failureKind === "timeout" ? "Publisher request timed out" : "Publisher feed could not be read" })),
       evidenceScope: "advertised_deals_not_retailer_or_resale_verification",

@@ -39,6 +39,17 @@ describe("independent live deal radar", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 
+  it("keeps the newest discussion for an exact retailer URL while preserving variants and unknown URLs", async () => {
+    const linkedItem = (id: number, hour: number, asin?: string) => item(id, 'Artist "Album" (Vinyl) $12', `Wed, 28 Oct 2026 ${hour}:00:00 GMT`)
+      .replace("Shipping free on $35+", asin ? `&lt;a href=&quot;https://www.amazon.com/dp/${asin}&quot;&gt;Amazon&lt;/a&gt;` : "Retailer link not supplied");
+    const xml = feed(linkedItem(1, 12, "B000000001") + linkedItem(2, 15, "B000000001") + linkedItem(3, 13, "B000000002") + linkedItem(4, 14) + linkedItem(5, 16));
+    const read = createRetailDealRadar({ now: () => now, fetchImpl: vi.fn(async () => new Response(xml)) });
+    const payload = await read();
+    expect(payload.items.map(row => row.id)).toEqual(["/f/5", "/f/2", "/f/4", "/f/3"]);
+    expect(payload.items.filter(row => row.retailerUrl === "https://www.amazon.com/dp/B000000001")).toHaveLength(1);
+    expect(payload.items.filter(row => row.retailerUrl === null)).toHaveLength(2);
+  });
+
   it("bounds hung requests to eight seconds and exposes unknown coverage", async () => {
     vi.useFakeTimers();
     const fetchImpl = vi.fn(() => new Promise<Response>(() => {}));
