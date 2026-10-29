@@ -324,6 +324,7 @@ function importBrowserResearch() {
   const standardCheckpoint = join(dirname(context.draftPath), `research-checkpoint-${context.runId}.json`);
   if (args.has("research") && argumentPath("research") !== standardCheckpoint) throw new Error("Browser research imports into the draft's own checkpoint; omit --research or supply that same checkpoint path.");
   const capturePath = args.has("browserResearch") ? argumentPath("browserResearch") : defaultCaptures;
+  run(["scripts/enrichRetailReleaseIdentity.mjs", context.draftPath]);
   const result = run(["scripts/importBrowserSoldResearch.mjs", context.draftPath, capturePath], true);
   const imported = JSON.parse(result.stdout);
   context.checkpointPath = imported.checkpointPath;

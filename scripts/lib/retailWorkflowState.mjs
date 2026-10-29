@@ -42,7 +42,7 @@ export function browserRecoveryScan({ observations, observationsPath, previousSc
     throw new Error("Unsupported browser observation document.");
   const sourceIds = [...new Set(observations.pages.filter((page) => {
     const age = Number(new Date(now)) - Date.parse(page.capturedAt);
-    return typeof page.sourceId === "string" && /^[a-z0-9][a-z0-9-]*$/.test(page.sourceId) && age >= -300000 && age <= 6 * 3600000;
+    return !page.retailerOfferEvidence && typeof page.sourceId === "string" && /^[a-z0-9][a-z0-9-]*$/.test(page.sourceId) && age >= -300000 && age <= 6 * 3600000;
   }).map((page) => page.sourceId))];
   if (!sourceIds.length) throw new Error("Browser recovery has no fresh source observations; capture current pages before starting a new run.");
   // The scanner still validates every page against its configured source, URL,

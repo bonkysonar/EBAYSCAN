@@ -4,6 +4,7 @@ import {
   inferRetailArtist,
   inferRetailTitle,
   parseRetailProductPrices,
+  parseAcousticSoundsListingIdentity,
 } from "../../scripts/lib/retailListingParsing.mjs";
 
 describe("generic retail listing parsing", () => {
@@ -129,5 +130,40 @@ describe("generic retail listing parsing", () => {
         "https://example.com/item?classType=REGULAR&amp;amp;from=/search",
       ),
     ).toBe("https://example.com/item?classType=REGULAR&from=/search");
+  });
+});
+
+describe("Acoustic Sounds publisher listing identity", () => {
+  const source = { sourceId: "acoustic-sounds", sourceUrl: "https://store.acousticsounds.com/d/123456/John_Coltrane-Blue_Train-Vinyl_Record" };
+  const listing = "John Coltrane / Blue Train: The Complete Masters 180 Gram Vinyl Record Stereo Version + Bound Booklet";
+  it("retains the album subtitle and pressing metadata separately", () => {
+    expect(parseAcousticSoundsListingIdentity(listing, source)).toEqual({
+      artist: "John Coltrane", title: "Blue Train: The Complete Masters",
+      retailEditionText: "Blue Train: The Complete Masters 180 Gram Vinyl Record Stereo Version + Bound Booklet",
+      identityStatus: "resolved", identitySource: "acoustic_sounds_listing",
+    });
+    expect(parseAcousticSoundsListingIdentity("Miles Davis / Kind Of Blue 200 Gram Clarity Vinyl Record 45 RPM", source)).toMatchObject({
+      artist: "Miles Davis", title: "Kind Of Blue", retailEditionText: "Kind Of Blue 200 Gram Clarity Vinyl Record 45 RPM",
+    });
+    expect(parseAcousticSoundsListingIdentity("Artist / The Album 2 LP Record", source)?.title).toBe("The Album");
+  });
+  it("allows exact publisher host context or the configured source ID", () => {
+    expect(parseAcousticSoundsListingIdentity(listing, { url: source.sourceUrl })?.artist).toBe("John Coltrane");
+    expect(parseAcousticSoundsListingIdentity(listing, { id: "acoustic-sounds" })?.title).toBe("Blue Train: The Complete Masters");
+    for (const context of [{}, { sourceId: "another-store" }, { sourceId: "acoustic-sounds", sourceUrl: "https://other.example/product" }, { sourceUrl: "https://acousticsounds.com.evil.example/product" }, { sourceUrl: "https://notacousticsounds.com/product" }]) {
+      expect(parseAcousticSoundsListingIdentity(listing, context)).toBeNull();
+    }
+  });
+  it("preserves meaningful album words and does not guess ambiguous multiple-slash listings", () => {
+    expect(parseAcousticSoundsListingIdentity("Artist / The Record: Part One", source)?.title).toBe("The Record: Part One");
+    expect(parseAcousticSoundsListingIdentity("Earth, Wind &amp; Fire / That's The Way Of The World 180 Gram Vinyl Record", source)?.artist).toBe("Earth, Wind & Fire");
+    expect(parseAcousticSoundsListingIdentity("Duke Ellington / John Coltrane / Collaboration 180 Gram Vinyl Record", source)).toBeNull();
+    expect(parseAcousticSoundsListingIdentity("John Coltrane - Blue Train 180 Gram Vinyl Record", source)).toBeNull();
+  });
+  it("does not alter the generic slash-collaboration parsing convention", () => {
+    const collaboration = "Duke Ellington / John Coltrane - Duke Ellington & John Coltrane LP";
+    expect(inferRetailArtist(collaboration)).toBe("Duke Ellington / John Coltrane");
+    expect(inferRetailTitle(collaboration)).toBe("Duke Ellington & John Coltrane");
+    expect(parseAcousticSoundsListingIdentity(collaboration, { sourceId: "other-shop" })).toBeNull();
   });
 });

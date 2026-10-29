@@ -2,6 +2,8 @@ import { verifiedWindowSales, verifiedResearchWindow } from "./soldResearchWindo
 import { retailEligibility, hasResearchableRetailIdentity } from "./retailIdentity.mjs";
 import { verifiedSoldItemIdentity } from "./soldItemIdentity.mjs";
 import { assessSoldCapture, researchQueryKey } from "./soldCaptureQuality.mjs";
+import { ACTIVE_EVIDENCE_FIELDS } from "./activeEvidenceCache.mjs";
+import { isRecordArtworkMerchandiseTitle } from "../../src/lib/arbitrage/marketplaceProductClassification.mjs";
 import { extractEditionIdentity, selfTitledReleaseMismatch, sameDistinctiveVariant } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
 import {
   buildEbayProductResearchUrl,
@@ -12,7 +14,7 @@ import {
 } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 
 const NON_RECORD_PATTERN =
-  /\b(?:cd|compact\s+disc|cassette|dvd|blu[-\s]?ray|book|poster|shirt|t-?shirt|hoodie|sweatshirt|hat|pin|patch|sticker|slipmat|turntable|speaker|stylus|cartridge|gift\s+card|coupon|digital|download|mp3|flac|bundle|lot\s+of)\b/i;
+  /\b(?:cd|compact\s+disc|cassette|dvd|blu[-\s]?ray|book|shirt|t-?shirt|hoodie|sweatshirt|hat|pin|patch|sticker|slipmat|turntable|speaker|stylus|cartridge|gift\s+card|coupon|digital|download|mp3|flac|bundle|lot\s+of)\b/i;
 const DAMAGED_PATTERN =
   /\b(?:damaged|opened|read\s+description|see\s+description|jacket\s+damage|sleeve\s+damage|shrink\s*wrap\s+tear|warped)\b/i;
 const SIGNED_PATTERN = /\b(?:signed|autograph(?:ed)?)\b/i;
@@ -335,6 +337,13 @@ export function resetPressingSoldEvidence(find) {
     soldEvidence: { source: "retail_identity_changed", status: "pending", condition: "new_sealed", matchConfidence: "unknown" } };
 }
 
+/** Active counts and quotes describe the old edition until an exact recheck. */
+export function resetPressingActiveEvidence(find) {
+  const reset = { ...find };
+  for (const field of [...ACTIVE_EVIDENCE_FIELDS, "ebayActiveSearchError"]) delete reset[field];
+  return reset;
+}
+
 export function productResearchRowMatchScore(find, rowTitleValue) {
   const rowTitle = cleanText(rowTitleValue);
   // Quantity of discs in one album is legitimate. A LOT or a list of albums
@@ -346,6 +355,7 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
   if (
     !rowTitle ||
     NON_RECORD_PATTERN.test(rowTitle) ||
+    isRecordArtworkMerchandiseTitle(rowTitle, { artist: find.artist, title: normalizeCanonicalResearchTitle(find.title ?? "") }) ||
     DAMAGED_PATTERN.test(rowTitle)
   )
     return 0;

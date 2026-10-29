@@ -70,7 +70,9 @@ shipping. Label-wide research is a lead source, not exact-edition sale evidence.
 Resale comparisons use delivered prices, including buyer-paid shipping. Deduct
 the actual label cost once; do not add a second shipping revenue credit. The
 editable default model uses 12.7% plus $0.40 marketplace fees, $4.39 postage,
-6% promotion, $1 packaging and a 3% returns reserve. Percentage marketplace
+3% promotion for new/sealed inventory under the owner's current advertising
+policy, $1 packaging and a 3% returns reserve. Explicit per-offer promotion costs
+and saved user settings override this default. Percentage marketplace
 and advertising fees also apply to estimated buyer sales tax (9.5% by default),
 which is withheld rather than earned. Packaging, reserves and future buyer tax
 remain assumptions. Heavier parcels and international orders may cost more.

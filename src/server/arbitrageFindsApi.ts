@@ -18,6 +18,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { get, list, put } from "@vercel/blob";
 import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
 import { assessRunQuality } from "../../scripts/lib/runQuality.mjs";
+import { retailerBrowserOfferIsCurrent } from "../../scripts/lib/retailBrowserOfferEvidence.mjs";
 import { evaluateOpportunity } from "../lib/arbitrage/evaluateOpportunity.mjs";
 import { getActiveRetailSources } from "../lib/arbitrage/vinylShopSources.js";
 import {
@@ -549,6 +550,7 @@ export function assertFinalArbitragePayload(
 
   candidate.finds.forEach((find, index) => {
     assertFindShape(find, `finds[${index}]`);
+    assertRetailerBrowserOfferSupported(find, `finds[${index}]`);
     assertBuyDecisionSupported(find, `finds[${index}]`);
   });
   assertOptionalArray(candidate.saleEvents, "saleEvents");
@@ -572,6 +574,18 @@ export function assertFinalArbitragePayload(
     "lifecycle observation time",
   );
   return finalCandidate;
+}
+
+function assertRetailerBrowserOfferSupported(value: unknown, path: string) {
+  if (!value || typeof value !== "object") return;
+  const find = value as Record<string, unknown>;
+  if (find.retailObservationMethod !== "visible_browser_retailer_offer" &&
+      find.retailerOfferObservation === undefined) return;
+  if (retailerBrowserOfferIsCurrent(find, new Date())) return;
+  throw httpError(
+    422,
+    `${path} retailer browser offer evidence is stale, unsupported, or does not match the published offer. Recheck the exact retailer product page before publishing.`,
+  );
 }
 
 function assertBuyDecisionSupported(value: unknown, path: string) {

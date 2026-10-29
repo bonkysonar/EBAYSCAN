@@ -25,11 +25,13 @@ describe("sold-backed competitive resale pricing", () => {
     const result = evaluateOpportunity(fixture(), {}, now);
     expect(result.conservativeResalePrice).toBe(49);
     expect(result.costLedger.outboundShipping).toBe(6);
-    expect(result.expectedNetProfit).toBe(8.21);
-    expect(result.roiRatio).toBe(.3751);
+    expect(result.expectedNetProfit).toBe(9.82);
+    expect(result.roiRatio).toBe(.4486);
     expect(result.resalePricingScenario).toMatchObject({ basis: "sold_and_active_lower_quartile",
-      quoteCount: 8, lowestPriceNetProfit: 5.13, lowestPriceRoiRatio: .2344 });
-    expect(result.reasonCodes).toContain("LOWEST_ACTIVE_PRICE_BELOW_RETURN_TARGET");
+      quoteCount: 8, lowestPriceNetProfit: 6.61, lowestPriceRoiRatio: .302 });
+    // At 3% promotion the downside clears the return floor; limited demand
+    // still prevents an automatic buy under the ordinary strategy gates.
+    expect(result.reasonCodes).not.toContain("LOWEST_ACTIVE_PRICE_BELOW_RETURN_TARGET");
     expect(result.decision).not.toBe("BUY");
     expect(consideration(result, Date.parse(now)).qualifies).toBe(true);
     expect(evaluateOpportunity(result, {}, now)).toEqual(result);
@@ -42,7 +44,12 @@ describe("sold-backed competitive resale pricing", () => {
   });
   it("downgrades even a fast seller to review when the cheapest-price return misses the user's floor", () => {
     const input=fixture(); input.soldEvidence.unitsSold90Days=30;
+    // $20.99 acquisition keeps the cheapest-price ROI below 30% at the new
+    // 3% promotion policy, while the sold-backed target remains profitable.
+    input.purchasePrice=20.99;
     const result=evaluateOpportunity(input,{},now);
+    expect(result.resalePricingScenario?.lowestPriceNetProfit).toBe(5.52);
+    expect(result.resalePricingScenario?.lowestPriceRoiRatio).toBe(.2402);
     expect(result.gates.economics).toBe(true);
     expect(result.decision).toBe("REVIEW");
     expect(result.reasonCodes).toContain("LOWEST_ACTIVE_PRICE_BELOW_RETURN_TARGET");

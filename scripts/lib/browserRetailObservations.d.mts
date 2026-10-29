@@ -8,6 +8,8 @@ export type BrowserRetailObservation = Record<string, any> & {
   links: Array<{ url: string; text: string }>;
 };
 export function browserObservationUrl(value: string): string;
+export function browserProductEditionText(page: Record<string, any>): string | undefined;
+export function browserProductRecordFormatSupported(format: unknown, visibleText: unknown): boolean;
 export function validateBrowserRetailObservations(
   payload: unknown,
   sources: Array<Record<string, any>>,

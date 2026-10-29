@@ -1,6 +1,8 @@
-import { normalizeResearchArtist, normalizeResearchTitle } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
+import { buildBaseResearchQuery, normalizeResearchArtist, normalizeResearchTitle } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 import { retailEligibility } from "./retailIdentity.mjs";
 import { validatedCheckoutQuote } from "../../src/lib/arbitrage/checkoutBasket.mjs";
+import { verifyRetailerBrowserOffer } from "./retailBrowserOfferEvidence.mjs";
+import { browserProductEditionText, browserProductRecordFormatSupported } from "./browserRetailObservations.mjs";
 
 const key = (value) => String(value ?? "").normalize("NFKD").toLowerCase().replace(/[^a-z0-9]/g, "");
 const isRoughTrade = (url) => /^(?:www\.)?roughtrade\.com$/.test(url.hostname);
@@ -12,15 +14,62 @@ const productPath = (url) => {
 };
 const urlVariant = (url) => url.searchParams.get("variant") || (isRoughTrade(url) && /^#\d+$/.test(url.hash) ? url.hash.slice(1) : null);
 
+/** Pressing identity can be observed without verifying a purchase quote. */
+export function browserObservedRetailIdentity(find, captures, now = new Date()) {
+  if (captures?.captureMethod !== "visible_browser") return find;
+  for (const page of captures.pages ?? []) {
+    const p = page.productEvidence;
+    if (!p || page.retailerOfferEvidence || page.sourceId !== find.sourceId || page.outcome !== "available") continue;
+    const age = Number(new Date(now)) - Date.parse(page.capturedAt);
+    if (!(age >= -300000 && age <= 6 * 3600000)) continue;
+    let editionText;
+    try { editionText = browserProductEditionText(page); } catch { continue; }
+    if (!editionText) continue;
+    const text = String(page.visibleText).split(/you may also like|you might also like|recently viewed|related products|recommended products|customers also (?:bought|viewed)|frequently bought together/i)[0];
+    if (!key(normalizeResearchArtist(p.artist)) || !key(normalizeResearchTitle(p.title)) ||
+        key(normalizeResearchArtist(p.artist)) !== key(normalizeResearchArtist(find.artist)) ||
+        key(buildBaseResearchQuery(p.artist, p.title)) !== key(buildBaseResearchQuery(find.artist, find.title)) ||
+        !key(text).includes(key(p.artist)) || !key(text).includes(key(p.title)) ||
+        !browserProductRecordFormatSupported(p.format, text)) continue;
+    try {
+      const target = new URL(find.sourceUrl), observed = new URL(page.url);
+      if (target.protocol !== "https:" || observed.protocol !== "https:" || target.hostname !== observed.hostname ||
+          target.username || target.password || observed.username || observed.password ||
+          !productPath(target) || productPath(target) !== productPath(observed)) continue;
+      const targetVariant = urlVariant(target), observedVariant = urlVariant(observed);
+      const knownVariants = [find.shopifyVariantId, targetVariant, observedVariant, p.variantId].filter(Boolean).map(String);
+      if (new Set(knownVariants).size > 1) continue;
+      const sameVariant = p.variantId && (find.shopifyVariantId || targetVariant) && observedVariant === String(p.variantId);
+      const sameBarcode = p.barcode && find.barcode && key(p.barcode) === key(find.barcode) && text.includes(String(p.barcode));
+      if (!sameVariant && !sameBarcode) continue;
+      if (isRoughTrade(observed)) {
+        const selected = page.selectedVariantEvidence;
+        if (!sameVariant || !selected || selected.expanded !== true || String(selected.variantId) !== String(p.variantId) ||
+            !selected.visibleText || !page.purchaseBlockText?.includes(selected.visibleText) || !text.includes(page.purchaseBlockText) ||
+            key(selected.visibleText.split(/\r?\n/)[0]) !== key(p.format)) continue;
+      }
+    } catch { continue; }
+    return find.retailEditionText === editionText ? find : { ...find, retailEditionText: editionText };
+  }
+  return find;
+}
+
 // Browser evidence is a fresh observation of this exact offer, never a way to
 // grant a healthy catalog status from an unrelated successful homepage visit.
 export function browserVerifiedRetailOffer(find, captures, now = new Date()) {
   if (captures?.captureMethod !== "visible_browser") return null;
   for (const page of captures.pages ?? []) {
+    if (page.retailerOfferEvidence) {
+      const verified = verifyRetailerBrowserOffer(find, page, now);
+      if (verified) return verified;
+      continue;
+    }
     const p = page.productEvidence;
     if (!p || page.sourceId !== find.sourceId || page.outcome !== "available") continue;
+    let editionText;
+    try { editionText = browserProductEditionText(page); } catch { continue; }
     const age = Number(now) - Date.parse(page.capturedAt);
-    if (!(age >= -300000 && age <= 86400000)) continue;
+    if (!(age >= -300000 && age <= 6 * 3600000)) continue;
     const text = String(page.visibleText).split(/You may also like|Recently viewed/i)[0];
     let purchaseBlock = text.split(/\bDescription\b|\bTracklist\b|\bShips on\b/i)[0];
     try {
@@ -63,9 +112,10 @@ export function browserVerifiedRetailOffer(find, captures, now = new Date()) {
     if (!pricePattern.test(purchaseBlock)) continue;
     const candidate = {...find,physicalFormatConfirmed:true,available:true,recordFormat:p.format,
       sourceListingTitle:`${p.artist} - ${p.title} ${p.format}`,shopifyVariantTitle:p.format};
-    if (!retailEligibility(candidate).eligible || !/vinyl|\blp\b|\d\s*lp|\d\s*[x-]\s*lp/i.test(p.format ?? "")) continue;
+    if (!retailEligibility(candidate).eligible || !browserProductRecordFormatSupported(p.format, [purchaseBlock, editionText].filter(Boolean).join("\n"))) continue;
     return {
       ...candidate,
+      ...(editionText !== undefined ? { retailEditionText: editionText } : {}),
       sourceCurrency:p.currency,
       purchasePrice:price,
       purchasePriceUsd:p.currency === "USD" ? price : null,

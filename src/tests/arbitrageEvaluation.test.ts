@@ -58,6 +58,19 @@ function validatedFind(overrides: Partial<ArbitrageFind> = {}): ArbitrageFind {
 }
 
 describe("canonical arbitrage evaluation", () => {
+  it("uses the current 3% new/sealed promotion policy while preserving explicit 6% overrides", () => {
+    const baseline = evaluateOpportunity(validatedFind(), {}, NOW);
+    const perOffer = evaluateOpportunity(validatedFind({ costs: { inboundShipping: 0, promotedListingRate: 0.06 } }), {}, NOW);
+    const configured = evaluateOpportunity(validatedFind(), { defaultPromotedListingRate: 0.06 }, NOW);
+    expect(defaultArbitrageSettings.defaultPromotedListingRate).toBe(0.03);
+    expect(baseline.costLedger.promotedListingRate).toBe(0.03);
+    expect(baseline.costLedger.promotedListingFee).toBe(1.31); // $40 delivered + $3.80 buyer tax, rounded to cents.
+    expect(perOffer.costLedger.promotedListingRate).toBe(0.06);
+    expect(configured.costLedger).toEqual(perOffer.costLedger);
+    expect(perOffer.costLedger.promotedListingFee).toBe(2.63);
+    expect(baseline.costLedger.marketplaceFee).toBe(perOffer.costLedger.marketplaceFee);
+    expect(baseline.gates).toEqual(perOffer.gates);
+  });
   it("offsets buyer-paid postage once and charges fees on withheld buyer tax", () => {
     // Synthetic $30 item + $4.39 shipping, with an exact $2.58 buyer-tax quote.
     const ledger = buildCostLedger(0, 34.39, {
@@ -77,8 +90,8 @@ describe("canonical arbitrage evaluation", () => {
       outboundShipping: 0, packaging: 0, returnsReserveRate: 0,
     });
     expect(ledger.buyerSalesTax).toBe(5);
-    expect(ledger.promotedListingFee).toBe(3.30);
-    expect(ledger.expectedNetProfit).toBe(39.31);
+    expect(ledger.promotedListingFee).toBe(1.65); // $55 fee base at the current 3% policy.
+    expect(ledger.expectedNetProfit).toBe(40.96);
   });
   it("allocates a same-shop order while retaining tax and the single-record comparison", () => {
     const find = validatedFind({ costs: {}, sourceCountry: "US" });
@@ -150,8 +163,8 @@ describe("canonical arbitrage evaluation", () => {
       soldEvidence: true,
       supply: true,
     });
-    expect(result.expectedNetProfit).toBe(13.87);
-    expect(result.roiRatio).toBeCloseTo(1.2667, 4);
+    expect(result.expectedNetProfit).toBe(15.19);
+    expect(result.roiRatio).toBeCloseTo(1.3872, 4);
     expect(result.sellThroughRate).toBe(0.8);
     expect(result.activeSupplyMonths).toBe(0.75);
     expect(result.status).toBe("BUY");
@@ -259,6 +272,8 @@ describe("canonical arbitrage evaluation", () => {
   it("allows a smaller margin when the record qualifies for the fast-turn option", () => {
     const result = evaluateOpportunity(
       validatedFind({
+        // Keep this strategy-boundary scenario below the $7 balanced floor.
+        costs: { inboundShipping: 0, promotedListingRate: 0.06 },
         conservativeResalePrice: 30,
         soldEvidence: {
           ...validatedFind().soldEvidence,
@@ -297,8 +312,8 @@ describe("canonical arbitrage evaluation", () => {
       NOW,
     );
 
-    expect(result.expectedNetProfit).toBe(13.87);
-    expect(result.roiRatio).toBeCloseTo(1.2667, 4);
+    expect(result.expectedNetProfit).toBe(15.19);
+    expect(result.roiRatio).toBeCloseTo(1.3872, 4);
     expect(result.gates.economics).toBe(true);
     expect(result.decision).toBe("BUY");
     expect(
@@ -313,6 +328,8 @@ describe("canonical arbitrage evaluation", () => {
   it("keeps a profitable slow mover on WATCH only when it is close to the higher-margin option", () => {
     const result = evaluateOpportunity(
       validatedFind({
+        // Explicit allowance keeps the fixture $1.13 below its $15 floor.
+        costs: { inboundShipping: 0, promotedListingRate: 0.06 },
         soldEvidence: {
           capturedAt: "2026-07-15T10:00:00.000Z",
           condition: "new_sealed",
@@ -745,6 +762,8 @@ describe("canonical arbitrage evaluation", () => {
   it("uses a bounded evergreen discount only when exact item demand and low supply already qualify", () => {
     const result = evaluateOpportunity(
       validatedFind({
+        // Exercise the discounted $5.60 floor with a profit below normal $7.
+        costs: { inboundShipping: 0, promotedListingRate: 0.06 },
         activeEvidence: {
           ...validatedFind().activeEvidence,
           exactMatchedListingCount: 1,
@@ -789,6 +808,8 @@ describe("canonical arbitrage evaluation", () => {
   it("keeps a fast mover near the smaller-margin floor as a price-target WATCH", () => {
     const result = evaluateOpportunity(
       validatedFind({
+        // Preserve a configured-cost scenario just below the $4 buy floor.
+        costs: { inboundShipping: 0, promotedListingRate: 0.06 },
         conservativeResalePrice: 26.8,
         soldEvidence: {
           ...validatedFind().soldEvidence,
@@ -1203,7 +1224,7 @@ describe("canonical arbitrage evaluation", () => {
     });
     const estimate = evaluateOpportunity(find, {}, NOW);
     const quoted = evaluateOpportunity({ ...find, costs: { inboundShipping: 5 } }, {}, NOW);
-    expect(estimate.expectedNetProfit).toBe(-2.47);
+    expect(estimate.expectedNetProfit).toBe(-1.51); // Current 3% promotion; inbound still an unverified $5.
     expect(estimate.decision).toBe("REVIEW");
     expect(estimate.candidateTier).toBe("C");
     expect(estimate.reasonCodes).toContain("INBOUND_SHIPPING_UNCONFIRMED");
@@ -1238,7 +1259,8 @@ describe("canonical arbitrage evaluation", () => {
   it("keeps an advertised Little Creatures lead visible when row prices conflict with unconfirmed edition evidence", () => {
     const result = evaluateOpportunity(validatedFind({
       artist: "Talking Heads", title: "Little Creatures", purchasePrice: 9.99,
-      costs: {}, activeEvidence: undefined, purchaseOfferVerification: "discovery_lead",
+      // Replay the historical receipt's explicit 6% promotion assumption.
+      costs: { promotedListingRate: 0.06 }, activeEvidence: undefined, purchaseOfferVerification: "discovery_lead",
       soldEvidence: { ...validatedFind().soldEvidence, status: "candidate", matchConfidence: 0.65,
         conservativeResalePrice: null, unitsSold90Days: null, editionMatchConfirmed: false },
       ebayResearchRows: [{ avgSoldPrice: 21.52, avgShipping: 0.18, totalSold: 24 }],

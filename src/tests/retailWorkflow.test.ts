@@ -128,6 +128,7 @@ describe("retail workflow state", () => {
       observations: { version: 1, captureMethod: "visible_browser", pages: [
         { sourceId: "shop", capturedAt: at }, { sourceId: "shop", capturedAt: at },
         { sourceId: "other", capturedAt: at }, { sourceId: "stale", capturedAt: "2026-09-04T00:00:00Z" },
+        { sourceId: "discovery-feed", capturedAt: at, retailerOfferEvidence: { retailerId: "amazon" } },
       ] },
     };
     const recovery = browserRecoveryScan(input);
@@ -136,6 +137,7 @@ describe("retail workflow state", () => {
     expect(() => browserRecoveryScan({ ...input, previousScanPath: "" })).toThrow("requires");
     expect(() => browserRecoveryScan({ ...input, previousScan: { ...previousScan, phase: "published-context" } })).toThrow("exact scan draft or final");
     expect(() => browserRecoveryScan({ ...input, observations: { ...input.observations, pages: [{ sourceId: "stale", capturedAt: "2026-09-04T00:00:00Z" }] } })).toThrow("no fresh");
+    expect(() => browserRecoveryScan({ ...input, observations: { ...input.observations, pages: [{ sourceId: "discovery-feed", capturedAt: at, retailerOfferEvidence: { retailerId: "amazon" } }] } })).toThrow("no fresh");
   });
 
   it("uses the scanner's exact new draft and counts actual output sources", () => {

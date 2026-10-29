@@ -18,6 +18,7 @@ import {
   buildProductResearchPlan,
   researchCheckpointComplete,
   resetPressingSoldEvidence,
+  resetPressingActiveEvidence,
 } from "./lib/productResearchCuration.mjs";
 
 import {
@@ -96,7 +97,15 @@ if (Number(String(payload.runManifest?.scannerVersion ?? "").split("/").at(-1)) 
     maxRetries: 0,
     requestTimeoutMs: 12000,
   });
-  curatedProducts = curatedProducts.map((find) => browserVerifiedRetailOffer(find, browserCaptures, new Date(curatedAt)) ?? find);
+  curatedProducts = curatedProducts.map((find) => {
+    let observed = browserVerifiedRetailOffer(find, browserCaptures, new Date(curatedAt));
+    if (!observed) return find;
+    if (observed.retailEditionText !== find.retailEditionText || observed.barcode !== find.barcode) {
+      observed = resetPressingActiveEvidence(resetPressingSoldEvidence(observed));
+      if (localIndex) observed = revalidateCandidateLocalSold(observed, localIndex, curatedAt);
+    }
+    return observed;
+  });
   curatedProducts = curatedProducts.map(find => refreshReviewedRetailOffer(find, curatedAt));
   const purchaseRefresh = await refreshEbayPurchaseOffers(curatedProducts);
   curatedProducts = purchaseRefresh.finds;
@@ -122,8 +131,8 @@ if (Number(String(payload.runManifest?.scannerVersion ?? "").split("/").at(-1)) 
   const byId = new Map(verified.map((find) => [find.id, find]));
   curatedProducts = curatedProducts.map((find) => {
     let confirmed = byId.get(find.id) ?? find;
-    if (confirmed.retailEditionText !== find.retailEditionText) {
-      confirmed = resetPressingSoldEvidence(confirmed);
+    if (confirmed.retailEditionText !== find.retailEditionText || confirmed.barcode !== find.barcode) {
+      confirmed = resetPressingActiveEvidence(resetPressingSoldEvidence(confirmed));
       if (localIndex) confirmed = revalidateCandidateLocalSold(confirmed, localIndex, curatedAt);
     }
     return evaluateOpportunity(

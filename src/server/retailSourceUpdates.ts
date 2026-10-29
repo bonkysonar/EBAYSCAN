@@ -1,6 +1,7 @@
 import type { ArbitrageImportPayload } from "../lib/arbitrage/types";
 import { retailEligibility } from "../../scripts/lib/retailIdentity.mjs";
 import { reviewedRetailOfferIsCurrent } from "../../scripts/lib/reviewedRetailOffers.mjs";
+import { retailerBrowserOfferIsCurrent } from "../../scripts/lib/retailBrowserOfferEvidence.mjs";
 import { publishedResearchProgress } from "../lib/arbitrage/researchCoverage.mjs";
 
 const error = (message: string) =>
@@ -58,6 +59,11 @@ export function mergeVerifiedSourceUpdates(
     Date.parse(date) >= started - 300000 &&
     Date.parse(date) <= now + 300000;
   const freshProduct = (find: ArbitrageImportPayload["finds"][number]) => {
+    // The discovery source owns this candidate, while the exact retailer page
+    // owns its current offer evidence. A single page never supplies catalog
+    // coverage or changes the discovery source's report.
+    if (find.retailObservationMethod === "visible_browser_retailer_offer")
+      return retailerBrowserOfferIsCurrent(find, new Date(now));
     if (find.retailObservationMethod === "public_page_reader")
       return reviewedRetailOfferIsCurrent(find, reports.find((entry) => entry.id === find.sourceId), new Date(now).toISOString());
     if (!find.retailObservationMethod && !find.retailObservedAt && !find.retailObservationUrl)
