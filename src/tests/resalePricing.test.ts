@@ -48,8 +48,8 @@ describe("sold-backed competitive resale pricing", () => {
     // 3% promotion policy, while the sold-backed target remains profitable.
     input.purchasePrice=20.99;
     const result=evaluateOpportunity(input,{},now);
-    expect(result.resalePricingScenario.lowestPriceNetProfit).toBe(5.52);
-    expect(result.resalePricingScenario.lowestPriceRoiRatio).toBe(.2402);
+    expect(result.resalePricingScenario?.lowestPriceNetProfit).toBe(5.52);
+    expect(result.resalePricingScenario?.lowestPriceRoiRatio).toBe(.2402);
     expect(result.gates.economics).toBe(true);
     expect(result.decision).toBe("REVIEW");
     expect(result.reasonCodes).toContain("LOWEST_ACTIVE_PRICE_BELOW_RETURN_TARGET");
