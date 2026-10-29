@@ -41,7 +41,13 @@ export function RetailScanStatus({
     attempt &&
     ["running", "research"].includes(attempt.status) &&
     Date.now() - Date.parse(attempt.updatedAt ?? "") > 3 * 3600000;
-  const queue = attempt?.researchQueue ?? payload?.researchQueue;
+  const publishedQueue = payload?.latestUpdateResearchQueue ?? payload?.researchQueue;
+  const publicationTime = Date.parse(payload?.publishedAt ?? payload?.createdAt ?? "");
+  const attemptTime = Date.parse(attempt?.updatedAt ?? attempt?.startedAt ?? "");
+  const queue = attempt?.researchQueue && (!publishedQueue || attemptTime >= publicationTime)
+    ? attempt.researchQueue
+    : publishedQueue;
+  const latestUpdateProgress = payload?.latestUpdateResearchProgress;
   return (
     <aside className="panel retail-scan-status" aria-label="Scanner freshness">
       <strong>
@@ -70,7 +76,18 @@ export function RetailScanStatus({
         </p>
       ) : null}
       {attempt?.message ? <p role="status">{attempt.message}</p> : null}
-      {payload?.researchProgress ? <ResearchSummary label="Published report" progress={payload.researchProgress} /> : null}
+      {latestUpdateProgress ? (
+        <ResearchSummary label="Latest published update" progress={latestUpdateProgress} />
+      ) : payload?.researchProgress ? (
+        <ResearchSummary label="Published report" progress={payload.researchProgress} />
+      ) : null}
+      {latestUpdateProgress && payload?.researchProgress ? (
+        <details>
+          <summary>Research across retained report history</summary>
+          <p>These totals include older offers. They do not describe completion of the latest research shortlist.</p>
+          <ResearchSummary label="All report observations" progress={payload.researchProgress} />
+        </details>
+      ) : null}
       {payload?.researchCohort ? (
         <p aria-label="Daily research shortlist">
           Latest scan shortlist: {payload.researchCohort.selected} offers selected from {payload.researchCohort.discovered} discovered offers.
@@ -89,5 +106,5 @@ export function RetailScanStatus({
 
 function ResearchSummary({ label, progress }: { label: string; progress: ArbitrageResearchProgress }) {
   if (!progress.planned) return <p>{label}: no product research in this update.</p>;
-  return <p>{label} sold research: {progress.completed}/{progress.planned} offers researched; {progress.validated} with matching sales; {progress.noRows} without matching sales; {progress.pending} pending; {progress.failed} failed; {progress.outsidePlan} deferred.</p>;
+  return <p>{label} sold research: {progress.completed}/{progress.planned} offers researched; {progress.validated} with matching sales; {progress.noRows} without confirmed matching sales; {progress.pending} pending; {progress.failed} failed; {progress.outsidePlan} deferred.</p>;
 }

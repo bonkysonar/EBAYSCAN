@@ -41,6 +41,31 @@ describe("persistent sold research", () => {
     expect(second.plan.completed[0].targets.every((target: any) => target.evidence.units90Days === 9)).toBe(true);
     expect(Object.values(second.state.entries)[0]).toMatchObject({ attemptCount: 1 });
   });
+  it("reopens an unpriced review when only the observed pressing description changes", () => {
+    const candidate = { ...find, retailEditionText: "Limited edition red vinyl" };
+    const observedDraft = { ...draft, researchCandidates: [candidate] };
+    const blue = { ...captures, pages: [{ ...page, rows: [{ ...row, title: "Example Artist Actual Album Blue Vinyl LP" }] }] };
+    const first = buildPersistentResearchQueue(observedDraft, { captures: blue, now });
+    expect(first.plan.editionReviews).toHaveLength(1);
+    const reviewId = first.plan.editionReviews[0].reviewId;
+    first.state.editionReviewOutcomes = { [reviewId]: { outcome: "unconfirmed_unpriced", reviewedAt: now.toISOString() } };
+
+    const unchanged = buildPersistentResearchQueue(observedDraft, { captures: blue, state: first.state, now });
+    expect(unchanged.plan.summary).toMatchObject({ editionReviews: 0, reviewedEditions: 1 });
+    expect(unchanged.plan.reviewedEditions[0].reviewId).toBe(reviewId);
+
+    const updatedDraft = { ...observedDraft, researchCandidates: [{ ...candidate, retailEditionText: "Limited edition translucent milk white vinyl" }] };
+    const changed = buildPersistentResearchQueue(updatedDraft, { captures: blue, state: unchanged.state, now });
+    expect(changed.plan.summary).toMatchObject({ editionReviews: 1, reviewedEditions: 0, reused: 1 });
+    expect(changed.plan.editionReviews[0].reviewId).not.toBe(reviewId);
+    for (const result of [first, unchanged, changed]) {
+      expect(result.plan.completed[0].targets[0].evidence.exactPrice).toBeNull();
+      expect(result.plan.completed[0].targets[0].expectedNetProfit).toBeNull();
+      expect(result.plan.sourcing).toHaveLength(0);
+      expect(JSON.stringify(result.state)).not.toContain("Limited edition");
+    }
+    expect(candidate.retailEditionText).toBe("Limited edition red vinyl");
+  });
   it("keeps unfinished identity across scans and groups duplicate query work", () => {
     const first = buildPersistentResearchQueue(draft, { now });
     const later = new Date("2026-10-02T14:00:00Z");
