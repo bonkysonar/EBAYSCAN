@@ -35,6 +35,22 @@ describe("profile-bound research recovery", () => {
     expect(researchBrowserDecision({ binding }, { ...observation, sellerHandle: binding.expectedSellerHandle }).action).toBe("research");
     expect(researchBrowserDecision({ binding }, { ...observation, sellerHandle: binding.expectedSellerHandle, captureRepair: true }).blockerCode).toBe("capture_repair");
   });
+  it("recovers an omitted optional profile label only through the authorized instance and visible seller", () => {
+    const { profileName, ...unlabelled } = browser;
+    const observation = { browsers: [{ ...unlabelled, tabs: [{ id: "owned" }] }], browserId: browser.id, tabId: "owned", taskOwned: true };
+    expect(researchBrowserDecision({ binding }, observation).action).toBe("create_tab");
+    expect(researchBrowserDecision({ binding }, { ...observation, sellerHandle: binding.expectedSellerHandle }).action).toBe("research");
+    expect(researchBrowserDecision({ binding }, { ...observation, sellerHandle: "other-seller" }).blockerCode).toBe("seller_identity_mismatch");
+    expect(researchBrowserDecision({ binding }, { ...observation, taskOwned: false, sellerHandle: binding.expectedSellerHandle }).action).toBe("create_tab");
+  });
+  it.each([
+    [[{ ...browser, profileName: "Other profile" }], "profile_unavailable"],
+    [[{ ...browser, metadata: {} }], "profile_unavailable"],
+    [[{ ...browser, metadata: { extensionInstanceId: "different" } }], "profile_unavailable"],
+    [[browser, { ...browser, id: "another", profileName: undefined }], "profile_ambiguous"],
+  ])("never substitutes names or handles for a unique authorized extension", (browsers, code) => {
+    expect(researchBrowserDecision({ binding }, { browsers, browserId: browser.id, tabId: "owned", taskOwned: true, sellerHandle: binding.expectedSellerHandle }).blockerCode).toBe(code);
+  });
 });
 
 describe("durable single-writer ownership", () => {
