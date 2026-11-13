@@ -1,3 +1,4 @@
+import { researchSelection } from "./lib/researchExclusions.mjs";
 import { createMarketplaceAlbumDemandIndex } from "./lib/marketplaceAlbumDemand.mjs";
 import { beginResearchWrite } from "./lib/retailResearchSession.mjs";
 import { createAlbumPriceBenchmarkIndex } from "./lib/albumPriceBenchmark.mjs";
@@ -77,11 +78,8 @@ const marketplaceCaptures = existsSync(marketplaceCapturesPath) ? JSON.parse(rea
 const marketplaceDemand = createMarketplaceAlbumDemandIndex(marketplaceCaptures, curatedAt);
 const albumBenchmarks = createAlbumPriceBenchmarkIndex(marketplaceCaptures, curatedAt);
 const evidenceByFindId = {};
-const retained =
-  payload.researchCandidates ??
-  (payload.finds ?? []).filter(
-    (find) => find.opportunityType !== "sitewide_sale",
-  );
+const selection = researchSelection(payload);
+const retained = selection.included.filter(find => find.opportunityType !== "sitewide_sale");
 let curatedProducts = retained.map((find) => localIndex ? revalidateCandidateLocalSold(find, localIndex, curatedAt) : find).map((find) => ({...find, albumDemand: find.albumDemand ?? marketplaceDemand.match(find), albumPriceBenchmark: albumBenchmarks.match(find) ?? find.albumPriceBenchmark})).map((find) =>
   curateFind(
     find.identitySource === "retailer_vendor" &&
@@ -179,6 +177,7 @@ const sidecarPath = resolve(
 );
 const finalPayload = {
   ...payload,
+  researchCoverage: { status: selection.excluded.length ? "partial" : "complete", excluded: selection.excluded.length, reason: "Excluded offers remain unpriceable, not researched zero-demand results." },
   createdAt: scanCreatedAt,
   researchCandidates: undefined,
   discoveryCandidates: undefined,

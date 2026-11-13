@@ -1,3 +1,4 @@
+import { researchSelection } from "./researchExclusions.mjs";
 import { buildProductResearchPlan, bestEvidenceForEntry, researchCheckpointComplete } from "./productResearchCuration.mjs";
 
 // Size of a work batch, never a ceiling on which offers must be completed.
@@ -76,7 +77,8 @@ export function admittedSourceIds(payload) {
 
 export function researchProgress(draft, checkpoint = {}, now = new Date()) {
   if (checkpoint.runId && checkpoint.runId !== draft.runId) throw new Error("Research checkpoint belongs to another scan.");
-  const pool = draft.researchCandidates ?? draft.finds ?? [];
+  const selection = researchSelection(draft);
+  const pool = selection.included;
   const allPlans = buildProductResearchPlan(pool);
   const plans = allPlans;
   const byFind = new Map(pool.map((find) => [find.id, find]));
@@ -103,7 +105,7 @@ export function researchProgress(draft, checkpoint = {}, now = new Date()) {
   }
   const outsidePlan = Math.max(0, allPlans.length - plans.length);
   const complete = plans.length > 0 && counts.completed === plans.length && counts.failed === 0 && counts.pending === 0 && outsidePlan === 0;
-  return { ...counts, limit: plans.length, outsidePlan, complete, status: !plans.length ? "not_needed" : complete ? "complete" : "incomplete" };
+  return { ...counts, excluded: selection.excluded.length, selected: plans.length + selection.excluded.length, coverage: selection.excluded.length ? "partial" : "complete", limit: plans.length, outsidePlan, complete, status: !plans.length ? "not_needed" : complete ? "complete" : "incomplete" };
 }
 
 export function assertResearchReady(progress, queue = {}) {

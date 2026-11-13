@@ -516,6 +516,9 @@ export type ArbitrageRunManifest = {
 };
 
 export type ArbitrageResearchProgress = {
+  excluded?: number;
+  selected?: number;
+  coverage?: "partial" | "complete";
   scope?: "visible_report";
   planned: number;
   completed: number;
@@ -531,6 +534,8 @@ export type ArbitrageResearchProgress = {
 };
 
 export type ArbitrageResearchQueue = {
+  excluded?: number;
+  coverage?: "partial" | "complete";
   completeWithRedactedRows?: number;
   offers: number; distinctQueries: number; tasks: number; reused: number;
   repair: number; refresh: number; pending: number; retryLater: number;
@@ -538,6 +543,8 @@ export type ArbitrageResearchQueue = {
 };
 
 export type ArbitrageImportPayload = {
+  researchExclusions?: Array<{runId: string; findId: string; candidateIdentity: string; reason: "unverifiable_sold_controls"; outcome: "excluded_unpriceable"; reviewedAt: string; recoveryAttempted: true; evidenceVerified: false}>;
+  researchCoverage?: {status: "partial" | "complete"; excluded: number; reason: string};
   discoveryAudit?: {
     status: string;
     searches: Array<{ query: string; url: string; capturedAt: string; status: string; resultCount: number }>;

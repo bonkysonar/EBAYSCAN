@@ -223,6 +223,20 @@ export async function uploadArbitrageFinds(
         ) as FinalArbitragePayload)
       : withAssessedRunQuality(finalPayload);
 
+  // Never resurrect an explicitly excluded offer from retained source history.
+  const excludedFindIds = new Set((finalPayload.researchExclusions ?? []).map(row => {
+    if (row.runId !== finalPayload.runId || row.outcome !== "excluded_unpriceable" ||
+        row.reason !== "unverifiable_sold_controls" || row.evidenceVerified !== false ||
+        row.recoveryAttempted !== true || !/^[a-f0-9]{64}$/.test(row.candidateIdentity))
+      throw httpError(400, "Invalid explicit research exclusion");
+    return row.findId;
+  }));
+  if (excludedFindIds.size) {
+    checkedPayload.finds = checkedPayload.finds.filter(find => !excludedFindIds.has(find.id));
+    checkedPayload.researchExclusions = finalPayload.researchExclusions;
+    checkedPayload.researchCoverage = finalPayload.researchCoverage;
+  }
+
   const bootstrapFromSameLegacyArtifact =
     Boolean(current && !current.pointerBacked) &&
     finalPayload.createdAt === current?.pointer.createdAt;

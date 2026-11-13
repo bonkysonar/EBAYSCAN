@@ -1,4 +1,7 @@
 export type ResearchProgress = {
+  excluded: number;
+  selected: number;
+  coverage: "partial" | "complete";
   planned: number;
   completed: number;
   validated: number;
