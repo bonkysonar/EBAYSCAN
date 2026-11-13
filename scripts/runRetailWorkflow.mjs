@@ -246,7 +246,7 @@ if (!args.has("finish") && !args.has("full") && !standaloneRefresh) {
     if (final.runId !== draft.runId)
       throw new Error("Curation returned the wrong run.");
     const partial =
-      context.mode === "refresh" || !final.runQuality?.publishable;
+      context.mode === "refresh" || (final.researchExclusions?.length ?? 0) > 0 || !final.runQuality?.publishable;
     final.publicationMode = partial ? "source_updates" : "full";
     if (partial) final.sourceUpdateVersion = 1;
     final.researchProgress = context.researchProgress;

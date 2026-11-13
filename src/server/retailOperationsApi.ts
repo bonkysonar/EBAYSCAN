@@ -187,12 +187,12 @@ function boundedResearchProgress(value: unknown) {
   const pending = Math.max(bounded(input.pending), planned - validated - noRows - failed);
   const outsidePlan = bounded(input.outsidePlan);
   const complete = planned > 0 && completed === planned && validated + noRows === planned && failed === 0 && pending === 0 && outsidePlan === 0;
-  return { planned, completed, validated, noRows, failed, pending: Math.min(planned, pending), researchedRows: bounded(input.researchedRows), limit: planned, outsidePlan, complete, status: planned === 0 ? "not_needed" : complete ? "complete" : "incomplete" };
+  return { excluded: bounded(input.excluded), selected: planned + bounded(input.excluded), coverage: bounded(input.excluded) ? "partial" : "complete", planned, completed, validated, noRows, failed, pending: Math.min(planned, pending), researchedRows: bounded(input.researchedRows), limit: planned, outsidePlan, complete, status: planned === 0 ? "not_needed" : complete ? "complete" : "incomplete" };
 }
 function boundedResearchQueue(value: unknown) {
   if (!value || typeof value !== "object") return null;
   const input = value as Record<string, unknown>;
-  return Object.fromEntries(["offers", "distinctQueries", "tasks", "reused", "repair", "refresh", "pending", "retryLater", "scheduled", "deferred", "editionReviews", "completeWithRedactedRows"].map(key => [key, bounded(input[key])]));
+  return Object.fromEntries(["offers", "distinctQueries", "tasks", "reused", "repair", "refresh", "pending", "retryLater", "scheduled", "deferred", "editionReviews", "completeWithRedactedRows", "excluded"].map(key => [key, bounded(input[key])]));
 }
 async function read(
   cwd: string,

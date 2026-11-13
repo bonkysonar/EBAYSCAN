@@ -1,3 +1,4 @@
+import { researchSelection } from "./researchExclusions.mjs";
 import { createHash } from "node:crypto";
 import { buildProductResearchPlan, curateResearchForFind } from "./productResearchCuration.mjs";
 import { importBrowserSoldResearch } from "./browserSoldResearch.mjs";
@@ -16,7 +17,8 @@ const iso = value => Number.isFinite(Date.parse(value)) ? new Date(value).toISOS
 export function buildPersistentResearchQueue(payload, { captures = {}, checkpoint = {}, state = {}, now = new Date(), maxEntries = 240 } = {}) {
   const timestamp = new Date(now).toISOString();
   const imported = importBrowserSoldResearch(payload, captures, checkpoint, new Date(now));
-  const pool = payload.researchCandidates ?? payload.finds ?? [];
+  const selection = researchSelection(payload);
+  const pool = selection.included;
   const byId = new Map(pool.map(find => [find.id, find]));
   const groups = new Map();
   for (const plan of buildProductResearchPlan(pool)) {
@@ -93,6 +95,7 @@ export function buildPersistentResearchQueue(payload, { captures = {}, checkpoin
   for (let i = 0; i < Math.max(...lanes.map(lane => lane.length)); i++) for (const lane of lanes) if (lane[i]) interleaved.push(lane[i]);
   const entries = interleaved.slice(0, maxEntries);
   const summary = {
+    excluded: selection.excluded.length, coverage: selection.excluded.length ? "partial" : "complete",
     offers: pool.filter(find => byId.has(find.id) && !String(find.id).startsWith("campaign-")).length,
     distinctQueries: groups.size, tasks: tasks.length, reused: tasks.filter(task => task.status === "complete").length,
     repair: tasks.filter(task => task.status === "repair").length,

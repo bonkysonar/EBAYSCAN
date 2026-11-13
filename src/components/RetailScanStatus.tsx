@@ -105,6 +105,6 @@ export function RetailScanStatus({
 }
 
 function ResearchSummary({ label, progress }: { label: string; progress: ArbitrageResearchProgress }) {
-  if (!progress.planned) return <p>{label}: no product research in this update.</p>;
-  return <p>{label} sold research: {progress.completed}/{progress.planned} offers researched; {progress.validated} with matching sales; {progress.noRows} without confirmed matching sales; {progress.pending} pending; {progress.failed} failed; {progress.outsidePlan} deferred.</p>;
+  if (!progress.planned) return <p>{label}: no product research in this update. {progress.excluded ? `${progress.excluded} offers excluded as unpriceable; no verified purchase recommendations from these exclusions.` : ""}</p>;
+  return <p>{label} sold research: {progress.completed}/{progress.planned} offers researched; {progress.validated} with matching sales; {progress.noRows} without confirmed matching sales; {progress.pending} pending; {progress.failed} failed; {progress.outsidePlan} deferred. {progress.excluded ? `${progress.excluded} selected offers excluded as unpriceable; partial research coverage, not zero demand.` : ""}</p>;
 }

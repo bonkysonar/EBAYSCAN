@@ -187,4 +187,27 @@ describe("individual retailer browser offers at publication", () => {
     expect(latest.payload.finds[0].costs?.inboundShipping).toBeUndefined();
     expect(latest.payload.sourceReports).toHaveLength(1);
   });
+  it("does not resurrect an excluded candidate from retained source history", async () => {
+    process.env.ARBITRAGE_UPLOAD_TOKEN = "test-retailer-offer-token";
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    const workspace = mkdtempSync(join(tmpdir(), "excluded-retained-offer-"));
+    workspaces.push(workspace);
+    const find = observedOffer();
+    await uploadArbitrageFinds(workspace, payload(find, "full"), "test-retailer-offer-token");
+    const incoming = payload(find);
+    incoming.runId = "exclusion-update";
+    incoming.createdAt = "2026-10-29T15:01:00.000Z";
+    vi.setSystemTime(new Date(incoming.createdAt));
+    incoming.finds = [];
+    incoming.sourceReports = [{ ...originReport, catalogHealth: "failed", catalogPageAvailableCount: 0, productParseHealth: "failed" }];
+    incoming.researchExclusions = [{runId: incoming.runId, findId: find.id, candidateIdentity: "a".repeat(64), reason: "unverifiable_sold_controls", outcome: "excluded_unpriceable", reviewedAt: incoming.createdAt, recoveryAttempted: true, evidenceVerified: false}];
+    incoming.researchCoverage = {status: "partial", excluded: 1, reason: "unpriceable"};
+    await uploadArbitrageFinds(workspace, incoming, "test-retailer-offer-token");
+    const latest = await readLatestArbitrageFinds(workspace);
+    expect(latest.status).toBe("available");
+    if (latest.status !== "available") throw new Error("Expected publication");
+    expect(latest.payload.finds.some(row => row.id === find.id)).toBe(false);
+    expect(latest.payload.researchCoverage?.status).toBe("partial");
+  });
+
 });

@@ -127,3 +127,9 @@ Validation checks item IDs where links exist and compares the displayed title, p
 Newbury's product feeds expose pressing details in `fg_Vinyl Color_*`, `fg_Number of Discs_*` and `fg_Catalog Number_*` tags, even when the product title only says "Exclusive LP". The scanner now preserves these as separate retail edition/catalog fields and uses the edition in sold, active-competition and own-sales matching. Artist/album search queries remain broad. Tags are applied only to a single, matching physical SKU; conflicting tags or multiple variants require review. Unknown named colors do not become generic black pressings. The final retailer check re-curates sales and discards previous price/count evidence if the confirmed pressing changes.
 
 This repairs both false negatives (a properly described colored pressing rejected against an incomplete retail title) and false positives (a vague expensive listing accepted while the cheaper actual colored pressing was excluded). Fresh scans are required to rebuild active comparisons against the corrected identity.
+
+## Empty-state capture correction (November 13)
+
+Custom date fields are textboxes with placeholder `mm/dd/yyyy`; read their visible values after opening Custom. Do not classify dates as missing from a sliced snapshot that excluded the inputs. Check a bounded full controls snapshot or native accessibility state when a DOM excerpt omits them.
+
+When the Sold empty state disables its condition filter or displays only numeric `1000`, do not invent a visible New selection. Active-tab controls and earlier queries cannot substitute for current Sold evidence. Preserve the failed capture. An explicitly reviewed candidate can be excluded as unpriceable through the exact-run exclusion ledger; exclusion is neither completed research nor zero sales. Excluded candidates never enter curation or recommendations. This opt-in local change is not activated by merely recording a failed capture.
