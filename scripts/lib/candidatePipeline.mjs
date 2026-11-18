@@ -1,5 +1,6 @@
 import { retailEligibility, hasResearchableRetailIdentity } from "./retailIdentity.mjs";
 import { researchDemand } from "./albumDemand.mjs";
+import { defaultArbitrageSettings, evaluateOpportunity } from "../../src/lib/arbitrage/evaluateOpportunity.mjs";
 import { buildSoldResearchQueryVariants } from "../../src/lib/arbitrage/soldResearchLinks.mjs";
 
 const NAVIGATION_LABEL =
@@ -1313,11 +1314,16 @@ import { isMarketplaceNonRecordTitle } from "../../src/lib/arbitrage/marketplace
  * A research slot is not a recommendation. Never require our own inventory
  * history before asking whether the broader market buys a record.
  */
-export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_INFINITY, freshDealShare = 0, uniqueAlbums = false, now = Date.now() } = {}) {
+export function selectResearchCandidates(candidates, {
+  limit = Number.POSITIVE_INFINITY, freshDealShare = 0, uniqueAlbums = false,
+  prioritizeRetailSales = false, recentlyBlocked, now = Date.now(),
+} = {}) {
   const requestedLimit = Number.isFinite(limit)
     ? Math.max(0, Math.floor(limit))
     : candidates.length;
   let explorationLimit = 0;
+  const economics = new Map();
+  const blocked = new Set();
   const ranked = candidates
     .filter(
       (candidate) =>
@@ -1326,7 +1332,7 @@ export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_I
     )
     .map((candidate) => {
       const demand = researchDemand(candidate);
-      return {
+      const rankedCandidate = {
         ...candidate,
         discoveryLane: demand.observed ? demand.source : "exploration",
         researchPriority: demand.observed
@@ -1334,11 +1340,17 @@ export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_I
           : "unproven_exploration",
         researchDemand: demand,
       };
+      if (recentlyBlocked?.(candidate)) blocked.add(rankedCandidate);
+      if (prioritizeRetailSales)
+        economics.set(rankedCandidate, researchEconomics(candidate, now));
+      return rankedCandidate;
     })
     .sort((left, right) => {
       const a = left.researchDemand,
         b = right.researchDemand;
       return (
+        Number(blocked.has(left)) - Number(blocked.has(right)) ||
+        (economics.get(right) ?? 0) - (economics.get(left) ?? 0) ||
         (uniqueAlbums && freshDealShare > 0 ? Number(isFreshDeal(right)) - Number(isFreshDeal(left)) : 0) ||
         Number(b.observed) - Number(a.observed) ||
         Number(b.recentUnits > 0) - Number(a.recentUnits > 0) ||
@@ -1360,12 +1372,18 @@ export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_I
     if (album) albums.add(album);
     return true;
   });
-  const freshEvents = unique.filter(isFreshDeal)
+  const available = unique.filter(candidate => !blocked.has(candidate));
+  // A prior exclusion never transfers into the new cohort. Recheck it when
+  // other offers cannot fill the budget or the observed offer has changed.
+  const retry = unique.filter(candidate => blocked.has(candidate))
+    .slice(0, Math.max(0, requestedLimit - available.length));
+  const pool = [...available, ...retry];
+  const freshEvents = pool.filter(isFreshDeal)
     .sort((a, b) => Date.parse(b.sourcePublishedAt) - Date.parse(a.sourcePublishedAt));
   const eventSlots = Math.min(requestedLimit, Math.ceil(requestedLimit * Math.max(0, Math.min(1, freshDealShare))));
   const events = sourceBalanced(freshEvents, eventSlots);
   const eventIds = new Set(events.map(candidate => candidate.id));
-  const remaining = unique.filter(candidate => !eventIds.has(candidate.id));
+  const remaining = pool.filter(candidate => !eventIds.has(candidate.id));
   const observed = remaining.filter(candidate => candidate.researchDemand.observed);
   const unproven = remaining.filter(candidate => !candidate.researchDemand.observed);
   const remainingLimit = requestedLimit - events.length;
@@ -1374,9 +1392,9 @@ export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_I
   explorationLimit = Math.min(unproven.length, Math.max(
     Math.floor(remainingLimit / 2), remainingLimit - observed.length,
   ));
-  const exploration = sourceBalanced(unproven, explorationLimit);
+  const exploration = selectLane(unproven, explorationLimit);
   const explorationCount = exploration.length + events.filter(candidate => !candidate.researchDemand.observed).length;
-  const proven = sourceBalanced(observed, remainingLimit - exploration.length);
+  const proven = selectLane(observed, remainingLimit - exploration.length);
   // A time-bounded browser session must reach new offers in its first few
   // searches, not only after every familiar record has been researched.
   const selected = [];
@@ -1410,6 +1428,7 @@ export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_I
       ...diagnostics,
       researchAllocationVersion: 2,
       freshDealSelectedCount: events.length,
+      previousExclusionsDeferred: blocked.size - selected.filter(row => blocked.has(row)).length,
       duplicateAlbumDeferredCount: uniqueAlbums ? ranked.length - unique.length : 0,
       observedDemandCandidateCount: ranked.filter(
         (candidate) => candidate.researchDemand.observed,
@@ -1431,11 +1450,32 @@ export function selectResearchCandidates(candidates, { limit = Number.POSITIVE_I
     },
   };
 
+  function selectLane(lane, slots) {
+    const picks = sourceBalanced(lane, slots);
+    if (!prioritizeRetailSales || !picks.length || picks.some(c => c.appliedSaleCampaignId)) return picks;
+    const campaign = lane.find(c => c.appliedSaleCampaignId && economics.get(c) >= 0);
+    // Give a priced campaign a research slot without displacing a record
+    // whose observed resale price already supports the consideration floor.
+    if (campaign && economics.get(picks.at(-1)) <= 0) picks[picks.length - 1] = campaign;
+    return picks;
+  }
+
   function isFreshDeal(candidate) {
     const age = Number(new Date(now)) - Date.parse(candidate.sourcePublishedAt);
     return candidate.purchaseOfferVerification === "discovery_lead" &&
       age >= -300000 && age <= 48 * 3600000 && Number(candidate.purchasePrice) <= 30;
   }
+}
+
+function researchEconomics(find, now) {
+  const sold = find.soldEvidence;
+  if (sold?.status !== "validated" || sold.artistMatchConfirmed === false ||
+      sold.albumMatchConfirmed === false || sold.editionMatchConfirmed === false) return 0;
+  const estimate = evaluateOpportunity(find, {}, now);
+  if (estimate.expectedNetProfit === null || estimate.currencyConversionRequired) return 0;
+  if (estimate.expectedNetProfit >= defaultArbitrageSettings.considerationMinNetProfitDollars &&
+      estimate.roiRatio >= defaultArbitrageSettings.considerationMinRoiRatio) return 1;
+  return estimate.expectedNetProfit < 0 ? -1 : 0;
 }
 
 function sourceBalanced(candidates, limit) {

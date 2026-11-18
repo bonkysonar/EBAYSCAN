@@ -19,3 +19,8 @@ export type RetailDealRadarPayload = {
   sources: { url: string; status: "available" | "error"; reason: string | null }[];
   evidenceScope: "advertised_deals_not_retailer_or_resale_verification";
 };
+
+export type RetailCampaignRadarPayload = Omit<RetailDealRadarPayload, "items" | "evidenceScope"> & {
+  items: { retailer: string; label: string; url: string }[];
+  evidenceScope: "retailer_advertisements";
+};

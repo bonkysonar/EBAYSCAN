@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { learningIdentity } from "./retailLearning.mjs";
 
 // An exclusion is an explicit abstention, NEVER a completed capture or zero demand.
 export function candidateIdentity(find) {
@@ -19,4 +20,25 @@ export function researchSelection(payload) {
     ids.add(row.findId);
   }
   return { included: pool.filter(f => !ids.has(f.id)), excluded: ledger, ids };
+}
+
+// Scheduling hint only. A later run still requires its own sold research or
+// explicit review, including when there are too few alternatives to defer.
+export function recentUnpriceableOffers(previous, now) {
+  const offers = new Map();
+  if (!previous?.researchExclusions?.length || !previous.researchCandidates) return offers;
+  const { excluded } = researchSelection(previous);
+  const byId = new Map(previous.researchCandidates.map(find => [find.id, find]));
+  for (const row of excluded) {
+    const age = Number(new Date(now)) - Date.parse(row.reviewedAt);
+    if (age >= 0 && age < 48 * 3600000)
+      offers.set(row.findId, { identity: row.candidateIdentity, observation: learningIdentity(byId.get(row.findId)).observation });
+  }
+  return offers;
+}
+
+export function unchangedUnpriceableOffer(find, offers) {
+  const prior = offers?.get(find.id);
+  return Boolean(prior && prior.identity === candidateIdentity(find) &&
+    prior.observation === learningIdentity(find).observation);
 }

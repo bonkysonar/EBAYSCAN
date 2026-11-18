@@ -122,6 +122,26 @@ export function isSaleSpecificUrl(value, source = {}) {
   return SALE_PATH_TERMS.test(`${parsed.pathname}${parsed.search}`) || matchesConfiguredSaleRule(parsed, source);
 }
 
+// Only retailer-written, linked offers. A sale-like URL alone is insufficient.
+export function advertisedCollectionLinks(html, pageUrl) {
+  const origin = new URL(pageUrl).origin;
+  const visible = String(html).replace(/<!--[\s\S]*?-->|<(script|style|template|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, "");
+  const links = new Map();
+  for (const anchor of visible.matchAll(/<a\b[^>]*\shref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    const label = cleanText(stripTags(decodeHtmlAttribute(anchor[2]))).replace(/^[|\s]+|[|\s]+$/g, "");
+    if (label.length > 220 || !/\b[1-9]\d?\s*%\s*off\b/i.test(label) ||
+        /\b(?:expired|ended|newsletter|first order|merch only|apparel|shirts?|figurines?|CDs? only)\b/i.test(label)) continue;
+    let url;
+    try { url = new URL(decodeHtmlAttribute(anchor[1]), pageUrl); } catch { continue; }
+    if (url.protocol !== "https:" || url.origin !== origin || url.username || url.password ||
+        !/^\/collections\/[\w-]+\/?$/i.test(url.pathname) ||
+        /(?:^|[-/])(?:apparel|merch|shirts?|figures?|cds?|cassettes?)(?:[-/]|$)/i.test(url.pathname)) continue;
+    url.hash = "";
+    if (!links.has(url.href)) links.set(url.href, { label, url: url.href });
+  }
+  return [...links.values()];
+}
+
 export function discoverSaleLinks(html, pageUrl, maxLinks = 5, source = {}) {
   const page = normalizeHttpUrl(pageUrl);
   if (!page || !html || maxLinks <= 0) return [];

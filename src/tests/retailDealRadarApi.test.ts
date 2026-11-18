@@ -1,11 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRetailDealRadar } from "../server/retailDealRadarApi";
+import { createRetailCampaignRadar, createRetailDealRadar } from "../server/retailDealRadarApi";
 import { SLICKDEALS_FEED_URLS } from "../../scripts/lib/dealFeedDiscovery.mjs";
 
 const now = Date.parse("2026-10-28T20:00:00Z");
 const item = (id: number, title: string, date = "Wed, 28 Oct 2026 12:00:00 GMT") => `<item><title><![CDATA[${title}]]></title><link>https://slickdeals.net/f/${id}-vinyl</link><pubDate>${date}</pubDate><description>Shipping free on $35+</description></item>`;
 const feed = (items: string) => `<rss><channel>${items}</channel></rss>`;
 afterEach(() => vi.useRealTimers());
+
+describe("live retailer campaigns", () => {
+  it("keeps distinct official collection tiers and full terms, and drops stale or external offers", async () => {
+    let clock = now;
+    let offline = false;
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      if (offline || !String(input).includes("udiscovermusic.com")) return new Response("blocked", { status: 403 });
+      return new Response(`<a href="/collections/20-sale">20% off in cart (exclusions apply)</a>
+        <a href="/collections/20-sale">20% off</a><a href="/collections/50-sale"><b>50%</b> off vinyl</a>
+        <a href="https://other.example/collections/sale">80% off</a>
+        <a href="/collections/apparel">70% off</a><script><a href="/collections/old">90% off</a></script>`,
+        { headers: { "content-type": "text/html" } });
+    });
+    const read = createRetailCampaignRadar({ fetchImpl, now: () => clock });
+    const [payload] = await Promise.all([read(), read()]);
+    expect(payload.status).toBe("partial");
+    expect(payload.items.map(item => item.label)).toEqual(["20% off in cart (exclusions apply)", "50% off vinyl"]);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    offline = true;
+    clock += 300000;
+    expect(await read()).toMatchObject({ status: "unavailable", items: [] });
+  });
+});
 
 describe("independent live deal radar", () => {
   it("surfaces both reported physical albums without waiting for research and rejects toys/expired ages", async () => {

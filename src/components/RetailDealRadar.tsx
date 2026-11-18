@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import type { RetailDealRadarPayload } from "../lib/arbitrage/dealRadar";
+import type { RetailCampaignRadarPayload, RetailDealRadarPayload } from "../lib/arbitrage/dealRadar";
 import { publicDiscoveryUrl } from "../../scripts/lib/webSaleDiscovery.mjs";
 
 const REFRESH_MS = 5 * 60_000;
 
-export function RetailDealRadar() {
-  const [payload, setPayload] = useState<RetailDealRadarPayload | null>(null);
+function useRetailRadar<T extends RetailDealRadarPayload | RetailCampaignRadarPayload>(url: string) {
+  const [payload, setPayload] = useState<T | null>(null);
   const [error, setError] = useState(false);
   const [clock, setClock] = useState(Date.now());
   useEffect(() => {
@@ -18,9 +18,9 @@ export function RetailDealRadar() {
       const activeController = controller;
       const timeout = setTimeout(() => activeController.abort(), 12_000);
       try {
-        const response = await fetch("/api/arbitrage/deal-radar", { cache: "no-store", signal: activeController.signal });
+        const response = await fetch(url, { cache: "no-store", signal: activeController.signal });
         if (!response.ok) throw new Error("Unavailable");
-        const result = await response.json() as RetailDealRadarPayload;
+        const result = await response.json() as T;
         if (result.version !== 1 || !["available", "partial", "unavailable"].includes(result.status) || !Array.isArray(result.items) || !Array.isArray(result.sources) || !Number.isFinite(Date.parse(result.expiresAt))) throw new Error("Invalid feed response");
         if (!disposed && controller === activeController) { setPayload(result); setError(false); setClock(Date.now()); }
       } catch {
@@ -35,8 +35,28 @@ export function RetailDealRadar() {
     window.addEventListener("focus", focus);
     document.addEventListener("visibilitychange", visibility);
     return () => { disposed = true; controller?.abort(); clearInterval(refresh); clearInterval(tick); window.removeEventListener("focus", focus); document.removeEventListener("visibilitychange", visibility); };
-  }, []);
-  return <RetailDealRadarView payload={payload} error={error} now={clock} />;
+  }, [url]);
+  return { payload, error, now: clock };
+}
+
+export function RetailDealRadar() {
+  return <RetailDealRadarView {...useRetailRadar<RetailDealRadarPayload>("/api/arbitrage/deal-radar")} />;
+}
+
+export function RetailCampaignRadar() {
+  const { payload, error, now } = useRetailRadar<RetailCampaignRadarPayload>("/api/arbitrage/deal-radar?scope=campaigns");
+  const unavailable = error || (payload && (payload.evidenceScope !== "retailer_advertisements" ||
+    payload.status === "unavailable" || Date.parse(payload.expiresAt) <= now));
+  return <section className="panel" aria-label="Live retailer sales">
+    <h2>Live retailer sales</h2>
+    {unavailable ? <p role="status">Current retailer announcements are unavailable.</p> :
+      !payload ? <p role="status">Checking retailer announcements…</p> : <>
+        <p>Checked {payload.sources.filter(source => source.status === "available").length} of {payload.sources.length} retailer homepages at {new Date(payload.checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Individual pressing, stock and checkout terms still need verification.</p>
+        {payload.items.length ? <ul>{payload.items.filter(item => publicDiscoveryUrl(item.url)).map(item =>
+          <li key={item.url}><strong>{item.retailer}</strong> · <a href={item.url} target="_blank" rel="noreferrer">{item.label}</a></li>
+        )}</ul> : <p>No linked percentage offers appeared on the checked homepages.</p>}
+      </>}
+  </section>;
 }
 
 export function RetailDealRadarView({ payload, error = false, now = Date.now() }: { payload: RetailDealRadarPayload | null; error?: boolean; now?: number }) {

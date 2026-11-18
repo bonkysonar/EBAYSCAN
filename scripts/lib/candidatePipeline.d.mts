@@ -258,7 +258,7 @@ export function sourceMetadataScore(source: RecordCandidateSource): number;
 
 export function selectResearchCandidates<T extends RankableCandidate>(
   candidates: T[],
-  options?: { limit?: number; freshDealShare?: number; uniqueAlbums?: boolean; now?: number | string | Date },
+  options?: { limit?: number; freshDealShare?: number; uniqueAlbums?: boolean; prioritizeRetailSales?: boolean; recentlyBlocked?: (candidate: T) => boolean; now?: number | string | Date },
 ): {
   selected: Array<
     T & {
@@ -275,6 +275,7 @@ export function selectResearchCandidates<T extends RankableCandidate>(
     unprovenDeferredCount: number;
     unusedResearchCapacity: number;
     freshDealSelectedCount: number;
+    previousExclusionsDeferred: number;
     duplicateAlbumDeferredCount: number;
     byDiscoveryLane: Record<string, number>;
   };

@@ -1,4 +1,5 @@
 import { RetailScanStatus } from "./RetailScanStatus";
+import { RetailCampaignRadar } from "./RetailDealRadar";
 import { RetailDiscoveryStatus } from "./RetailDiscoveryStatus";
 import { CampaignRecordResults } from "./CampaignRecordResults";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -339,6 +340,7 @@ export function SiteWideSales() {
         latestMessage.includes("ignored")) ? (
         <div className="warning-box">{latestMessage}</div>
       ) : null}
+      <RetailCampaignRadar />
       <RetailScanStatus payload={latestPayload} />
       <CampaignRecordResults payload={latestPayload} />
 

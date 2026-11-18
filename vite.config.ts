@@ -1,5 +1,5 @@
 import { retailOperations } from "./src/server/retailOperationsApi";
-import { readRetailDealRadar } from "./src/server/retailDealRadarApi";
+import { readRetailRadarRequest } from "./src/server/retailDealRadarApi";
 import { type IncomingMessage, type ServerResponse } from "node:http";
 import react from "@vitejs/plugin-react";
 import { type Plugin } from "vite";
@@ -33,7 +33,7 @@ function ebayLocalApiPlugin(): Plugin {
       server.middlewares.use("/api/arbitrage/deal-radar", async (req, res) => {
         res.setHeader("Cache-Control", "private, no-store");
         if (req.method !== "GET") { sendJson(res, 405, { error: "Method not allowed" }); return; }
-        try { sendJson(res, 200, await readRetailDealRadar()); }
+        try { sendJson(res, 200, await readRetailRadarRequest(req.url)); }
         catch { sendJson(res, 503, { error: "Live deal discovery is temporarily unavailable" }); }
       });
       server.middlewares.use("/api/arbitrage/operations", async (req, res) => {

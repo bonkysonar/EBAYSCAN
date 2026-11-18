@@ -4,7 +4,7 @@ import { verifiedSoldItemIdentity } from "./soldItemIdentity.mjs";
 import { assessSoldCapture, researchQueryKey } from "./soldCaptureQuality.mjs";
 import { ACTIVE_EVIDENCE_FIELDS } from "./activeEvidenceCache.mjs";
 import { isRecordArtworkMerchandiseTitle } from "../../src/lib/arbitrage/marketplaceProductClassification.mjs";
-import { extractEditionIdentity, selfTitledReleaseMismatch, sameDistinctiveVariant } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
+import { extractEditionIdentity, releaseTitleMismatch, sameDistinctiveVariant } from "../../src/lib/arbitrage/activeEbayMatching.mjs";
 import {
   buildEbayProductResearchUrl,
   buildEbayPublicSoldUrl,
@@ -351,7 +351,7 @@ export function productResearchRowMatchScore(find, rowTitleValue) {
   if (/\b(?:lps?|vinyl|records?|albums?)\s+lot\b|\blot\s+(?:\d+|of)\b/i.test(rowTitle)) return 0;
   if (/\b[2-9]\s*lps?\s+vinyl\s*[,;:]/i.test(rowTitle) &&
       (rowTitle.match(/[,;]/g)?.length ?? 0) >= 2) return 0;
-  if (selfTitledReleaseMismatch(find.artist, find.title, rowTitle)) return 0;
+  if (releaseTitleMismatch(find.artist, find.title, rowTitle)) return 0;
   if (
     !rowTitle ||
     NON_RECORD_PATTERN.test(rowTitle) ||

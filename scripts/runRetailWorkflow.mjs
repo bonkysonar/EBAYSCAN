@@ -1,3 +1,4 @@
+import { latestRetailScan } from "./lib/latestRetailScan.mjs";
 import {
   existsSync,
   readFileSync,
@@ -103,7 +104,7 @@ if (!args.has("finish") && !args.has("full") && !standaloneRefresh) {
       month: "2-digit",
       day: "2-digit",
     }).format(new Date());
-    const latest = latestArtifact();
+    const latest = latestRetailScan(dir);
     const localHour = Number(
       new Intl.DateTimeFormat("en-US", {
         timeZone: "America/Los_Angeles",
@@ -356,22 +357,6 @@ function run(command, capture = false) {
     throw error;
   }
   return result;
-}
-function latestArtifact(draftOnly = false, after = 0) {
-  return readdirSync(dir)
-    .filter((name) => /^retail-arbitrage-.*\.json$/.test(name))
-    .flatMap((name) => {
-      try {
-        const payload = JSON.parse(readFileSync(join(dir, name), "utf8"));
-        return (!draftOnly || payload.phase === "scan") &&
-          Date.parse(payload.createdAt) >= after
-          ? [{ ...payload, path: join(dir, name) }]
-          : [];
-      } catch {
-        return [];
-      }
-    })
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
 }
 async function status(state, funnel) {
   if (state !== "failed") delete context.failure;

@@ -1,3 +1,4 @@
+export function advertisedCollectionLinks(html: string, pageUrl: string): Array<{ label: string; url: string }>;
 export type SaleDiscoverySource = {
   baseUrl?: string;
   crawlType?: string;
