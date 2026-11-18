@@ -5,6 +5,7 @@ import { buildProductResearchPlan, productResearchRowMatchScore } from "../../sc
 import { buildActiveSearchProfile, matchActiveListing } from "../lib/arbitrage/activeEbayMatching.mjs";
 import { candidateIdentity, recentUnpriceableOffers, unchangedUnpriceableOffer } from "../../scripts/lib/researchExclusions.mjs";
 import { normalizeResearchTitle } from "../lib/arbitrage/soldResearchLinks.mjs";
+import { slowerSaleWithMargin } from "../lib/arbitrage/decisionList.mjs";
 
 const now = "2026-10-28T18:00:00Z";
 const offer = (id: string, extras: Record<string, unknown> = {}): any => ({
@@ -32,6 +33,20 @@ describe("missed mainstream deal regressions", () => {
     expect(matchActiveListing(String(listing), buildActiveSearchProfile(find)!).matched).toBe(expected);
     expect(productResearchRowMatchScore(find, String(listing)) > 0.68).toBe(expected);
   });
+  it("keeps the complete resolved PJ Harvey title and distinguishes the demo release", () => {
+    const title = "Stories From The City, Stories From The Sea - Demos LP";
+    const find = offer("pj", { artist: "PJ Harvey", title, sourceListingTitle: title, identityStatus: "resolved" });
+    const profile = buildActiveSearchProfile(find)!;
+    expect(profile.primary).toBe(buildProductResearchPlan([find])[0].variants[0].query);
+    expect(matchActiveListing("PJ Harvey 4-Track Demos LP", profile).matched).toBe(false);
+    for (const [listing, accepted] of [
+      ["PJ Harvey Stories From The City Stories From The Sea Vinyl LP", false],
+      ["PJ Harvey Stories From The City Stories From The Sea Demos Vinyl LP", true],
+    ] as const) {
+      expect(matchActiveListing(listing, profile).matched).toBe(accepted);
+      expect(productResearchRowMatchScore(find, listing) > 0.68).toBe(accepted);
+    }
+  });
   it.each([
     "AC/DC: High Voltage (Vinyl w/ AutoRip MP3) $12.99",
     "Talking Heads: Little Creatures (Vinyl LP + MP3 Album) $9.99",
@@ -56,6 +71,27 @@ describe("missed mainstream deal regressions", () => {
 });
 
 describe("finishable daily research cohort", () => {
+  it("reserves a slot for a deep retailer markdown without treating the original price as resale evidence", () => {
+    const discounted = offer("deep", { purchasePrice: 9.99, sourceOriginalPrice: 39.99, shopifyVariantId: "sku",
+      sourceCurrency: "USD", sourceCountry: "US", physicalFormatConfirmed: true, identityStatus: "resolved", available: true });
+    const ordinary = Array.from({ length: 4 }, (_, i) => offer("catalog-" + i, { sourceId: "shop-" + i, candidateQualityScore: 100 }));
+    const picks = selectResearchCandidates([...ordinary, discounted], { limit: 2, prioritizeRetailSales: true, now });
+    expect(picks.selected.map(f => f.id)).toContain("deep");
+    expect(picks.selected.find(f => f.id === "deep")?.expectedNetProfit).toBeUndefined();
+  });
+  it("keeps slow sales with supported margins visible only while both market observations are current", () => {
+    const find = offer("slow", { decision: "REJECT", reasonCodes: ["DEMAND_GATE_FAILED", "SUPPLY_GATE_FAILED"],
+      soldUnits90Days: 2, roiRatio: 0.42, expectedNetProfit: 6.71,
+      soldEvidence: { source: "ebay-product-research", capturedAt: now, velocityEvidence: "verified_window_totals" },
+      activeEvidence: { capturedAt: now }, retailVerification: { status: "verified", checkedAt: now },
+      gates: { activeEvidence: true, soldEvidence: true, matchConfidence: true, purchaseOffer: true } });
+    const checked = Date.parse(now);
+    expect(slowerSaleWithMargin(find, checked)).toBe(true);
+    expect(slowerSaleWithMargin({ ...find, expectedNetProfit: 0.50 }, checked)).toBe(false);
+    expect(slowerSaleWithMargin({ ...find, reasonCodes: ["ECONOMICS_HARD_FAIL"] }, checked)).toBe(false);
+    expect(slowerSaleWithMargin({ ...find, soldUnits90Days: 0 }, checked)).toBe(false);
+    expect(slowerSaleWithMargin(find, checked + 6 * 3600000 + 1)).toBe(false);
+  });
   it("retries an excluded offer when terms change, it ages out, or capacity permits", () => {
     const tried = offer("tried", { candidateQualityScore: 100 });
     const prior = { runId: "old", researchCandidates: [tried], researchExclusions: [{

@@ -1452,11 +1452,28 @@ export function selectResearchCandidates(candidates, {
 
   function selectLane(lane, slots) {
     const picks = sourceBalanced(lane, slots);
-    if (!prioritizeRetailSales || !picks.length || picks.some(c => c.appliedSaleCampaignId)) return picks;
-    const campaign = lane.find(c => c.appliedSaleCampaignId && economics.get(c) >= 0);
-    // Give a priced campaign a research slot without displacing a record
-    // whose observed resale price already supports the consideration floor.
-    if (campaign && economics.get(picks.at(-1)) <= 0) picks[picks.length - 1] = campaign;
+    if (!prioritizeRetailSales || !picks.length) return picks;
+    if (!picks.some(c => c.appliedSaleCampaignId) && economics.get(picks.at(-1)) <= 0) {
+      const campaign = lane.find(c => c.appliedSaleCampaignId && economics.get(c) >= 0);
+      if (campaign) picks[picks.length - 1] = campaign;
+    }
+    if (lane === unproven) {
+      let bestSavings = 0, discounted;
+      for (const candidate of lane) {
+        if (candidate.identityStatus !== "resolved" || !candidate.physicalFormatConfirmed ||
+            candidate.available !== true || candidate.sourceCountry !== "US" || candidate.sourceCurrency !== "USD" ||
+            !candidate.shopifyVariantId || blocked.has(candidate) || economics.get(candidate) < 0) continue;
+        const savings = candidate.sourceOriginalPrice - candidate.purchasePrice;
+        if (candidate.purchasePrice > 0 && candidate.purchasePrice <= 20 && savings >= 15 &&
+            savings >= candidate.purchasePrice && savings > bestSavings) {
+          bestSavings = savings;
+          discounted = candidate;
+        }
+      }
+      // A retailer markdown reserves one investigation; it supplies no resale price.
+      const slot = picks.findLastIndex(c => !c.appliedSaleCampaignId && economics.get(c) <= 0);
+      if (discounted && slot >= 0 && !picks.includes(discounted)) picks[slot] = discounted;
+    }
     return picks;
   }
 

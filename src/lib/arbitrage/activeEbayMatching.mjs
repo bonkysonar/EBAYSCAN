@@ -116,7 +116,7 @@ export function buildActiveSearchProfile(find) {
   const artist = normalizeResearchArtist(
     find.identityStatus === "resolved" ? find.artist : sourceParts.artist || find.artist || "",
   );
-  const rawTitle = find.title && find.title !== rawSourceText
+  const rawTitle = find.title && (find.identityStatus === "resolved" || find.title !== rawSourceText)
     ? find.title : sourceParts.title || find.title || sourceText;
   const primary = buildBaseResearchQuery(artist, dealCoreText(rawTitle));
   const title = normalizeResearchTitle(
@@ -211,9 +211,11 @@ export function releaseTitleMismatch(artist, title, listingTitle) {
   if (!albumWords.length) return false;
   const album = " " + albumWords.join(" ") + " ";
   const listing = " " + words(listingTitle).join(" ") + " ";
+  const withoutArtist = listing.replace(" " + artistWords.join(" ") + " ", " ");
+  if (/\bdemos?\b/.test(album) !== /\bdemos?\b/.test(withoutArtist)) return true;
   const overlapsArtist = albumWords.every(word => artistWords.includes(word)) &&
     artistWords.some(word => !albumWords.includes(word));
-  const release = overlapsArtist ? listing.replace(" " + artistWords.join(" ") + " ", " ") : listing;
+  const release = overlapsArtist ? withoutArtist : listing;
   const position = release.indexOf(album);
   if (position < 0) return overlapsArtist;
   // These suffixes name separate releases, such as Rumours Live or Ella & Louis Again.

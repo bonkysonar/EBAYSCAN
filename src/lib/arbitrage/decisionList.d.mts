@@ -1,4 +1,5 @@
 import type { ArbitrageFind, ArbitrageSettings } from "./types";
+export function slowerSaleWithMargin(find: ArbitrageFind, now?: number, settings?: Partial<ArbitrageSettings>): boolean;
 export function consideration(
   find: ArbitrageFind,
   now?: number,

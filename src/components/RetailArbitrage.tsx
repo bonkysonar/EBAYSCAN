@@ -1,5 +1,6 @@
 import {
   consideration,
+  slowerSaleWithMargin,
   selectDecisionList,
   releaseGroupKey,
   decisionListDiagnostics,
@@ -43,6 +44,7 @@ import { readJsonResponse } from "../lib/http/jsonResponse";
 
 type CandidateQueueFilter =
   | "WORTH"
+  | "SLOW_MARGIN"
   | "A"
   | "AUTOMATIC_BUY"
   | "B"
@@ -118,6 +120,7 @@ const EVALUATION_CLOCK_INTERVAL_MS = 60 * 1000;
 
 const queueOptions: Array<{ label: string; value: CandidateQueueFilter }> = [
   { label: "Worth considering · up to 15 releases", value: "WORTH" },
+  { label: "Positive margin · slow sales", value: "SLOW_MARGIN" },
   { label: "Research candidates", value: "CANDIDATES" },
   { label: "Tier A · verified", value: "A" },
   { label: "Tier B · promising", value: "B" },
@@ -462,6 +465,12 @@ export function RetailArbitrage() {
       ) : null}
       <RetailScanStatus payload={latestPayload} />
       <RetailDealRadar />
+      {queueFilter !== "SLOW_MARGIN" && scoredFinds.some(find =>
+        !find.dismissedAt && !recordOutcomeForFind(feedback, find) && slowerSaleWithMargin(find, evaluationNow, settings)) && (
+        <button type="button" onClick={() => { setSourceFilter("ALL"); setQueueFilter("SLOW_MARGIN"); }}>
+          Show records with positive margins and slow sales
+        </button>
+      )}
 
       <details className="panel retail-diagnostics">
         <summary>
@@ -573,6 +582,7 @@ export function RetailArbitrage() {
           <div className="section-heading seller-table-heading">
             <div>
               <h2>{filterHeading(queueFilter)}</h2>
+              {queueFilter === "SLOW_MARGIN" && <p>Sales support the estimated margin. Recent sales volume or competing listings fall outside your buying limits.</p>}
               <span>
                 {visibleFinds.length} visible of {scoredFinds.length} record
                 candidates
@@ -1795,6 +1805,7 @@ function filterAndSortFinds(
         );
       }
       if (queueFilter === "AUTOMATIC_BUY") return find.decision === "BUY";
+      if (queueFilter === "SLOW_MARGIN") return slowerSaleWithMargin(find, Date.now(), settings);
       if (queueFilter === "EVIDENCE_REVIEW") return find.decision === "REVIEW";
       if (queueFilter === "REJECT")
         return find.candidateTier === "REJECT" || find.decision === "REJECT";

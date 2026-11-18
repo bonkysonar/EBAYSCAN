@@ -332,11 +332,9 @@ const soldIndex = existsSync(SOLD_INDEX_PATH)
 const capturedAt = new Date().toISOString();
 const albumDemandIndex = createAlbumDemandIndex(soldIndex ?? {}, { now: capturedAt });
 const marketplaceResearchPath = resolve("exports/arbitrage-finds/browser-product-research.json");
-const capturedSoldIndex = createCapturedSoldIndex(existsSync(marketplaceResearchPath) ? JSON.parse(readFileSync(marketplaceResearchPath, "utf8")) : {}, capturedAt);
-const marketplaceAlbumDemandIndex = createMarketplaceAlbumDemandIndex(
-  existsSync(marketplaceResearchPath) ? JSON.parse(readFileSync(marketplaceResearchPath, "utf8")) : {},
-  capturedAt,
-);
+const marketplaceCaptures = existsSync(marketplaceResearchPath) ? JSON.parse(readFileSync(marketplaceResearchPath, "utf8")) : {};
+const capturedSoldIndex = createCapturedSoldIndex(marketplaceCaptures, capturedAt);
+const marketplaceAlbumDemandIndex = createMarketplaceAlbumDemandIndex(marketplaceCaptures, capturedAt);
 const browserObservationAssessment = args.get("browserObservations")
   ? assessBrowserRetailObservations(JSON.parse(readFileSync(resolve(args.get("browserObservations")), "utf8")), sourceCatalog, capturedAt)
   : { pages: [], diagnostics: [], summary: { total: 0, accepted: 0, expired: 0, rejected: 0 } };
