@@ -116,7 +116,7 @@ export function buildActiveSearchProfile(find) {
   const artist = normalizeResearchArtist(
     find.identityStatus === "resolved" ? find.artist : sourceParts.artist || find.artist || "",
   );
-  const rawTitle = find.title && find.title !== rawSourceText
+  const rawTitle = find.title && (find.identityStatus === "resolved" || find.title !== rawSourceText)
     ? find.title : sourceParts.title || find.title || sourceText;
   const primary = buildBaseResearchQuery(artist, dealCoreText(rawTitle));
   const title = normalizeResearchTitle(
@@ -200,6 +200,28 @@ export function selfTitledReleaseMismatch(artist, title, listingTitle) {
   return tokens(listingTitle).some(token => !artistTokens.has(token) && !metadata.has(token) && !/^\d+(?:x?lp|g)?$/.test(token));
 }
 
+export function releaseTitleMismatch(artist, title, listingTitle) {
+  if (selfTitledReleaseMismatch(artist, title, listingTitle)) return true;
+  // An artist credit can supply every word in an album title without naming
+  // that album (e.g. a compilation credited to Ella Fitzgerald & Louis Armstrong).
+  const words = value => String(value ?? "").normalize("NFKD").toLowerCase()
+    .replace(/\p{M}/gu, "").match(/[\p{L}\p{N}]+/gu)?.filter(word => word !== "and") ?? [];
+  const artistWords = words(artist);
+  const albumWords = words(normalizeResearchTitle(title));
+  if (!albumWords.length) return false;
+  const album = " " + albumWords.join(" ") + " ";
+  const listing = " " + words(listingTitle).join(" ") + " ";
+  const withoutArtist = listing.replace(" " + artistWords.join(" ") + " ", " ");
+  if (/\bdemos?\b/.test(album) !== /\bdemos?\b/.test(withoutArtist)) return true;
+  const overlapsArtist = albumWords.every(word => artistWords.includes(word)) &&
+    artistWords.some(word => !albumWords.includes(word));
+  const release = overlapsArtist ? withoutArtist : listing;
+  const position = release.indexOf(album);
+  if (position < 0) return overlapsArtist;
+  // These suffixes name separate releases, such as Rumours Live or Ella & Louis Again.
+  return /^(?:again|live)(?: |$)/.test(release.slice(position + album.length));
+}
+
 export function matchActiveListing(title, profile) {
   const listingTitle = cleanActiveSearchText(title);
   if (
@@ -238,7 +260,7 @@ export function matchActiveListing(title, profile) {
   const hasRequiredNumbers = requiredNumbers.every((token) => listingTokens.has(token));
   const reasons = [];
 
-  if (selfTitledReleaseMismatch(profile.artist, profile.title, listingTitle)) reasons.push("release-title-mismatch");
+  if (releaseTitleMismatch(profile.artist, profile.title, listingTitle)) reasons.push("release-title-mismatch");
 
   if (matchedTitleTokens < requiredTitleMatches || !hasRequiredNumbers) reasons.push("release-title-mismatch");
   // A one-word album named Blue/Red cannot borrow a color suffix from another

@@ -1,3 +1,4 @@
+import { TopDealsPage } from "./components/TopDeals";
 import { useEffect, useMemo, useState } from "react";
 import { BulkBuyLedger } from "./components/BulkBuyLedger";
 import { CandidateListingList } from "./components/CandidateListingList";
@@ -343,7 +344,8 @@ export function App() {
   const isBulkBuyRoute = route === "bulkBuy";
   const isVinylLotRoute = route === "vinylLots";
   const isVinylLotArtistsRoute = route === "vinylLotArtists";
-  const pageTitle = isBulkBuyRoute
+  const dealsRoute = ["arbitrage", "siteSales", "topDeals"].includes(route);
+  const pageTitle = route === "topDeals" ? "Top deals" : route === "arbitrage" ? "Retail arbitrage" : route === "siteSales" ? "Site-wide sales" : isBulkBuyRoute
     ? "Bulk Buy Scanner"
     : isVinylLotRoute
       ? "Vinyl Lot Finder"
@@ -363,9 +365,10 @@ export function App() {
       <header className="app-header">
         <div>
           <h1>{pageTitle}</h1>
-          <p>{pageSubtitle}</p>
+          {!dealsRoute && <p>{pageSubtitle}</p>}
         </div>
         <nav className="app-nav" aria-label="App pages">
+          <a className={route === "topDeals" ? "active" : ""} href="#/top-deals">Top deals</a>
           <a className={route === "scanner" ? "active" : ""} href="#/scanner">
             Scanner
           </a>
@@ -421,7 +424,9 @@ export function App() {
         ) : null}
       </header>
 
-      {route === "vinylLots" ? (
+      {route === "topDeals" ? (
+        <TopDealsPage />
+      ) : route === "vinylLots" ? (
         <VinylLotFinder />
       ) : route === "vinylLotArtists" ? (
         <VinylLotArtists />
@@ -520,6 +525,7 @@ export function App() {
 }
 
 type AppRoute =
+  | "topDeals"
   | "arbitrage"
   | "bulkBuy"
   | "scanner"
@@ -529,6 +535,7 @@ type AppRoute =
   | "vinylLots";
 
 function routeFromHash(): AppRoute {
+  if (["", "#/", "#/top-deals"].includes(window.location.hash)) return "topDeals";
   if (window.location.hash === "#/seller-prices") return "seller";
   if (window.location.hash.split("?")[0] === "#/retail-arbitrage")
     return "arbitrage";

@@ -1,4 +1,5 @@
 import { RetailScanStatus } from "./RetailScanStatus";
+import { SalePicks } from "./TopDeals";
 import { RetailDiscoveryStatus } from "./RetailDiscoveryStatus";
 import { CampaignRecordResults } from "./CampaignRecordResults";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -308,19 +309,8 @@ export function SiteWideSales() {
 
   return (
     <section className="site-sales-page">
-      <div className="seller-hero panel compact-seller-hero site-sale-hero">
-        <div>
-          <span className="eyebrow">
-            Campaign lifecycle, not a repeated snapshot
-          </span>
-          <h2>Site-wide Sales</h2>
-          <p>
-            New and changed campaigns lead, while every active ongoing and
-            evergreen offer remains open below. Page, sort, and collection-tag
-            duplicates are combined without merging distinct offers from the
-            same retailer.
-          </p>
-        </div>
+      <SalePicks campaigns={normalizedSales.campaigns} feedback={feedback} />
+      <div className="picks-tools">
         <div className="seller-actions">
           <button
             type="button"

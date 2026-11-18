@@ -1,7 +1,11 @@
 import { discoverSlickdealsFeeds } from "../../scripts/lib/dealFeedDiscovery.mjs";
 import { splitDealArtistTitle } from "../../scripts/lib/dealSourceAdapters.mjs";
 import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
-import type { RetailDealRadarItem, RetailDealRadarPayload } from "../lib/arbitrage/dealRadar";
+import { normalizeShopifyProducts } from "../../scripts/lib/shopifyCatalog.mjs";
+import { shopifyIdentity } from "../../scripts/lib/retailIdentity.mjs";
+import type { RetailCampaignRadarPayload, RetailDealRadarItem, RetailDealRadarPayload, RetailMarkdownPayload } from "../lib/arbitrage/dealRadar";
+import { getActiveRetailSources } from "../lib/arbitrage/vinylShopSources.js";
+import { advertisedCollectionLinks } from "../../scripts/lib/retailSaleDiscovery.mjs";
 
 const CACHE_MS = 5 * 60_000;
 const FETCH_TIMEOUT_MS = 8_000;
@@ -22,7 +26,7 @@ export function createRetailDealRadar({ fetchImpl = fetch, now = Date.now }: { f
   };
 
   async function update(time: number): Promise<RetailDealRadarPayload> {
-    const result = await discoverSlickdealsFeeds({ now: time, fetchPage: fetchFeed });
+    const result = await discoverSlickdealsFeeds({ now: time, fetchPage: url => fetchPublicPage(url, fetchImpl, "rss") });
     const items: RetailDealRadarItem[] = [];
     for (const deal of result.outcomes) {
       if (deal.status !== "discovery_lead" || !deal.price || deal.price < 2 || deal.price > 35 || !deal.publishedAt || !deal.discussionUrl) continue;
@@ -60,7 +64,45 @@ export function createRetailDealRadar({ fetchImpl = fetch, now = Date.now }: { f
     return cached;
   }
 
-  async function fetchFeed(url: string): Promise<{ url: string; html: string }> {
+}
+
+export function createRetailCampaignRadar({ fetchImpl = fetch, now = Date.now } = {}) {
+  const storeIds = new Set(["sound-of-vinyl", "udiscover-music", "verve-store", "blue-note-store", "capitol-records-store",
+    "republic-records-store", "matador-records", "lunchbox-records", "rarewaves"]);
+  const stores = getActiveRetailSources().filter(store => storeIds.has(store.id) && !store.browserObservationOnly);
+  let cached: RetailCampaignRadarPayload | null = null;
+  let pending: Promise<RetailCampaignRadarPayload> | null = null;
+  return async function read() {
+    const time = now();
+    if (cached && Date.parse(cached.expiresAt) > time) return cached;
+    pending ??= update(time).finally(() => { pending = null; });
+    return pending;
+  };
+
+  async function update(time: number): Promise<RetailCampaignRadarPayload> {
+    const results = await Promise.all(stores.map(async store => {
+      const url = new URL("/", store.baseUrl).href;
+      try {
+        const { html } = await fetchPublicPage(url, fetchImpl, "html");
+        const items = advertisedCollectionLinks(html, url).slice(0, 8)
+          .map(link => ({ ...link, retailer: store.displayName }));
+        return { items, source: { url, status: "available" as const, reason: null } };
+      } catch {
+        return { items: [], source: { url, status: "error" as const, reason: "Retailer homepage unavailable" } };
+      }
+    }));
+    const sources = results.map(result => result.source);
+    const reached = sources.filter(source => source.status === "available").length;
+    cached = {
+      version: 1, checkedAt: new Date(time).toISOString(), expiresAt: new Date(time + CACHE_MS).toISOString(),
+      status: !reached ? "unavailable" : reached === sources.length ? "available" : "partial",
+      items: results.flatMap(result => result.items), sources, evidenceScope: "retailer_advertisements",
+    };
+    return cached;
+  }
+}
+
+async function fetchPublicPage(url: string, fetchImpl: typeof fetch, type: "rss" | "html" | "json"): Promise<{ url: string; html: string }> {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -72,18 +114,20 @@ export function createRetailDealRadar({ fetchImpl = fetch, now = Date.now }: { f
     try {
       return await Promise.race([timeout, (async () => {
         const response = await fetchImpl(url, { signal: controller.signal, redirect: "error", headers: {
-          Accept: "application/rss+xml, application/xml, text/xml;q=0.9",
-          "User-Agent": "RecordScanner/1.0 (public RSS reader)",
+          Accept: type === "rss" ? "application/rss+xml, application/xml, text/xml;q=0.9" : type === "json" ? "application/json" : "text/html",
+          "User-Agent": "RecordScanner/1.0 (public sale discovery)",
         } });
         if (!response.ok) throw new Error(`Publisher HTTP ${response.status}`);
         if (Number(response.headers.get("content-length") ?? 0) > MAX_FEED_BYTES) throw new Error("Publisher feed too large");
         const html = await readBoundedFeed(response);
+        if (type === "html" && (!/text\/html/i.test(response.headers.get("content-type") ?? "") ||
+            !/<a\s/i.test(html) || /<title[^>]*>\s*(?:just a moment|access denied|challenge|verify you are human)/i.test(html)))
+          throw new Error("Retailer homepage unavailable");
         return { url: response.url || url, html };
       })()]);
     } finally {
       if (timer) clearTimeout(timer);
     }
-  }
 }
 
 async function readBoundedFeed(response: Response): Promise<string> {
@@ -111,3 +155,66 @@ function freshItems(payload: RetailDealRadarPayload, now: number): RetailDealRad
 }
 
 export const readRetailDealRadar = createRetailDealRadar();
+export const readRetailCampaignRadar = createRetailCampaignRadar();
+
+export function createMarkdownRadar(campaigns = readRetailCampaignRadar, fetchImpl = fetch, now = Date.now) {
+  let cached: RetailMarkdownPayload | null = null;
+  let pending: Promise<RetailMarkdownPayload> | null = null;
+  return async () => {
+    if (cached && Date.parse(cached.expiresAt) > now()) return cached;
+    pending ??= update().finally(() => { pending = null; });
+    return pending;
+  };
+
+  async function update(): Promise<RetailMarkdownPayload> {
+    const offers = await campaigns();
+    const stores = getActiveRetailSources().filter(store => store.country === "US" &&
+      store.crawlType === "shopify-store" && !store.browserObservationOnly);
+    const results = await Promise.all(stores.flatMap(store => {
+      const origin = new URL(store.baseUrl).origin;
+      const collection = offers.items.find(item => item.retailer === store.displayName &&
+        new URL(item.url).origin === origin && /^\/collections\/[\w-]+\/?$/.test(new URL(item.url).pathname));
+      if (!collection) return [];
+      const url = new URL(collection.url).origin + new URL(collection.url).pathname.replace(/\/$/, "") + "/products.json?limit=50";
+      return [readCollection(store, origin, url)];
+    }));
+    const sources = results.map(result => result.source);
+    const reached = sources.filter(source => source.status === "available").length;
+    const time = now();
+    cached = { version: 1, checkedAt: new Date(time).toISOString(), expiresAt: new Date(time + CACHE_MS).toISOString(),
+      status: !reached ? "unavailable" : reached === sources.length ? "available" : "partial",
+      sources, items: results.flatMap(result => result.items), evidenceScope: "in_stock_retail_markdowns" };
+    return cached;
+  }
+
+  async function readCollection(store: ReturnType<typeof getActiveRetailSources>[number], origin: string, url: string) {
+    const items: RetailMarkdownPayload["items"] = [];
+    try {
+      const [catalog, cart] = await Promise.all([fetchPublicPage(url, fetchImpl, "json"), fetchPublicPage(origin + "/cart.js", fetchImpl, "json")]);
+      const { products } = JSON.parse(catalog.html);
+      if (JSON.parse(cart.html).currency !== "USD" || !Array.isArray(products)) throw new Error("Unverified catalog");
+      const records = normalizeShopifyProducts({ products, origin, currency: "USD", source: { id: store.id, name: store.displayName },
+        assessment: assessRecordCandidate });
+      for (const row of records) {
+        const variant = row.product.variants.find((v: { id: unknown }) => v.id === row.variantId);
+        if (variant?.available !== true || !row.variantId || row.currency !== "USD" || !(row.price > 0) || !row.compareAtPrice ||
+          !/^[\w-]+$/.test(row.handle) || /\b(?:box[ -]?set|bundle|pre[ -]?order|vinyl lot)\b/i.test(row.listingTitle)) continue;
+        const identity = shopifyIdentity(row.product, variant, store);
+        if (identity.preorder || identity.identityStatus !== "resolved" || !identity.physicalFormatConfirmed) continue;
+        items.push({ artist: identity.artist, title: identity.title, url: row.productUrl, retailer: store.displayName, price: row.price, compareAt: row.compareAtPrice });
+      }
+      return { items, source: { url, status: "available" as const, reason: null } };
+    } catch {
+      return { items: [], source: { url, status: "error" as const, reason: "Retailer catalog or USD prices unavailable" } };
+    }
+  }
+}
+
+const readMarkdownRadar = createMarkdownRadar();
+
+export function readRetailRadarRequest(requestUrl = "/") {
+  const scope = new URL(requestUrl, "http://localhost").searchParams.get("scope");
+  if (scope === "campaigns") return readRetailCampaignRadar();
+  if (scope === "markdowns") return readMarkdownRadar();
+  return readRetailDealRadar();
+}

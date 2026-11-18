@@ -5,6 +5,10 @@ import { retailEligibility } from "./lib/retailIdentity.mjs";
 import { resolveRetailBarcodeIdentity, RETAIL_BARCODE_IDENTITY_VERSION } from "./lib/retailBarcodeIdentity.mjs";
 import { beginResearchWrite } from "./lib/retailResearchSession.mjs";
 import { repairRetailCandidateIdentity } from "./lib/retailIdentityRepairs.mjs";
+import { researchSelection } from "./lib/researchExclusions.mjs";
+import { verifyRetailOffers } from "./lib/retailOfferVerification.mjs";
+import { resetPressingActiveEvidence, resetPressingSoldEvidence } from "./lib/productResearchCuration.mjs";
+import { createPoliteFetcher } from "./lib/politeHttp.mjs";
 
 beginResearchWrite();
 // Read-only API repair for the retained research pool. A listing's promotional
@@ -19,9 +23,29 @@ const now = Date.now();
 const browserPath = resolve('exports/arbitrage-finds/browser-source-observations.json');
 const browserCaptures = existsSync(browserPath) ? JSON.parse(readFileSync(browserPath, 'utf8')) : {};
 let localRepairs = 0;
+// Shopify's catalog can omit a barcode that the exact variant supplies. Resolve
+// it before market research so final checkout verification can compare like with like.
+const missingBarcodes = researchSelection(payload).included.filter(find =>
+  find.shopifyVariantId && !find.barcode && find.identityStatus === "resolved" && retailEligibility(find).eligible);
+const pressingUpdates = new Map();
+if (missingBarcodes.length) {
+  const fetchRetail = createPoliteFetcher({ maxConcurrency: 2, minHostDelayMs: 1200, maxRetries: 0, requestTimeoutMs: 10000 });
+  const verified = await verifyRetailOffers(missingBarcodes, async url => {
+    const response = await fetchRetail(url, { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    return response.json();
+  }, { concurrency: 2 });
+  for (const find of verified) {
+    if (find.retailVerification?.status === "verified" && find.barcode)
+      pressingUpdates.set(find.id, { barcode: find.barcode, shopifyVariantTitle: find.shopifyVariantTitle,
+        retailEditionText: find.retailEditionText, retailCatalogNumber: find.retailCatalogNumber });
+  }
+}
 for (const rows of [pool, ...(pool === payload.finds ? [] : [payload.finds ?? []])]) {
   for (let index = 0; index < rows.length; index++) {
-    const repaired = repairRetailCandidateIdentity(rows[index], browserCaptures, new Date(now));
+    const pressing = pressingUpdates.get(rows[index].id);
+    const candidate = pressing ? { ...resetPressingActiveEvidence(resetPressingSoldEvidence(rows[index])), ...pressing } : rows[index];
+    const repaired = repairRetailCandidateIdentity(candidate, browserCaptures, new Date(now));
     if (JSON.stringify(repaired) !== JSON.stringify(rows[index])) { rows[index] = repaired; localRepairs++; }
   }
 }

@@ -287,7 +287,7 @@ function cleanResearchText(value) {
   return String(value ?? "")
     .replace(/[\u2013\u2014]/g, " ")
     .replace(/[^\p{L}\p{N}&'./\s-]/gu, " ")
-    .replace(/(?:\s+-)+\s*$/g, " ")
+    .replace(/(?:\s+-+)+\s*$/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

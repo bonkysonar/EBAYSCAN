@@ -171,7 +171,7 @@ export function splitDealArtistTitle(rawTitle) {
       .replace(/^\$\s*[0-9][0-9,.]*\*?\s+(?:Amazon|Walmart|Target)(?:\.com)?\s*[:|–—-]?\s+/i, "")
       .replace(/^\$\s*[0-9][0-9,.]*\*?\s*\|\s*/, "")
       .replace(/\s+(?:@|[-–—])?\s*\$\s*[0-9][0-9,.]*(?:\s.*)?$/i, "")
-      .replace(/\s+[-–—]\s*$/, "")
+      .replace(/\s+[-–—]+\s*$/, "")
       .replace(/\s+(?:at|@)\s+(?:Amazon|Walmart|Target)(?:\.com)?\s*$/i, "")
       .replace(/\s*\|\s*direct\b.*$/i, ""),
   );

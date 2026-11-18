@@ -12,6 +12,21 @@ function meetsConsiderationMargin(find, settings) {
     find.roiRatio >= minimum("considerationMinRoiRatio");
 }
 
+export function slowerSaleWithMargin(find, now = Date.now(), settings = {}) {
+  const fresh = value => {
+    const age = Number(now) - Date.parse(value);
+    return age >= -300000 && age <= 6 * 3600000;
+  };
+  return find.decision === "REJECT" && Boolean(find.reasonCodes?.length) &&
+    find.reasonCodes.every(code => ["DEMAND_GATE_FAILED", "SUPPLY_GATE_FAILED"].includes(code)) &&
+    retailEligibility(find).eligible && !find.learningSuppressed && !find.currencyConversionRequired &&
+    find.retailVerification?.status === "verified" && fresh(find.retailVerification.checkedAt) &&
+    find.soldEvidence?.source === "ebay-product-research" && fresh(find.soldEvidence.capturedAt) &&
+    find.soldEvidence.velocityEvidence === "verified_window_totals" && find.soldUnits90Days > 0 &&
+    fresh(find.activeEvidence?.capturedAt) && find.gates?.activeEvidence === true && find.gates.soldEvidence === true &&
+    find.gates.matchConfidence && find.gates.purchaseOffer && meetsConsiderationMargin(find, settings);
+}
+
 function verifiedAnnualUnits(find, now) {
   const evidence = find.soldEvidence;
   const window = evidence?.observedWindows?.[365];

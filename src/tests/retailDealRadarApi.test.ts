@@ -1,11 +1,67 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRetailDealRadar } from "../server/retailDealRadarApi";
+import { createMarkdownRadar, createRetailCampaignRadar, createRetailDealRadar } from "../server/retailDealRadarApi";
+import { advertisedCollectionLinks } from "../../scripts/lib/retailSaleDiscovery.mjs";
 import { SLICKDEALS_FEED_URLS } from "../../scripts/lib/dealFeedDiscovery.mjs";
 
 const now = Date.parse("2026-10-28T20:00:00Z");
 const item = (id: number, title: string, date = "Wed, 28 Oct 2026 12:00:00 GMT") => `<item><title><![CDATA[${title}]]></title><link>https://slickdeals.net/f/${id}-vinyl</link><pubDate>${date}</pubDate><description>Shipping free on $35+</description></item>`;
 const feed = (items: string) => `<rss><channel>${items}</channel></rss>`;
 afterEach(() => vi.useRealTimers());
+
+describe("live retailer campaigns", () => {
+  it("connects matching named sale headings and accepts explicit storewide announcements", () => {
+    const html = `<h2>Up to 50% off The Opener</h2></div><div><a href="/collections/opener">Shop The Opener</a>
+      <h2>Up to 70% off Sale Vinyl</h2><a href="/collections/toys">Shop Toys</a>
+      <div class="announcement-bar__message "><p>15% off (almost) everything with code &#39;VINYL&#39; at checkout <button>More</button></p></div>`;
+    expect(advertisedCollectionLinks(html, "https://records.example/")).toEqual([
+      { url: "https://records.example/collections/opener", label: "Up to 50% off The Opener" },
+      { url: "https://records.example/", label: "15% off (almost) everything with code 'VINYL' at checkout" },
+    ]);
+  });
+
+  it("uses in-stock USD markdowns on exact physical variants and expires the cached price", async () => {
+    let clock = now;
+    let currency = "USD";
+    const url = "https://store.bluenote.com/collections/sale";
+    const campaigns = createRetailCampaignRadar({ now: () => clock, fetchImpl: async input => String(input).includes("bluenote.com")
+      ? new Response('<a href="/collections/sale">50% off vinyl</a>', { headers: { "content-type": "text/html" } })
+      : new Response("", { status: 404 }) });
+    const variant = { id: 20, title: "Vinyl LP", price: "15", compare_at_price: "30", available: true };
+    const product = { title: "Artist - Summer Vinyl LP", product_type: "Vinyl LP", handle: "artist-summer-vinyl", vendor: "Artist",
+      variants: [variant, { ...variant, id: 21, available: false }, { ...variant, id: 22, compare_at_price: "15" }] };
+    const fetchImpl = vi.fn(async input => Response.json(String(input).endsWith("/cart.js") ? { currency } : { products: [product] }));
+    const read = createMarkdownRadar(campaigns, fetchImpl, () => clock);
+    const [payload] = await Promise.all([read(), read()]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(payload.sources[0].url).toBe(url + "/products.json?limit=50");
+    expect(payload.items).toHaveLength(1);
+    expect(payload.items[0]).toMatchObject({ price: 15, compareAt: 30, url: "https://store.bluenote.com/products/artist-summer-vinyl?variant=20" });
+    clock += 300000;
+    currency = "CAD";
+    expect(await read()).toMatchObject({ status: "unavailable", items: [] });
+  });
+  it("keeps distinct official collection tiers and full terms, and drops stale or external offers", async () => {
+    let clock = now;
+    let offline = false;
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      if (offline || !String(input).includes("udiscovermusic.com")) return new Response("blocked", { status: 403 });
+      return new Response(`<a href="/collections/20-sale">20% off in cart (exclusions apply)</a>
+        <a href="/collections/20-sale">20% off</a><a href="/collections/50-sale"><b>50%</b> off vinyl</a>
+        <a href="https://other.example/collections/sale">80% off</a>
+        <a href="/collections/apparel">70% off</a><script><a href="/collections/old">90% off</a></script>`,
+        { headers: { "content-type": "text/html" } });
+    });
+    const read = createRetailCampaignRadar({ fetchImpl, now: () => clock });
+    const [payload] = await Promise.all([read(), read()]);
+    expect(payload.status).toBe("partial");
+    expect(payload.items.map(item => item.label)).toEqual(["20% off in cart (exclusions apply)", "50% off vinyl"]);
+    expect(fetchImpl).toHaveBeenCalledTimes(payload.sources.length);
+    expect(payload.sources.length).toBeGreaterThanOrEqual(5);
+    offline = true;
+    clock += 300000;
+    expect(await read()).toMatchObject({ status: "unavailable", items: [] });
+  });
+});
 
 describe("independent live deal radar", () => {
   it("surfaces both reported physical albums without waiting for research and rejects toys/expired ages", async () => {

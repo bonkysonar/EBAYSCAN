@@ -344,7 +344,8 @@ describe("arbitrage pages", () => {
       await flushAsyncWork();
     });
     expect(container?.textContent).toContain("Research Candidate");
-    expect(container?.textContent).not.toContain("Promising Candidate");
+    expect(container?.querySelector(".arbitrage-find-row")?.textContent).not.toContain("Promising Candidate");
+    expect(container?.querySelector(".picks-albums")?.textContent).toContain("Promising Candidate");
     expect(container?.textContent).toContain("No recorded album demand yet");
     expect(container?.textContent).toContain("lower research priority until purchases are verified");
   });

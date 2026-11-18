@@ -1,4 +1,6 @@
 import { applyRetailLearning } from "./lib/retailLearning.mjs";
+import { latestRetailScan } from "./lib/latestRetailScan.mjs";
+import { recentUnpriceableOffers, unchangedUnpriceableOffer } from "./lib/researchExclusions.mjs";
 import { beginResearchWrite } from "./lib/retailResearchSession.mjs";
 import { publicationRequest } from "./lib/retailPublicationClient.mjs";
 import { discoverVinylPriceDrop } from "./lib/vinylPriceDropDiscovery.mjs";
@@ -23,7 +25,6 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -60,6 +61,7 @@ import { normalizeSoldText } from "./lib/soldHistoryAggregation.mjs";
 import {
   dedupeSaleCampaigns,
   discoverSaleLinks,
+  advertisedCollectionLinks,
   extractPromoCode,
   hasBogoOfferSignal,
   hasCoherentSaleClaim,
@@ -330,11 +332,9 @@ const soldIndex = existsSync(SOLD_INDEX_PATH)
 const capturedAt = new Date().toISOString();
 const albumDemandIndex = createAlbumDemandIndex(soldIndex ?? {}, { now: capturedAt });
 const marketplaceResearchPath = resolve("exports/arbitrage-finds/browser-product-research.json");
-const capturedSoldIndex = createCapturedSoldIndex(existsSync(marketplaceResearchPath) ? JSON.parse(readFileSync(marketplaceResearchPath, "utf8")) : {}, capturedAt);
-const marketplaceAlbumDemandIndex = createMarketplaceAlbumDemandIndex(
-  existsSync(marketplaceResearchPath) ? JSON.parse(readFileSync(marketplaceResearchPath, "utf8")) : {},
-  capturedAt,
-);
+const marketplaceCaptures = existsSync(marketplaceResearchPath) ? JSON.parse(readFileSync(marketplaceResearchPath, "utf8")) : {};
+const capturedSoldIndex = createCapturedSoldIndex(marketplaceCaptures, capturedAt);
+const marketplaceAlbumDemandIndex = createMarketplaceAlbumDemandIndex(marketplaceCaptures, capturedAt);
 const browserObservationAssessment = args.get("browserObservations")
   ? assessBrowserRetailObservations(JSON.parse(readFileSync(resolve(args.get("browserObservations")), "utf8")), sourceCatalog, capturedAt)
   : { pages: [], diagnostics: [], summary: { total: 0, accepted: 0, expired: 0, rejected: 0 } };
@@ -523,6 +523,8 @@ const researchSelection =
         {
           limit: researchPoolProductLimit,
           freshDealShare: 1 / 3,
+          prioritizeRetailSales: true,
+          recentlyBlocked: find => unchangedUnpriceableOffer(find, previousScanState.recentUnpriceable),
           uniqueAlbums: true,
           now: capturedAt,
         },
@@ -583,6 +585,8 @@ let payload = {
     selected: researchProductFinds.length,
     deferred: Math.max(0, enrichedProducts.length - researchProductFinds.length),
     freshDealSelected: researchSelection.diagnostics.freshDealSelectedCount ?? 0,
+    campaignSelected: researchProductFinds.filter(find => find.appliedSaleCampaignId).length,
+    previousExclusionsDeferred: researchSelection.diagnostics.previousExclusionsDeferred ?? 0,
     limit: Number.isFinite(researchPoolProductLimit) ? researchPoolProductLimit : null,
   },
   discoveryAudit: webDiscovery,
@@ -2255,14 +2259,16 @@ async function fetchSourcePages(source, options = {}) {
     }
   }
 
-  const discoveredUrls = [];
+  const discoveredUrls = pages
+    .filter(page => new URL(page.url).pathname === "/")
+    .flatMap(page => advertisedCollectionLinks(page.html, page.url).map(link => link.url));
   for (const page of pages) {
     discoveredUrls.push(
       ...discoverSaleLinks(page.html, page.url, maxDiscoveredSalePages, source),
     );
   }
 
-  for (const url of [...new Set(discoveredUrls)].slice(
+  for (const url of [...new Set(discoveredUrls)].filter(url => !attempted.has(url) && !resolved.has(url)).slice(
     0,
     maxDiscoveredSalePages,
   )) {
@@ -3594,30 +3600,8 @@ function saleFingerprint(source, rawSignal, url, discountPercent, scope) {
 
 function loadPreviousScanState(outputDir, previousPath) {
   const preferredUrls = new Map();
-  if (!existsSync(outputDir))
-    return { preferredUrls, saleCampaignLedger: null };
-
-  let latest = null;
-  for (const fileName of previousPath ? [resolve(previousPath)] : readdirSync(outputDir)) {
-    if (!previousPath && !/^retail-arbitrage-.*\.json$/i.test(fileName)) continue;
-    try {
-      const payload = JSON.parse(
-        readFileSync(previousPath ? fileName : join(outputDir, fileName), "utf8"),
-      );
-      const createdAtMs = new Date(payload.createdAt ?? 0).getTime();
-      if (
-        !Number.isFinite(createdAtMs) ||
-        (latest && createdAtMs <= latest.createdAtMs)
-      )
-        continue;
-      latest = { createdAtMs, payload };
-    } catch {
-      // Ignore incomplete or unrelated export files.
-    }
-  }
-
-  if (previousPath && !latest) throw new Error(`Cannot read requested previous scan: ${previousPath}`);
-  for (const report of latest?.payload?.sourceReports ?? []) {
+  const latest = previousPath ? JSON.parse(readFileSync(resolve(previousPath), "utf8")) : latestRetailScan(outputDir);
+  for (const report of latest?.sourceReports ?? []) {
     if (!report?.id) continue;
     if (report.preferredUrl) {
       preferredUrls.set(report.id, report.preferredUrl);
@@ -3633,9 +3617,8 @@ function loadPreviousScanState(outputDir, previousPath) {
 
   return {
     preferredUrls,
-    saleCampaignLedger: latest?.payload
-      ? saleCampaignLedgerFromPayload(latest.payload)
-      : null,
+    saleCampaignLedger: latest ? saleCampaignLedgerFromPayload(latest) : null,
+    recentUnpriceable: recentUnpriceableOffers(latest, capturedAt),
   };
 }
 
