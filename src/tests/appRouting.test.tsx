@@ -20,6 +20,31 @@ afterEach(() => {
 });
 
 describe("App routing", () => {
+  it("opens the two shortlists on the homepage even when published research is unavailable", async () => {
+    const stamp = new Date().toISOString();
+    const common = { version: 1, status: "available", sources: [], checkedAt: stamp, expiresAt: new Date(Date.now() + 300000).toISOString() };
+    const items = Array.from({ length: 7 }, (_, i) => ({ artist: "Artist " + i, title: "Release " + i,
+      retailer: "Shop " + i, url: "https://store.example/products/release-" + i, price: 10 + i, compareAt: 30 }));
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("latest")) return new Response("unavailable", { status: 503 });
+      if (url.includes("markdowns")) return Response.json({ ...common, evidenceScope: "in_stock_retail_markdowns", items: [...items, items[0]] });
+      if (url.includes("campaigns")) return Response.json({ ...common, evidenceScope: "retailer_advertisements",
+        items: [...items, items[0]].map((item, i) => ({ ...item, label: i === 0 ? "15% off sitewide with code VINYL" : "Up to 50% off selected albums" })) });
+      return Response.json({ ...common, evidenceScope: "advertised_deals_not_retailer_or_resale_verification", items: [] });
+    }));
+    renderApp("");
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(container?.querySelector("h1")?.textContent).toBe("Top deals");
+    const albums = container?.querySelectorAll(".picks-albums li");
+    const sales = container?.querySelectorAll(".picks-sales li");
+    expect(albums).toHaveLength(5);
+    expect(albums?.[0].textContent).toContain("resale unverified");
+    expect(albums?.[0].querySelector("a")?.href).toBe(items[0].url);
+    expect(sales).toHaveLength(5);
+    expect(sales?.[0].textContent).toContain("Storewide");
+    expect(sales?.[0].textContent).toContain("code VINYL");
+    expect(container?.textContent).toContain("published research is unavailable");
+  });
   it("opens Vinyl Lots as an isolated page", async () => {
     renderApp("#/vinyl-lots");
 

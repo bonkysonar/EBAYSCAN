@@ -135,9 +135,23 @@ export function advertisedCollectionLinks(html, pageUrl) {
     try { url = new URL(decodeHtmlAttribute(anchor[1]), pageUrl); } catch { continue; }
     if (url.protocol !== "https:" || url.origin !== origin || url.username || url.password ||
         !/^\/collections\/[\w-]+\/?$/i.test(url.pathname) ||
-        /(?:^|[-/])(?:apparel|merch|shirts?|figures?|cds?|cassettes?)(?:[-/]|$)/i.test(url.pathname)) continue;
+        /(?:^|[-/])(?:apparel|merch|shirts?|figures?|cds?|cassettes?|movies?|cinema|dvd|blu-ray)(?:[-/]|$)/i.test(url.pathname)) continue;
     url.hash = "";
     if (!links.has(url.href)) links.set(url.href, { label, url: url.href });
+  }
+  // Some themes put the discount in a heading immediately before its shop link.
+  // Require the same named collection in both, so nearby product or menu links cannot borrow it.
+  for (const match of visible.matchAll(/<h[1-4]\b[^>]*>\s*((?:up to )?\d{1,2}% off ([\w ’'-]{3,60}))\s*<\/h[1-4]>((?:\s*<\/?div\b[^>]*>)*\s*)<a\b[^>]*\shref=["'](\/collections\/[\w-]+)["'][^>]*>\s*Shop ([\w ’'-]{3,60})\s*<\/a>/gi)) {
+    if (cleanText(match[2]).toLowerCase() !== cleanText(match[5]).toLowerCase()) continue;
+    const url = new URL(match[4], origin).href;
+    if (!links.has(url)) links.set(url, { label: cleanText(match[1]), url });
+  }
+  // A storewide announcement can apply on the homepage without a collection link.
+  for (const match of visible.matchAll(/<div\s+class=["']announcement-bar__message[^"']*["'][^>]*>\s*<p>([^<]{5,220})(?=<button\b|<\/p>)/gi)) {
+    const label = cleanText(decodeHtmlAttribute(match[1]));
+    if (hasCoherentSaleClaim(label, "sitewide") && /\d{1,2}% off/i.test(label) && !/first (order|purchase)|newsletter/i.test(label)) {
+      links.set(origin + "/", { label, url: origin + "/" });
+    }
   }
   return [...links.values()];
 }

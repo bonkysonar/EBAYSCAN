@@ -7,10 +7,9 @@ import {
   decisionListBlockerLabels,
 } from "../lib/arbitrage/decisionList.mjs";
 import { RetailScanStatus } from "./RetailScanStatus";
-import { RetailDealRadar } from "./RetailDealRadar";
+import { AlbumPicks } from "./TopDeals";
+import { isIndividualRecordFind, replaceWithLatestFinds } from "../lib/arbitrage/individualRecords";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { assessRecordCandidate } from "../../scripts/lib/candidatePipeline.mjs";
-import { retailEligibility } from "../../scripts/lib/retailIdentity.mjs";
 import { researchDemand } from "../../scripts/lib/albumDemand.mjs";
 import { normalizeAlbumPriceBenchmark } from "../../scripts/lib/albumPriceBenchmark.mjs";
 import {
@@ -403,17 +402,8 @@ export function RetailArbitrage() {
 
   return (
     <section className="arbitrage-page">
-      <div className="seller-hero panel compact-seller-hero arbitrage-hero">
-        <div>
-          <span className="eyebrow">Retail candidate finder</span>
-          <h2>Worth considering today.</h2>
-          <p>
-            Up to 15 distinct releases with defensible profit and demand
-            evidence. Each has passed verification or has one clearly stated
-            remaining check. Broader leads live in Research candidates.
-          </p>
-          <p>Minimum: {money(settings.considerationMinNetProfitDollars)} net profit and {percent(settings.considerationMinRoiRatio)} return on landed purchase cost. Both must pass after selling costs.</p>
-        </div>
+      <AlbumPicks finds={scoredFinds} settings={settings} feedback={feedback} />
+      <div className="picks-tools">
         <div className="seller-actions">
           <button
             type="button"
@@ -464,7 +454,6 @@ export function RetailArbitrage() {
         <div className="warning-box">{latestMessage}</div>
       ) : null}
       <RetailScanStatus payload={latestPayload} />
-      <RetailDealRadar />
       {queueFilter !== "SLOW_MARGIN" && scoredFinds.some(find =>
         !find.dismissedAt && !recordOutcomeForFind(feedback, find) && slowerSaleWithMargin(find, evaluationNow, settings)) && (
         <button type="button" onClick={() => { setSourceFilter("ALL"); setQueueFilter("SLOW_MARGIN"); }}>
@@ -2023,53 +2012,6 @@ function coverageBucket(
   }
   if (attemptedHealth.some((health) => health === "failed")) return "degraded";
   return "healthy";
-}
-
-function replaceWithLatestFinds(
-  current: ArbitrageFind[],
-  incoming: ArbitrageFind[],
-): ArbitrageFind[] {
-  const byId = new Map(current.map((find) => [find.id, find]));
-  return incoming
-    .map((find) => {
-      const existing = byId.get(find.id);
-      return existing?.dismissedAt &&
-        retailOfferFeedbackKey(existing) === retailOfferFeedbackKey(find)
-        ? { ...find, dismissedAt: existing.dismissedAt }
-        : find;
-    })
-    .sort(
-      (left, right) =>
-        new Date(right.capturedAt).getTime() -
-        new Date(left.capturedAt).getTime(),
-    );
-}
-
-function isIndividualRecordFind(find: ArbitrageFind): boolean {
-  if (find.opportunityType === "sitewide_sale" || find.purchasePrice <= 0)
-    return false;
-  if (!retailEligibility(find).eligible) return false;
-  const title = `${find.title} ${find.sourceListingTitle ?? ""}`.trim();
-  if (!title || isSourceCopyTitle(title)) return false;
-  return assessRecordCandidate({
-    context: `${find.artist} ${find.sourceListingTitle ?? ""}`,
-    source: {
-      id: find.sourceId,
-      name: find.sourceName,
-      url: find.sourceUrl,
-    },
-    title:
-      find.shopifyVariantTitle ||
-      find.sourceListingTitle ||
-      displayRecordTitle(find),
-    url: find.sourceUrl,
-  }).accepted;
-}
-
-function isSourceCopyTitle(title: string): boolean {
-  return /^(?:cheap|deals?|home|facebook page|filter amazon(?: by price)?|click here|continue shopping|sign up|sign in|order history|premium membership|time|under|\d+% off)$/i.test(
-    title.replace(/&nbsp;/g, " ").trim(),
-  );
 }
 
 function purchaseRetailerKey(find: ArbitrageFind): string {

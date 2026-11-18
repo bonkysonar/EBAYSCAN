@@ -1,42 +1,16 @@
-import { useEffect, useState } from "react";
-import type { RetailCampaignRadarPayload, RetailDealRadarPayload } from "../lib/arbitrage/dealRadar";
+import { useRefreshingFeed } from "../lib/arbitrage/useRefreshingFeed";
+import type { RetailCampaignRadarPayload, RetailDealRadarPayload, RetailMarkdownPayload } from "../lib/arbitrage/dealRadar";
 import { publicDiscoveryUrl } from "../../scripts/lib/webSaleDiscovery.mjs";
 
-const REFRESH_MS = 5 * 60_000;
+function parseRadar<T extends RetailDealRadarPayload | RetailCampaignRadarPayload | RetailMarkdownPayload>(value: unknown): T {
+  const result = value as T;
+  if (result?.version !== 1 || !["available", "partial", "unavailable"].includes(result.status) ||
+    !Array.isArray(result.items) || !Array.isArray(result.sources) || !Number.isFinite(Date.parse(result.expiresAt))) throw new Error("Invalid feed response");
+  return result;
+}
 
-function useRetailRadar<T extends RetailDealRadarPayload | RetailCampaignRadarPayload>(url: string) {
-  const [payload, setPayload] = useState<T | null>(null);
-  const [error, setError] = useState(false);
-  const [clock, setClock] = useState(Date.now());
-  useEffect(() => {
-    let disposed = false;
-    let controller: AbortController | null = null;
-    const load = async () => {
-      if (document.visibilityState === "hidden") return;
-      controller?.abort();
-      controller = new AbortController();
-      const activeController = controller;
-      const timeout = setTimeout(() => activeController.abort(), 12_000);
-      try {
-        const response = await fetch(url, { cache: "no-store", signal: activeController.signal });
-        if (!response.ok) throw new Error("Unavailable");
-        const result = await response.json() as T;
-        if (result.version !== 1 || !["available", "partial", "unavailable"].includes(result.status) || !Array.isArray(result.items) || !Array.isArray(result.sources) || !Number.isFinite(Date.parse(result.expiresAt))) throw new Error("Invalid feed response");
-        if (!disposed && controller === activeController) { setPayload(result); setError(false); setClock(Date.now()); }
-      } catch {
-        if (!disposed && controller === activeController) { setError(true); setPayload(null); }
-      } finally { clearTimeout(timeout); }
-    };
-    void load();
-    const refresh = setInterval(() => void load(), REFRESH_MS);
-    const tick = setInterval(() => setClock(Date.now()), 60_000);
-    const focus = () => void load();
-    const visibility = () => { if (document.visibilityState === "visible") void load(); };
-    window.addEventListener("focus", focus);
-    document.addEventListener("visibilitychange", visibility);
-    return () => { disposed = true; controller?.abort(); clearInterval(refresh); clearInterval(tick); window.removeEventListener("focus", focus); document.removeEventListener("visibilitychange", visibility); };
-  }, [url]);
-  return { payload, error, now: clock };
+export function useRetailRadar<T extends RetailDealRadarPayload | RetailCampaignRadarPayload | RetailMarkdownPayload>(url: string) {
+  return useRefreshingFeed<T>(url, parseRadar);
 }
 
 export function RetailDealRadar() {

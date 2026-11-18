@@ -24,3 +24,8 @@ export type RetailCampaignRadarPayload = Omit<RetailDealRadarPayload, "items" | 
   items: { retailer: string; label: string; url: string }[];
   evidenceScope: "retailer_advertisements";
 };
+
+export type RetailMarkdownPayload = Omit<RetailDealRadarPayload, "items" | "evidenceScope"> & {
+  items: { artist: string; title: string; url: string; retailer: string; price: number; compareAt: number }[];
+  evidenceScope: "in_stock_retail_markdowns";
+};
