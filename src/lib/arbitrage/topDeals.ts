@@ -23,12 +23,13 @@ function albumIdentity(artist: string, title: string) {
 
 export type DealPick = {
   key: string; name: string; url: string; value: string; source: string; terms: string;
-  checked: string; tier: number; score: number;
+  checked: string; tier: number; score: number; price?: number;
 };
 
 function bestFive(rows: DealPick[]) {
   const seen = new Set<string>();
   return rows.sort((a, b) => a.tier - b.tier || b.score - a.score ||
+    (a.price ?? 0) - (b.price ?? 0) ||
     Date.parse(b.checked) - Date.parse(a.checked) || a.name.localeCompare(b.name))
     .filter(row => {
       if (seen.has(row.key)) return false;
@@ -41,14 +42,20 @@ export function topAlbums(finds: ArbitrageScoredFind[], radar: RetailDealRadarPa
   feedback: ReviewFeedback, settings: ArbitrageSettings, now: number, markdowns: RetailMarkdownPayload | null = null) {
   const rows: DealPick[] = [];
   const excluded = new Set<string>();
+  const unprofitablePrices = new Map<string, number>();
   for (const find of finds) {
     const album = albumIdentity(find.artist, find.title);
+    const url = publicDiscoveryUrl(find.sourceUrl);
+    if (!url) continue;
     if (find.dismissedAt || find.learningSuppressed || recordOutcomeForFind(feedback, find)) {
-      excluded.add(album.key);
+      excluded.add(url);
       continue;
     }
-    const url = publicDiscoveryUrl(find.sourceUrl);
-    if (!url || !fresh(find.soldEvidence?.capturedAt, now, 6) || !fresh(find.activeEvidence?.capturedAt, now, 6)) continue;
+    if (!fresh(find.soldEvidence?.capturedAt, now, 6) || !fresh(find.activeEvidence?.capturedAt, now, 6)) continue;
+    if (find.gates?.soldEvidence && find.gates.activeEvidence && find.gates.matchConfidence &&
+      find.expectedNetProfit != null && find.expectedNetProfit <= 0 && !find.currencyConversionRequired) {
+      unprofitablePrices.set(url, find.purchasePriceUsd ?? find.purchasePrice);
+    }
     const review = consideration(find, now, settings);
     const slow = slowerSaleWithMargin(find, now, settings);
     if (!review.qualifies && !slow) continue;
@@ -67,7 +74,7 @@ export function topAlbums(finds: ArbitrageScoredFind[], radar: RetailDealRadarPa
       rows.push({ ...albumIdentity(item.artist, item.title),
         url, value: dollars.format(item.price), source: item.retailer,
         terms: Math.round(discount) + "% below " + dollars.format(item.compareAt) + " · In stock · resale unverified",
-        checked: markdowns.checkedAt, tier: 3, score: discount });
+        checked: markdowns.checkedAt, tier: 3, score: Math.round(discount), price: item.price });
     }
   }
   if (current(radar, now) && radar?.evidenceScope === "advertised_deals_not_retailer_or_resale_verification") {
@@ -79,10 +86,11 @@ export function topAlbums(finds: ArbitrageScoredFind[], radar: RetailDealRadarPa
       rows.push({ ...albumIdentity(item.artist, item.title),
         url, value: dollars.format(item.advertisedPrice), source: item.retailerUrl && publicDiscoveryUrl(item.retailerUrl)
           ? new URL(url).hostname.replace(/^www\./, "") : item.publisher,
-        terms: "Advertised price · resale unverified", checked: item.publishedAt, tier: 4, score: -item.advertisedPrice });
+        terms: "Advertised price · resale unverified", checked: item.publishedAt, tier: 4, score: -item.advertisedPrice, price: item.advertisedPrice });
     }
   }
-  return bestFive(rows.filter(row => !excluded.has(row.key)));
+  return bestFive(rows.filter(row => !excluded.has(row.url) &&
+    (row.price === undefined || row.price < (unprofitablePrices.get(row.url) ?? Infinity))));
 }
 
 const conditional = /\b(?:first (?:order|purchase)|newsletter|sign up|subscribe|members? only|new customers? only|free shipping only|expired|sale ended)\b/i;
@@ -94,10 +102,10 @@ export function topSales(campaigns: NormalizedSaleCampaign[], radar: RetailCampa
   const add = (store: string, link: string, label: string, scope: string, discount: number, upTo: boolean, checked: string, live: boolean) => {
     const url = publicDiscoveryUrl(link);
     if (!url || !label || conditional.test(label) || !(discount > 0 && discount <= 100)) return;
-    const broad = scope === "sitewide" || scope === "vinyl-wide";
+    const breadth = scope === "sitewide" ? 0 : scope === "vinyl-wide" ? 1 : 2;
     rows.push({ key: key(store), name: store, url, value: (upTo ? "Up to " : "") + discount + "% off",
       source: scope === "sitewide" ? "Storewide" : scope === "vinyl-wide" ? "Music-wide" : "Selected titles",
-      terms: label, checked, tier: live ? (broad ? 0 : 1) : (broad ? 2 : 3), score: discount });
+      terms: label, checked, tier: (live ? 0 : 3) + breadth, score: discount });
   };
   for (const c of campaigns) {
     const outcome = saleOutcomeForCampaign(feedback, c);
@@ -114,8 +122,8 @@ export function topSales(campaigns: NormalizedSaleCampaign[], radar: RetailCampa
     for (const item of radar.items) {
       const match = item.label.match(/(up to\s+)?(\d{1,2})\s*%\s*off/i);
       if (!match) continue;
-      const scope = /\b(?:site[ -]?wide|store[ -]?wide|almost everything)\b/i.test(item.label) ? "sitewide" :
-        /\b(?:all (?:vinyl|music|LPs)|off music\b)/i.test(item.label) ? "vinyl-wide" : "collection";
+      const storewide = /\b(?:site[ -]?wide|store[ -]?wide|entire (?:site|store))\b|%\s*off\s+(?:\(?almost\)?\s+)?everything\b/i.test(item.label);
+      const scope = storewide ? "sitewide" : /\b(?:all (?:vinyl|music|LPs)|off music\b)/i.test(item.label) ? "vinyl-wide" : "collection";
       add(item.retailer, item.url, item.label, scope, Number(match[2]), Boolean(match[1]), radar.checkedAt, true);
     }
   }
