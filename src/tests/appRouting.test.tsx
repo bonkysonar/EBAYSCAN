@@ -29,7 +29,8 @@ describe("App routing", () => {
       if (url.includes("latest")) return new Response("unavailable", { status: 503 });
       if (url.includes("markdowns")) return Response.json({ ...common, evidenceScope: "in_stock_retail_markdowns", items: [...items, items[0]] });
       if (url.includes("campaigns")) return Response.json({ ...common, evidenceScope: "retailer_advertisements",
-        items: [...items, items[0]].map((item, i) => ({ ...item, label: i === 0 ? "15% off sitewide with code VINYL" : "Up to 50% off selected albums" })) });
+        items: [...items, items[0]].map((item, i) => ({ ...item, label: i === 0 ? "15% off (almost) everything with code VINYL" :
+          i === 1 ? "30% off music (exclusions apply)" : "Up to 50% off selected albums" })) });
       return Response.json({ ...common, evidenceScope: "advertised_deals_not_retailer_or_resale_verification", items: [] });
     }));
     renderApp("");
